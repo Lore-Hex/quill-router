@@ -108,6 +108,8 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "deepseek/deepseek-v4-flash-0731",
+      "retirement_at": "2026-11-26T23:59:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4.1-flash-1017",
       "supported_features": [
         "chat",
         "completion",
@@ -169,6 +171,8 @@
       "status": 1,
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek/deepseek-v4.1-flash",
+      "retirement_at": "2026-11-26T23:59:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4.1-flash-1017",
       "supported_features": [
         "chat",
         "completion",
@@ -201,6 +205,7 @@
       "status": 1,
       "id": "minimax/minimax-m3",
       "upstream_id": "minimax/minimax-m3",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -232,6 +237,8 @@
       "status": 1,
       "id": "moonshotai/kimi-k3",
       "upstream_id": "moonshotai/kimi-k3",
+      "retirement_at": "2026-11-26T23:59:00Z",
+      "replacement_model_id": "moonshotai/kimi-k3.1-pro",
       "supported_features": [
         "chat",
         "completion",
@@ -417,6 +424,8 @@
       "status": 1,
       "id": "qwen/qwen3.6-35b-a3b",
       "upstream_id": "qwen/qwen3.6-35b-a3b",
+      "retirement_at": "2026-11-26T23:59:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4.1-flash-1017",
       "supported_features": [
         "chat",
         "completion",
@@ -516,6 +525,7 @@
       "status": 1,
       "id": "xiaomi/mimo-v2.6-pro",
       "upstream_id": "xiaomi/mimo-v2.6-pro",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -546,6 +556,7 @@
       "status": 1,
       "id": "z-ai/glm-5.2",
       "upstream_id": "z-ai/glm-5.2",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -576,6 +587,7 @@
       "status": 1,
       "id": "z-ai/glm-5.3",
       "upstream_id": "z-ai/glm-5.3",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
