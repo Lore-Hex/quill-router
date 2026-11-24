@@ -2831,6 +2831,15 @@ html:not(.js-off)[data-brand="nyte"] .migrate-openai-page .mig-diff[data-md-inac
   :root[data-brand="nyte"] .free-llm-api-page .free-table td { width: auto; text-align: left; }
   :root[data-brand="nyte"] .free-llm-api-page .free-offer { margin: 6px 0 0; }
   :root[data-brand="nyte"] .free-llm-api-page .free-closing .btn { width: 100%; }
+  /* Phones: one 36px step between sections, a short heading gap, and no
+     extra blank band between the last block and the footer. */
+  :root[data-brand="nyte"] .free-llm-api-page main.public-wrap { row-gap: 0; padding-bottom: 0; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section { padding-top: 36px; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section h2 { margin-bottom: 16px; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section .guide-lead,
+  :root[data-brand="nyte"] .free-llm-api-page .free-steps { margin-bottom: 20px; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section:has(.free-closing) { padding-top: 24px; }
+  :root[data-brand="nyte"] .free-llm-api-page .faq-panel { margin-top: 24px; }
   :root[data-brand="nyte"] .migrate-openai-page .mig-diff pre { padding: 12px 20px 20px 36px; }
   :root[data-brand="nyte"] .migrate-openai-page .mig-add::before { left: 16px; }
   :root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-col-label { padding: 16px 20px 0; }
