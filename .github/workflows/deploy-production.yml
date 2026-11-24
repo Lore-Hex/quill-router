@@ -280,12 +280,16 @@ jobs:
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_receipt_key_versions.sh
       - name: Backfill legacy receipt attestation version projections
-        # Bounded. Once every legacy row is backfilled this is one empty page
-        # and finishes in under a minute, uv sync included. Without a bound,
-        # a run that never exits holds the production deploy lease until the
-        # job's six-hour default, and every later deploy queues behind it.
-        # Ten minutes is far above a real backfill page loop and fails the job
-        # early, so the retained lease is visible and recoverable.
+        # A ten-minute budget, not a guarantee. The job has no timeout of its
+        # own (see snapshot-sync), so without one here a run that never exits
+        # holds the production deploy lease until GitHub's six-hour job
+        # default, and every later deploy queues behind it. With no legacy
+        # rows left the step reads one empty page. A large backlog, such as
+        # after a restore, can outlast the budget. Each page commits on its
+        # own and the query selects only rows still missing a projection, so
+        # the next run continues from where this one stopped. Either way
+        # finalize-cloud keeps the lease, and it is recovered after checking
+        # that nothing serving changed.
         timeout-minutes: 10
         env:
           TR_STORAGE_BACKEND: spanner-clickhouse
