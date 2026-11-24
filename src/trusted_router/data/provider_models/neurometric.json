@@ -507,6 +507,7 @@
       "supported_features": [
         "chat",
         "completion",
+        "tools",
         "json_mode",
         "structured_outputs"
       ],
@@ -783,6 +784,6 @@
       "output_token_price_per_m": 72000
     }
   ],
-  "generated_at": "2026-11-24T17:28:45Z",
+  "generated_at": "2026-11-24T21:28:20Z",
   "model_count": 14
 }

@@ -160,7 +160,7 @@
     }
   ],
   "source": "https://inference.muna.ai/integrations/trustedrouter/catalog",
-  "generated_at": "2026-11-24T17:28:45Z",
+  "generated_at": "2026-11-24T21:28:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

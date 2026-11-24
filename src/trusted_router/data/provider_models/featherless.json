@@ -443,7 +443,8 @@
       "output_token_price_per_m": 4300000,
       "supported_features": [
         "tools"
-      ]
+      ],
+      "missing_since": "2026-11-24"
     },
     {
       "display_name": "Qwen/Qwen3.8-2.4T-A95B",
@@ -793,7 +794,8 @@
       "output_token_price_per_m": 3150000,
       "supported_features": [
         "tools"
-      ]
+      ],
+      "missing_since": "2026-11-24"
     },
     {
       "display_name": "Qwen/Qwen-AgentWorld-35B-A3B",
@@ -1572,7 +1574,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 550000,
-      "output_token_price_per_m": 2200000
+      "output_token_price_per_m": 2200000,
+      "missing_since": "2026-11-24"
     },
     {
       "display_name": "zai-org/GLM-4.7",
@@ -1718,7 +1721,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-24T17:28:45Z",
+  "generated_at": "2026-11-24T21:28:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 69
 }

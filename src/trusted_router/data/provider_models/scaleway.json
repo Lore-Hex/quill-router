@@ -265,7 +265,7 @@
   ],
   "source": "https://api.scaleway.ai/v1/models",
   "pricing_source": "https://api.scaleway.com/product-catalog/v2alpha1/public-catalog/products",
-  "generated_at": "2026-11-24T17:28:45Z",
+  "generated_at": "2026-11-24T21:28:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }
