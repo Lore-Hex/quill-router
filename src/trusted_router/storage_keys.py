@@ -26,7 +26,6 @@ import threading
 import uuid
 from typing import Any
 
-from trusted_router.money import dollars_to_microdollars
 from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
@@ -47,6 +46,7 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.storage_errors import DeferredSettlementCapReached
+from trusted_router.storage_key_patch import apply_key_patch
 from trusted_router.storage_key_usage import (
     chat_browser_key_index_expired,
     is_users_chat_browser_key,
@@ -59,7 +59,6 @@ from trusted_router.storage_models import (
     GatewayAuthorization,
     Reservation,
     _is_byok,
-    iso_now,
 )
 from trusted_router.types import UsageType
 
@@ -296,42 +295,11 @@ class InMemoryApiKeys:
             key = self.keys.get(key_hash)
             if key is None:
                 return None
-            if "name" in patch and patch["name"]:
-                key.name = str(patch["name"])
-            if "disabled" in patch:
-                key.disabled = bool(patch["disabled"])
-            if "limit" in patch:
-                value = patch["limit"]
-                key.limit_microdollars = None if value is None else dollars_to_microdollars(value)
-            if "limit_microdollars" in patch:
-                key.limit_microdollars = patch["limit_microdollars"]
-            if patch.get("limit_microdollars_at_most") is not None:
-                # Lowers, never raises; atomic with the read under the lock.
-                ceiling = int(patch["limit_microdollars_at_most"])
-                current = key.limit_microdollars
-                key.limit_microdollars = ceiling if current is None else min(current, ceiling)
-            if "limit_reset" in patch:
-                key.limit_reset = patch["limit_reset"]
-            for window in ("daily", "weekly", "monthly"):
-                field = f"limit_{window}_microdollars"
-                if field in patch:
-                    setattr(key, field, patch[field])
-            if "include_byok_in_limit" in patch:
-                key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
-            if patch.get("lenient") is not None:
-                key.lenient = bool(patch["lenient"])
-            if patch.get("budget_alert_only") is not None:
-                key.budget_alert_only = bool(patch["budget_alert_only"])
-            if "budget_alerted" in patch:
-                key.budget_alerted = dict(patch["budget_alerted"] or {})
-            if "tags" in patch:
-                key.tags = dict(patch["tags"] or {})
-            if "scopes" in patch:
-                key.scopes = validate_api_key_scopes(
-                    patch["scopes"],
-                    management=key.management,
-                )
-            key.updated_at = iso_now()
+            # The one patch semantics every backend applies, the strict-key
+            # first-limit rule included (StrictKeyFirstLimit): under the lock,
+            # so the limit-at-most lower is atomic with the read, and a refused
+            # patch leaves the stored key untouched.
+            apply_key_patch(key, patch)
             return key
 
     # ── Per-key spend-cap lifecycle ─────────────────────────────────────

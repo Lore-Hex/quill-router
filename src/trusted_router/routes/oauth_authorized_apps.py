@@ -12,6 +12,7 @@ from trusted_router.errors import api_error
 from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
 from trusted_router.routes.helpers import json_body
 from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot, OAuthApp
+from trusted_router.storage_key_patch import StrictKeyFirstLimit
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -187,6 +188,13 @@ def _update_all_or_rollback(
             persisted = STORE.get_key_by_hash(key_hash)
             if persisted is None or getattr(persisted, field) != value:
                 raise RuntimeError("OAuth grant update verification failed")
+    except StrictKeyFirstLimit as exc:
+        # A delegated key is never created strict today; should one be, a
+        # monthly budget on it while it has no limit is the strict-key rule's
+        # refusal, a client error, after the same repair of the keys already
+        # written.
+        _repair_all(originals, field, keys)
+        raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     except Exception as exc:
         _repair_all(originals, field, keys)
         raise api_error(

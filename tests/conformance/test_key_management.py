@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+from trusted_router.storage_key_patch import KEY_LIMIT_FIELDS, StrictKeyFirstLimit
+
 
 def test_key_pages_and_bulk_delete(store, unique, user_id, workspace_id):
     # The shared fixtures create the user and workspace through calls every
@@ -201,3 +205,56 @@ def test_a_limit_edit_keeps_the_keys_holds(store, unique, user_id, workspace_id)
     assert store.update_key(key.hash, {"limit_microdollars": 4_000_000}) is not None
     assert _hold(store, key.hash, 3_000_000)
     assert not _hold(store, key.hash, 1), "the edit forgot the $1 hold"
+
+
+def _limits(store, key_hash: str) -> tuple[int | None, ...]:
+    stored = store.get_key_by_hash(key_hash)
+    assert stored is not None
+    return tuple(getattr(stored, field) for field in KEY_LIMIT_FIELDS)
+
+
+def test_a_limitless_strict_key_never_gains_a_limit(store, unique, user_id, workspace_id):
+    """Every backend refuses, inside its write transaction or under its lock,
+    a patch that would give a limitless budget_strict key its first limit,
+    and writes nothing: neither the entity nor its typed limit row. Limits a
+    strict key already has can change and be removed, and once removed the
+    key stays limitless (storage_key_patch.StrictKeyFirstLimit)."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="strict-limitless", creator_user_id=user_id, budget_strict=True,
+    )
+    for patch in (
+        {"limit_microdollars": 5_000_000},
+        {"limit_microdollars_at_most": 5_000_000},
+        {"limit_daily_microdollars": 1_000_000},
+        {"limit_weekly_microdollars": 2_000_000},
+        {"limit_monthly_microdollars": 3_000_000},
+        {"name": "renamed", "limit_daily_microdollars": 1_000_000},
+    ):
+        with pytest.raises(StrictKeyFirstLimit):
+            store.update_key(key.hash, patch)
+        assert _limits(store, key.hash) == (None, None, None, None), patch
+        assert store.get_key_by_hash(key.hash).name == "strict-limitless"
+    renamed = store.update_key(key.hash, {"name": "renamed", "limit_daily_microdollars": None})
+    assert renamed is not None and renamed.name == "renamed"
+    assert _limits(store, key.hash) == (None, None, None, None)
+
+    _raw, limited = store.create_api_key(
+        workspace_id=workspace_id, name="strict-limited", creator_user_id=user_id, budget_strict=True,
+        limit_daily_microdollars=5_000_000,
+    )
+    assert store.update_key(limited.hash, {"limit_daily_microdollars": 6_000_000}) is not None
+    assert store.update_key(limited.hash, {"limit_monthly_microdollars": 9_000_000}) is not None
+    assert _limits(store, limited.hash) == (None, 6_000_000, None, 9_000_000)
+    assert store.update_key(limited.hash, {"limit_daily_microdollars": None}) is not None
+    assert store.update_key(limited.hash, {"limit_monthly_microdollars": None}) is not None
+    assert _limits(store, limited.hash) == (None, None, None, None)
+    with pytest.raises(StrictKeyFirstLimit):
+        store.update_key(limited.hash, {"limit_monthly_microdollars": 9_000_000})
+    assert _limits(store, limited.hash) == (None, None, None, None)
+
+    # A key that is not strict gains a first limit as before.
+    _raw, plain = store.create_api_key(
+        workspace_id=workspace_id, name="plain", creator_user_id=user_id,
+    )
+    assert store.update_key(plain.hash, {"limit_daily_microdollars": 1_000_000}) is not None
+    assert _limits(store, plain.hash) == (None, 1_000_000, None, None)

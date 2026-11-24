@@ -73,6 +73,26 @@ budget busy").
 There is no schema migration. Never reshard a strict key: validation rejects it.
 Keep the flag immutable so in-flight requests cannot cross accounting modes.
 
+A strict key with no limit cannot gain one (since 2026-11-24). A patch that
+would set the lifetime limit or any window limit on a strict key whose four
+limit fields (`limit_microdollars`, `limit_daily_microdollars`,
+`limit_weekly_microdollars`, `limit_monthly_microdollars`) are all unset raises
+`StrictKeyFirstLimit` (`storage_key_patch.apply_key_patch`, the one patch
+semantics every backend applies inside its write transaction or under its lock),
+answered 400 `bad_request` by `PATCH /v1/keys/{hash}`, as a change to
+`budget_strict` itself is, and a console error. Creating a strict key with
+limits, and changing or removing a strict key's existing limits, stay allowed;
+removing the last one makes the key limitless for good. So a strict key's limit
+fields, and their `tr_key_limit` mirrors (`limit_micro`, `<w>_limit_micro`,
+written from the entity in the same transaction), never go from all unset to any
+set. A limitless strict key is one Python's strict reserve can never refuse for
+its budget; this rule is what lets the Go fast path edge decide such a key
+without a key hold, since no limit can later appear that would need the holds
+it admitted counted (fast-admission-and-batched-settlement.md §4.6 otherwise
+needs the key-status fence for a limit added under a lease). The writer inventory
+`tests/test_strict_key_first_limit.py` fails on any new code that sets a key's
+limit fields outside `storage_key_patch`.
+
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the
 production schema. Each test creates and drops its own database. They test each

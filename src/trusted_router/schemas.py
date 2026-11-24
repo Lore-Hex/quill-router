@@ -171,7 +171,13 @@ class CreateKeyRequest(_Lenient):
     limit_monthly: Decimal | None = None
     # False = hard-limit (429, default); True = alert by email without blocking.
     budget_alert_only: bool = False
-    budget_strict: bool = False
+    budget_strict: bool = Field(
+        default=False,
+        description=(
+            "Strict estimated-cost admission, fixed for the key's lifetime. Set the key's "
+            "limits here: a strict key created with no limit can never gain one."
+        ),
+    )
     include_byok_in_limit: bool = True
     # Drop unknown and unsupported request parameters instead of refusing.
     lenient: bool = False

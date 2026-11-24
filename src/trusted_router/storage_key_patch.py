@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from trusted_router.money import dollars_to_microdollars
@@ -20,8 +21,64 @@ TYPED_LIMIT_PATCH_FIELDS = frozenset(
     }
 )
 
+#: A key's spend limits: the lifetime limit and the three UTC windows. They
+#: are mirrored into tr_key_limit as limit_micro and <w>_limit_micro.
+KEY_LIMIT_FIELDS = (
+    "limit_microdollars",
+    "limit_daily_microdollars",
+    "limit_weekly_microdollars",
+    "limit_monthly_microdollars",
+)
+
+STRICT_FIRST_LIMIT_MESSAGE = (
+    "A strict-budget key with no spend limit cannot gain one. Create a new strict key "
+    "with the limits instead. A strict key's existing limits can be changed or removed, "
+    "but once its last limit is removed it can never have a limit again."
+)
+
+
+class StrictKeyFirstLimit(ValueError):
+    """A patch would give a limitless budget_strict key its first spend limit.
+
+    So a strict key's limit fields go from some set to some set, or to none
+    set, and never from none set to some set (docs/routing-controls-20260927.md,
+    "Strict spending"). A strict key with no limit is one Python can never
+    refuse for its budget; one that could gain a limit later would need every
+    hold admitted before the limit counted against it, which a hold admitted
+    without a key counter (a lease's) is not.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(STRICT_FIRST_LIMIT_MESSAGE)
+
+
+def has_spend_limit(key: ApiKey) -> bool:
+    """Whether the key has a lifetime or a window limit (KEY_LIMIT_FIELDS),
+    read by name: the request path counts dynamic attribute reads."""
+    return (
+        key.limit_microdollars is not None
+        or key.limit_daily_microdollars is not None
+        or key.limit_weekly_microdollars is not None
+        or key.limit_monthly_microdollars is not None
+    )
+
 
 def apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:
+    """Apply ``patch`` to ``key`` in place, or raise and leave it untouched.
+
+    Every backend calls this on the key it read inside its write transaction
+    (Spanner, Postgres) or under its lock (memory), so the strict-key rule
+    below is checked against the stored key, never a stale copy.
+    """
+    if key.budget_strict and not has_spend_limit(key):
+        trial = copy.deepcopy(key)
+        _apply(trial, patch)
+        if has_spend_limit(trial):
+            raise StrictKeyFirstLimit()
+    _apply(key, patch)
+
+
+def _apply(key: ApiKey, patch: dict[str, Any]) -> None:
     if "name" in patch and patch["name"]:
         key.name = str(patch["name"])
     if "disabled" in patch:
