@@ -153,6 +153,13 @@ def inspect_key_usage_reshard(
     if key is None:
         result.reasons.append("API key not found")
         return result
+    if key.budget_strict:
+        # storage_gcp_counters.key_usage_shard_count: a strict key has
+        # exactly one counter shard, and every authorize of it reads that.
+        # Refused before anything is written, not left to the post-commit
+        # verification, which would see the new count only once committed.
+        result.reasons.append("strict window budgets require one key counter shard; never reshard a strict key")
+        return result
     workspace = store.get_workspace(key.workspace_id)
     if workspace is None:
         result.reasons.append("workspace not found")
@@ -229,7 +236,7 @@ def reshard_key_usage(
         # to a stale floor.
         floors = window_floors(utcnow())
         key = store._read_entity_tx(transaction, "api_key", key_hash, ApiKey)
-        if key is None:
+        if key is None or key.budget_strict:
             return None
         workspace = store._read_entity_tx(
             transaction,

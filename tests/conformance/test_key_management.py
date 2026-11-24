@@ -208,9 +208,44 @@ def test_a_limit_edit_keeps_the_keys_holds(store, unique, user_id, workspace_id)
 
 
 def _limits(store, key_hash: str) -> tuple[int | None, ...]:
+    """The key's four limits as committed: the entity's, and on a backend with
+    a typed counter row its tr_key_limit shard 0 mirror too, which must say
+    the same (a single-shard key's lifetime limit is the whole limit)."""
     stored = store.get_key_by_hash(key_hash)
     assert stored is not None
-    return tuple(getattr(stored, field) for field in KEY_LIMIT_FIELDS)
+    entity = tuple(getattr(stored, field) for field in KEY_LIMIT_FIELDS)
+    mirror = _mirror(store, key_hash)
+    if mirror is not None:
+        assert mirror == entity, f"the tr_key_limit mirror {mirror} is not the entity's {entity}"
+    return entity
+
+
+_MIRROR_SQL = ("SELECT limit_micro, day_limit_micro, week_limit_micro, month_limit_micro FROM tr_key_limit "
+               "WHERE key_hash = {} AND shard = 0")
+
+
+def _mirror(store, key_hash: str) -> tuple[int | None, ...] | None:
+    """tr_key_limit shard 0's mirrored limits as committed, read the backend's
+    own way; None on a backend with no typed counter rows (memory)."""
+    if hasattr(store, "_database") and hasattr(store, "_param_types"):
+        typed = getattr(store._database, "typed", None)
+        if typed is not None:
+            row = typed.get("tr_key_limit", {}).get((key_hash, 0))
+            assert row is not None, "no tr_key_limit row"
+            return tuple(row.get(c) for c in ("limit_micro", "day_limit_micro", "week_limit_micro",
+                                              "month_limit_micro"))
+        with store._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(_MIRROR_SQL.format("@kh"), params={"kh": key_hash},
+                                             param_types={"kh": store._param_types.STRING}))
+        assert len(rows) == 1, "no tr_key_limit row"
+        return tuple(None if v is None else int(v) for v in rows[0])
+    pool = getattr(store, "_pool", None)
+    if pool is None:
+        return None
+    with pool.connection() as conn:
+        row = conn.execute(_MIRROR_SQL.format("%s"), (key_hash,), prepare=False).fetchone()
+    assert row is not None, "no tr_key_limit row"
+    return tuple(None if v is None else int(v) for v in row)
 
 
 def test_a_limitless_strict_key_never_gains_a_limit(store, unique, user_id, workspace_id):

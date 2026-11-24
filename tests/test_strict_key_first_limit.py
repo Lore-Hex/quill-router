@@ -3,16 +3,16 @@
 The rule (``storage_key_patch.StrictKeyFirstLimit``) makes a strict key's four
 limit fields monotonic: never from all unset to any set. The Go fast path edge
 relies on it to decide a limitless strict key without a key hold, so this file
-pins the rule itself, the property, every route that can set a limit, and an
-inventory of every writer of a key's limits, which fails when a new one
-appears outside the one guarded patch function.
+pins the rule itself, the property, every route that can set a limit, the
+reshard refusal and the replay tool's guard; tests/test_key_limit_writer_inventory.py
+inventories every writer.
 """
 
 from __future__ import annotations
 
 import ast
 import dataclasses
-from collections.abc import Iterator
+import json
 from pathlib import Path
 from typing import Any
 
@@ -333,215 +333,130 @@ def test_the_chat_browser_key_writers_never_meet_a_strict_key() -> None:
         assert "limit_microdollars" in names and "budget_strict" not in names
 
 
-# --- the writer inventory ---------------------------------------------------
-#
-# Every place in src/ and scripts/ that can write a key's limits, its
-# tr_key_limit mirrors, or its api_key entity, with why it cannot give a
-# limitless strict key a first limit. A new writer fails here until it goes
-# through storage_key_patch.apply_key_patch or is reviewed and listed.
+# --- the replay tool ------------------------------------------------------
 
-_MIRROR_COLUMNS = frozenset({"limit_micro", "day_limit_micro", "week_limit_micro", "month_limit_micro"})
-_PATCH = "the one guarded patch function"
-_CREATE = "creates a new key, whose limits are its creation's"
-_VIA_PATCH = "writes the key apply_key_patch returned, in the same transaction"
-_COUNTERS = "writes usage, holds or disabled, never a limit field"
-_FEDERATED = (
-    "a peer plane copies the home plane's record, where the rule holds; federated keys "
-    "never reach the GCP edge (key.federated), and GCP imports none"
+
+def _replay_module() -> Any:
+    import importlib.util
+
+    path = ROOT / "scripts" / "deploy" / "replay_orphan_writes.py"
+    spec = importlib.util.spec_from_file_location("replay_orphan_writes", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _body(**fields: Any) -> str:
+    base = {"hash": "kh", "name": "key", "budget_strict": False, "include_byok_in_limit": True,
+            "usage_shard_count": 1, **dict.fromkeys(KEY_LIMIT_FIELDS)}
+    return json.dumps({**base, **fields})
+
+
+@pytest.mark.parametrize(
+    ("target", "replayed", "reason"),
+    [
+        (None, _body(budget_strict=True, limit_daily_microdollars=5), None),
+        (_body(budget_strict=True), _body(budget_strict=True, limit_daily_microdollars=5), "strict_first_limit"),
+        (_body(budget_strict=True), _body(budget_strict=True, limit_microdollars=5), "strict_first_limit"),
+        (_body(budget_strict=True), _body(budget_strict=True, name="renamed"), None),
+        (_body(budget_strict=True, limit_monthly_microdollars=9), _body(budget_strict=True, limit_monthly_microdollars=8),
+         "config_differs"),
+        (_body(limit_daily_microdollars=5), _body(limit_daily_microdollars=6), "config_differs"),
+        (_body(), _body(include_byok_in_limit=False), "config_differs"),
+        (_body(), _body(usage_shard_count=4), "config_differs"),
+        (_body(), _body(budget_strict=True), "config_differs"),
+        (_body(), _body(name="renamed", disabled=True), None),
+        ("not json", _body(), "unreadable"),
+        (_body(), "[]", "unreadable"),
+    ],
 )
-_REPARTITION = (
-    "repartitions an existing limit across shards; a strict key has exactly one shard and "
-    "is refused by key_usage_shard_count"
-)
-
-ALLOWED_WRITERS: dict[tuple[str, str, str], str] = {
-    # Entity limit fields assigned.
-    ("assign", "src/trusted_router/storage_key_patch.py", "_apply"): _PATCH,
-    ("setattr", "src/trusted_router/storage_key_patch.py", "_apply"): _PATCH,
-    ("assign", "src/trusted_router/routes/oauth_keys.py", "register_oauth_key_routes.oauth_authorize_approve.approve"): (
-        "sets the consent's limit, from which a new key is created"
-    ),
-    ("replace", "scripts/fastpath/key_window_vectors.py", "_key"): "builds golden-vector keys in memory",
-    # Mirror columns written.
-    ("mirror", "src/trusted_router/storage_gcp_counters.py", "<module>"): "defines the mirror's columns",
-    ("mirror", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys.create"): _CREATE,
-    ("mirror", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys.update.txn"): _VIA_PATCH,
-    ("mirror", "src/trusted_router/storage_gcp_key_escrow.py", "rebalance_key_limit_headroom.txn"): _REPARTITION,
-    ("mirror", "src/trusted_router/storage_gcp_key_shard_admin.py", "<module>"): _REPARTITION,
-    ("mirror", "src/trusted_router/storage_postgres.py", "PostgresStore._write_key_limit_caps_tx"): (
-        "mirrors the entity it is given: create, the federated upsert, and update after apply_key_patch"
-    ),
-    ("mirror", "scripts/expand_billing_shards.py", "<module>"): "refuses strict keys (budget_strict)",
-    ("mirror", "scripts/expand_billing_shards.py", "make_plan"): "refuses strict keys (budget_strict)",
-    ("mirror", "scripts/stress_credit_shards.py", "_seed"): "seeds new keys for a load test",
-    # update_key callers: the store applies apply_key_patch.
-    ("update_key", "src/trusted_router/routes/keys.py", "register_key_routes.patch_key"): "answers 400",
-    ("update_key", "src/trusted_router/routes/keys.py", "register_key_routes.create_key"): "lenient only",
-    ("update_key", "src/trusted_router/routes/console/api_keys.py", "register.console_update_api_key_limit"): (
-        "redirects with error=strict-first-limit"
-    ),
-    ("update_key", "src/trusted_router/routes/console/api_keys.py", "register.console_disable_api_key"): (
-        "disabled only"
-    ),
-    ("update_key", "src/trusted_router/routes/console/api_keys.py", "register.console_enable_api_key"): (
-        "disabled only"
-    ),
-    ("update_key", "src/trusted_router/routes/oauth_authorized_apps.py", "_update_all_or_rollback"): (
-        "answers 400 after repairing the grant's keys"
-    ),
-    ("update_key", "src/trusted_router/routes/oauth_authorized_apps.py", "_repair_all"): (
-        "restores values each key had, never a first limit"
-    ),
-    ("update_key", "src/trusted_router/routes/internal/chat_browser_key.py", "_issue_member_key"): (
-        "lowers a lifetime limit its own non-strict, capped keys already have"
-    ),
-    ("update_key", "src/trusted_router/routes/internal/chat_browser_key.py", "_freeze"): (
-        "disables and lowers its own non-strict, capped keys"
-    ),
-    ("update_key", "src/trusted_router/services/budget_alerts.py", "maybe_send_budget_alerts"): "budget_alerted only",
-    ("update_key", "scripts/provision_async_settle_shadow_probe_workspace.py", "_apply_with_credential"): (
-        "disabled only"
-    ),
-    # api_key entity writes.
-    ("entity", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys.create"): _CREATE,
-    ("entity", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys.update.metadata_txn"): _VIA_PATCH,
-    ("entity", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys.update.txn"): _VIA_PATCH,
-    ("entity", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys.reserve_limit.txn"): _COUNTERS,
-    ("entity", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys.add_usage.txn"): _COUNTERS,
-    ("entity", "src/trusted_router/storage_gcp_keys.py", "SpannerApiKeys._release_limit.txn"): _COUNTERS,
-    ("entity", "src/trusted_router/storage_postgres.py", "PostgresStore.create_api_key.create"): _CREATE,
-    ("entity", "src/trusted_router/storage_postgres.py", "PostgresStore.upsert_federated_api_key.upsert"): _FEDERATED,
-    ("entity", "src/trusted_router/storage_postgres.py", "PostgresStore.update_key.update"): _VIA_PATCH,
-    ("entity", "src/trusted_router/storage_account_closure.py", "_finish"): _COUNTERS,
-    ("entity", "src/trusted_router/storage_legacy_trust.py", "create_spanner_legacy_authorization.create"): (
-        _COUNTERS
-    ),
-    ("entity", "scripts/stress_credit_shards.py", "_seed"): "seeds new keys for a load test",
-    ("entity", "scripts/fastpath/authorize_vectors.py", "build_world"): "builds golden-vector keys in memory",
-    ("entity", "scripts/fastpath/authorize_vectors.py", "_run_case"): "builds golden-vector keys in memory",
-}
-
-_ENTITY_WRITERS = frozenset(
-    {"write_entity", "write_entity_tx", "write_entity_batch", "_write_entity_tx", "_write_entity", "write"}
-)
+def test_the_replay_refuses_what_a_raw_write_would_break(target: str | None, replayed: str, reason: str | None) -> None:
+    assert _replay_module().api_key_replay_refusal(target, replayed) == reason
 
 
-def _qualnames(tree: ast.AST) -> tuple[dict[int, str], dict[int, ast.AST]]:
-    """Each node's enclosing qualified name, and its innermost function."""
-    names: dict[int, str] = {}
-    scopes: dict[int, ast.AST] = {}
+def test_the_replay_cannot_give_a_limitless_strict_key_its_limit_back() -> None:
+    """The reviewer's case on the real Spanner store fake: a strict key with a
+    daily limit has its last limit removed; replaying its older body is
+    refused in the transaction that would write it, the key stays limitless,
+    and a later include_byok_in_limit patch mirrors no limit. A key the target
+    lacks, and a metadata-only change, are written."""
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
 
-    def visit(node: ast.AST, prefix: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                inner = f"{prefix}.{child.name}" if prefix else child.name
-                for sub in ast.walk(child):
-                    names[id(sub)] = inner
-                    if not isinstance(child, ast.ClassDef):
-                        scopes[id(sub)] = child
-                visit(child, inner)
-            else:
-                visit(child, prefix)
+    store, database = make_fake_store()
+    _raw, key = store.api_keys.create(workspace_id="ws-replay", name="strict", creator_user_id=None,
+                                      budget_strict=True, limit_daily_microdollars=5_000_000)
+    rows_before = list(database.run_in_transaction(lambda txn: list(txn.execute_sql(
+        "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id", params={"kind": "api_key", "id": key.hash}))))
+    older = rows_before[0][0]
+    assert store.update_key(key.hash, {"limit_daily_microdollars": None}) is not None
+    assert not has_spend_limit(store.get_key_by_hash(key.hash))
 
-    visit(tree, "")
-    return names, scopes
-
-
-def _is_limit_attr_name(node: ast.AST) -> bool:
-    if isinstance(node, ast.Constant):
-        return node.value in KEY_LIMIT_FIELDS
-    if isinstance(node, ast.JoinedStr):
-        text = "".join(v.value for v in node.values if isinstance(v, ast.Constant) and isinstance(v.value, str))
-        return text.startswith("limit_") and text.endswith("_microdollars")
-    return False
-
-
-def _names_a_limit_field(scope: ast.AST | None) -> bool:
-    """Whether a function spells a limit field anywhere: a setattr there
-    whose attribute is a variable may be setting one."""
-    return scope is not None and any(_is_limit_attr_name(sub) for sub in ast.walk(scope))
-
-
-def _writers(path: Path) -> Iterator[tuple[str, str]]:
-    tree = ast.parse(path.read_text())
-    names, scopes = _qualnames(tree)
-    for node in ast.walk(tree):
-        where = names.get(id(node), "<module>")
-        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(
-                isinstance(sub, ast.Attribute) and sub.attr in KEY_LIMIT_FIELDS
-                for target in targets for sub in ast.walk(target)
-            ):
-                yield "assign", where
-        elif isinstance(node, ast.Call):
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if name == "setattr" and len(node.args) >= 2 and (
-                _is_limit_attr_name(node.args[1])
-                or (not isinstance(node.args[1], ast.Constant) and _names_a_limit_field(scopes.get(id(node))))
-            ):
-                yield "setattr", where
-            if name == "replace" and any(k.arg in KEY_LIMIT_FIELDS for k in node.keywords):
-                yield "replace", where
-            if name == "update_key":
-                yield "update_key", where
-            if name in _ENTITY_WRITERS and any(
-                isinstance(arg, ast.Constant) and arg.value == "api_key" for arg in node.args
-            ):
-                yield "entity", where
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            text = node.value
-            if text in _MIRROR_COLUMNS or (
-                ("UPDATE" in text or "INSERT" in text)
-                and any(f"{column} =" in text or f"{column}=" in text for column in _MIRROR_COLUMNS)
-            ):
-                yield "mirror", where
-        elif isinstance(node, ast.Name) and node.id == "KEY_LIMIT_COLUMNS":
-            yield "mirror", where
+    replay = _replay_module()
+    _raw, other = store.api_keys.create(workspace_id="ws-replay", name="plain", creator_user_id=None)
+    renamed = json.dumps({**dataclasses.asdict(store.get_key_by_hash(other.hash)), "name": "renamed"})
+    missing = json.dumps({**dataclasses.asdict(store.get_key_by_hash(other.hash)), "hash": "kh-missing", "name": "new"})
+    refused = replay.replay_api_keys(database, [
+        ("api_key", key.hash, older, None),
+        ("api_key", other.hash, renamed, None),
+        ("api_key", "kh-missing", missing, None),
+    ])
+    assert refused == [(key.hash, "strict_first_limit")]
+    assert not has_spend_limit(store.get_key_by_hash(key.hash))
+    assert store.get_key_by_hash(other.hash).name == "renamed"
+    assert store.get_key_by_hash("kh-missing") is not None
+    with pytest.raises(ValueError, match="api_key records only"):
+        replay.replay_api_keys(database, [("workspace", "ws-replay", "{}", None)])
+    # The next ordinary patch that rewrites the mirror finds no limit to copy.
+    assert store.update_key(key.hash, {"include_byok_in_limit": False}) is not None
+    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert all(row[column] is None for column in ("limit_micro", "day_limit_micro", "week_limit_micro",
+                                                  "month_limit_micro"))
 
 
-def _scan() -> set[tuple[str, str, str]]:
-    found = set()
-    for top in ("src/trusted_router", "scripts"):
-        for path in sorted((ROOT / top).rglob("*.py")):
-            relative = path.relative_to(ROOT).as_posix()
-            for kind, where in _writers(path):
-                found.add((kind, relative, where))
-    return found
+def test_the_replay_writes_api_keys_only_through_its_guard() -> None:
+    import ast as _ast
+
+    source = (ROOT / "scripts" / "deploy" / "replay_orphan_writes.py").read_text()
+    tree = _ast.parse(source)
+    main = next(n for n in tree.body if isinstance(n, _ast.FunctionDef) and n.name == "main")
+    text = _ast.unparse(main)
+    assert "replay_api_keys(target" in text
+    assert "other_rows = [r for r in replay_rows if r[0] != 'api_key']" in text
 
 
-def test_every_writer_of_a_keys_limits_is_known() -> None:
-    found = _scan()
-    unknown = sorted(found - ALLOWED_WRITERS.keys())
-    assert not unknown, (
-        "New writers of an API key's limits, their tr_key_limit mirrors or the api_key entity. "
-        "Route limit changes through storage_key_patch.apply_key_patch (StrictKeyFirstLimit), "
-        f"then list each here with why it cannot give a limitless strict key a first limit: {unknown}"
+# --- the reshard tool -----------------------------------------------------
+
+
+def test_a_strict_key_is_never_resharded() -> None:
+    """storage_gcp_key_shard_admin refuses a strict key before writing: its
+    shard count stays 1 and its counter rows are untouched, whatever the
+    target (a strict key's authorize requires exactly one shard)."""
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
+    from trusted_router.storage_gcp_key_shard_admin import (
+        inspect_key_usage_reshard,
+        reshard_key_usage,
     )
+    from trusted_router.storage_models import CreditAccount, Workspace
 
-
-def test_the_writer_inventory_has_no_dead_entries() -> None:
-    dead = sorted(ALLOWED_WRITERS.keys() - _scan())
-    assert not dead, f"Listed writers no longer found; remove them: {dead}"
-
-
-def test_the_inventory_scanner_finds_what_it_must(tmp_path: Path) -> None:
-    """A positive control: each shape the scanner looks for, in a file it has
-    never seen, is reported."""
-    sample = tmp_path / "sample.py"
-    sample.write_text(
-        "def a(key):\n    key.limit_daily_microdollars = 5\n"
-        "def b(key, w):\n    setattr(key, f'limit_{w}_microdollars', 5)\n"
-        "def b2(key, patch):\n    for f in ('limit_weekly_microdollars',):\n        setattr(key, f, patch[f])\n"
-        "def c(key):\n    return replace(key, limit_microdollars=5)\n"
-        "def d(store):\n    store.update_key('h', {'limit': 5})\n"
-        "def e(io, tx, key):\n    io.write_entity_tx(tx, 'api_key', key.hash, key)\n"
-        "def f(conn):\n    conn.execute('UPDATE tr_key_limit SET day_limit_micro = 5')\n"
-        "def g(row, name):\n    setattr(row, name, 1)\n"
-        "COLUMNS = ('key_hash', 'month_limit_micro')\n"
-    )
-    assert set(_writers(sample)) == {
-        ("assign", "a"), ("setattr", "b"), ("setattr", "b2"), ("replace", "c"), ("update_key", "d"),
-        ("entity", "e"), ("mirror", "f"), ("mirror", "<module>"),
+    store, database = make_fake_store()
+    store._write_entity("workspace", "ws-strict-shards", Workspace(
+        id="ws-strict-shards", name="w", owner_user_id="owner", billing_paused=True))
+    store._write_entity("credit", "ws-strict-shards", CreditAccount(workspace_id="ws-strict-shards"))
+    database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[("ws-strict-shards", 0)] = {
+        "workspace_id": "ws-strict-shards", "shard": 0, "total_credits": 1_000_000, "total_usage": 0,
+        "reserved": 0, "source_updated_at": None, "updated_at": None,
     }
+    _raw, key = store.api_keys.create(workspace_id="ws-strict-shards", name="strict", creator_user_id=None,
+                                      budget_strict=True)
+    before = {k: dict(v) for k, v in database.typed[KEY_LIMIT_TABLE].items() if k[0] == key.hash}
+    for target in (2, 16):
+        status = reshard_key_usage(store, key.hash, target, apply=True)
+        assert not status.ready and not status.applied
+        assert any("never reshard a strict key" in reason for reason in status.reasons)
+        assert not inspect_key_usage_reshard(store, key.hash, target).ready
+    assert store.get_key_by_hash(key.hash).usage_shard_count == 1
+    after = {k: dict(v) for k, v in database.typed[KEY_LIMIT_TABLE].items() if k[0] == key.hash}
+    assert after == before
