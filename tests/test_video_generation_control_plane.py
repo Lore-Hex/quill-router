@@ -131,7 +131,6 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         model = MODELS[model_id]
         assert model.supports_video is True
         assert model.supports_chat is False
-        assert model.prepaid_available is True
         assert model.byok_available is False
         endpoints = endpoints_for_model(model_id)
         hosts = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
@@ -144,6 +143,8 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
             and not closed_weight_route_disallowed(host, model_id)
         ]
         assert [endpoint.provider for endpoint in endpoints] == expected
+        # A model whose every host is held claims no availability.
+        assert model.prepaid_available is bool(expected)
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
         assert all(endpoint.upstream_id for endpoint in endpoints)
 
@@ -172,8 +173,11 @@ def test_closed_video_models_route_only_through_their_makers() -> None:
     assert omni.prepaid_available is False and omni.byok_available is False
     # Seedance routes only through BytePlus, Runway only through Runway, and
     # MiniMax Hailuo (Venice, Atlas Cloud, fal) has no first-party route.
+    # An operator hold on BytePlus leaves Seedance with no route at all.
+    seedance_hosts = [] if "byteplus" in PREPAID_PROVIDER_HOLD_REASONS else ["byteplus"]
     for model_id in ("bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast"):
-        assert [endpoint.provider for endpoint in endpoints_for_model(model_id)] == ["byteplus"]
+        assert [endpoint.provider for endpoint in endpoints_for_model(model_id)] == seedance_hosts
+        assert MODELS[model_id].prepaid_available is bool(seedance_hosts)
     assert [endpoint.provider for endpoint in endpoints_for_model("runway/gen-4.5")] == ["runway"]
     for model_id in ("minimax/hailuo-3", "minimax/h3-max"):
         assert not endpoints_for_model(model_id)

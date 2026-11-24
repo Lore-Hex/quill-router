@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.storage import STORE
 from trusted_router.storage_models import ProviderBenchmarkSample, VideoJob
 from trusted_router.synthetic.video_leaderboard import aggregate_video_leaderboard
@@ -123,7 +124,9 @@ def test_video_leaderboard_page_and_json_are_separate_from_text_metrics() -> Non
     data = payload.json()["data"]
     assert data["model_count"] > 1
     routes = {(row["provider"], row["model"]) for row in data["models"]}
-    assert ("byteplus", "bytedance/seedance-2.5") in routes
+    # A prepaid operator hold drops the maker's route from the configured set.
+    seedance_on_byteplus = ("byteplus", "bytedance/seedance-2.5") in routes
+    assert seedance_on_byteplus == ("byteplus" not in PREPAID_PROVIDER_HOLD_REASONS)
     # Hailuo 3 lost its only (reseller) routes to the closed-weight rule.
     assert ("atlas-cloud", "minimax/hailuo-3") not in routes
     assert ("ltx", "lightricks/ltx-2.3-fast") in routes

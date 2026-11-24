@@ -91,6 +91,14 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # unaffected. Delete this line only after the key or account is fixed and
     # a paid-path recovery canary succeeds.
     "nscale": "provider-access-unavailable",
+    # November 24: BytePlus shut the account for an overdue bill on
+    # 2026-11-24 ("service in BytePlus ModelArk_open_source_llm has been shut
+    # down due to the overdue payment"); every probe was refused with HTTP
+    # 401/403 (Sentry QUILL-ROUTER-J5). BytePlus is prepaid-only and the sole
+    # authorized source for closed-weight ByteDance/Seed models, so those
+    # models leave the catalog until this clears. Adapter, manifest and
+    # secrets are kept; lift after the bill is paid and a paid canary passes.
+    "byteplus": "operator-credit-exhausted",
     # Sonar is now reformulated as Agent API calls. Its reported input/search
     # costs no longer reconcile with the old fixed-fee catalog contract.
     # Keep managed billing dark until a reviewed adapter accounts for them.
