@@ -69,6 +69,12 @@ const (
 	// also ends with the decide budget: past either the request passes
 	// (key_window.unread), so the budgets above are unchanged.
 	WindowReadBudget = 300 * time.Millisecond
+	// MaxCacheWait bounds DecideConfig.CacheWait, the read-through's wait
+	// for a cold or stale cache entry's read (decision 2): it is spent
+	// before the admit, out of the decide budget, so with it the admit
+	// keeps at least 1.25 s, and a pass slow only by it stays under
+	// SlowAtEdge.
+	MaxCacheWait = 250 * time.Millisecond
 )
 
 // The decide path's alert kinds (the fastpath_alert label of the service's
@@ -173,6 +179,23 @@ type DecideConfig struct {
 	// Alert raises an alert of a kind (the service's alert line, labelled
 	// fastpath_alert); nil logs it.
 	Alert func(kind, subject, what string)
+	// CacheWait is the read-through (docs/design/fast-admission-e2-decide.md
+	// decision 2, -edge-decide-cache-wait): how long a request whose key
+	// entry, or the credit entry its facts need, is cold or stale waits for
+	// the read that fills it (KeyCacheWaiter, gwstate.Cache.LookupWithin)
+	// before the pipeline reads the cache, at most MaxCacheWait. The read is
+	// the one the miss starts anyway, and what it found is decided on only
+	// as a fresh entry is; a read slower than the wait passes the request
+	// (cache.key) as before. 0, the default, waits for none: a cold or stale
+	// entry passes at once. The decide shadow never waits.
+	CacheWait time.Duration
+}
+
+// KeyCacheWaiter is a KeyCache that can wait a bounded time for the read
+// that fills a cold or stale entry (gwstate.Cache.LookupWithin): the decide
+// path's read-through (DecideConfig.CacheWait).
+type KeyCacheWaiter interface {
+	LookupWithin(lookupHash string, now time.Time, wait time.Duration) gwstate.Read
 }
 
 // KeyPeeker is a KeyCache that says which workspace a key it holds names
@@ -255,6 +278,14 @@ type decider struct {
 // reason in one line and its mix in the next. mixDropped counts the mixes
 // not counted because the worker's queue was full (or the decide path had
 // stopped).
+//
+// cacheMiss counts the requests whose key entry the pipeline's lookup found
+// cold or stale, by why (gwstate's Miss* names, Read.KeyMiss), whatever the
+// request then came to: with no wait each is a cache.key pass, so the map
+// says why those passed. cacheWait counts the read-through's waits by what
+// they came to (gwstate's Wait* names, Read.Wait), and cacheWaitTime their
+// time: a filled wait's request went on to be decided where it would have
+// passed cache.key.
 type decideTally struct {
 	answered, readBack, refunded, refundFailed, slowOwn int64
 	unavailable, passed, slow, windows, via             map[string]int64
@@ -262,12 +293,15 @@ type decideTally struct {
 	floatAt, passedEnabled, passedUnknown               map[string]int64
 	mixDropped                                          int64
 	ticketCall, ticketWait, insertCall                  elapsedTotals
+	cacheMiss, cacheWait                                map[string]int64
+	cacheWaitTime                                       elapsedTotals
 }
 
 func newDecideTally() decideTally {
 	return decideTally{unavailable: map[string]int64{}, passed: map[string]int64{}, slow: map[string]int64{},
 		windows: map[string]int64{}, via: map[string]int64{}, tickets: map[string]int64{},
-		floatAt: map[string]int64{}, passedEnabled: map[string]int64{}, passedUnknown: map[string]int64{}}
+		floatAt: map[string]int64{}, passedEnabled: map[string]int64{}, passedUnknown: map[string]int64{},
+		cacheMiss: map[string]int64{}, cacheWait: map[string]int64{}}
 }
 
 func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.Time, every time.Duration) *decider {
@@ -278,6 +312,34 @@ func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.T
 		slowAtEdge: SlowAtEdge, slowInAll: SlowInAll, total: newDecideTally(), period: newDecideTally(),
 		measure: true, lenient: lenientLookupHash, mixes: make(chan *pendingMix, mixQueue),
 		mixQuit: make(chan struct{})}
+}
+
+// lookup is the pipeline's cache lookup: the cache's LookupWithin for
+// CacheWait, or with no wait its Lookup. New refuses a wait past
+// MaxCacheWait, or with a cache that cannot wait.
+func (dp *decider) lookup(lookupHash string, now time.Time) gwstate.Read {
+	if w, ok := dp.cfg.Cache.(KeyCacheWaiter); ok && dp.cfg.CacheWait > 0 {
+		return w.LookupWithin(lookupHash, now, dp.cfg.CacheWait)
+	}
+	return dp.cfg.Cache.Lookup(lookupHash, now)
+}
+
+// countLookup counts what the pipeline's lookup found of the key's entry
+// (cacheMiss) and what its wait came to (cacheWait): nothing for a request
+// not looked up, or found fresh with no wait.
+func (dp *decider) countLookup(r gwstate.Read) {
+	if r.KeyMiss == "" && r.Wait == "" {
+		return
+	}
+	dp.count(func(t *decideTally) {
+		if r.KeyMiss != "" {
+			t.cacheMiss[r.KeyMiss]++
+		}
+		if r.Wait != "" {
+			t.cacheWait[r.Wait]++
+			t.cacheWaitTime.add(r.Waited)
+		}
+	})
 }
 
 // count adds to the period's counts and the totals.
@@ -351,7 +413,7 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 	// One admitter for the request: its switch copy is the pipeline's
 	// not_enabled gate, and it admits what the pipeline decides.
 	admitter := e.cfg.Admitter.Load()
-	in := DecideInputs{Request: RequestOf(r, at, body, seen), Lookup: dp.cfg.Cache.Lookup, Decide: dp.decides.view(),
+	in := DecideInputs{Request: RequestOf(r, at, body, seen), Lookup: dp.lookup, Decide: dp.decides.view(),
 		Enabled: enabledOf(admitter), Mint: dp.cfg.Mint}
 	if e.poller != nil {
 		if h := e.poller.snapshot(); h != nil {
@@ -365,6 +427,7 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 	}
 	decided := Decide(in)
 	routed := time.Now()
+	dp.countLookup(decided.Read)
 	passed = decidePassed{lookupHash: decided.LookupHash, workspace: decided.Workspace, arrived: arrived}
 	pass := func(reason string) (bool, decidePassed) {
 		dp.pass(reason)
@@ -879,13 +942,16 @@ func pauseAnswer(resp *http.Response) bool {
 // first float is (FloatAt), the passes of a workspace the switch copy
 // enables (PassedEnabled) and those whose workspace is not known
 // (PassedUnknown, EnabledUnknown in all), each by reason, and the mixes
-// dropped uncounted (MixDropped).
+// dropped uncounted (MixDropped); and the lookups that found the key's entry
+// cold or stale by why (CacheMiss) and the read-through's waits by what they
+// came to (CacheWait), decideTally's cacheMiss and cacheWait.
 type DecideCounts struct {
 	Answered, ReadBack, Unavailable, Refunded, RefundFailed int64
 	UnavailableByCode, Passed, Slow, Windows, DecidedVia    map[string]int64
 	Tickets                                                 map[string]int64
 	FloatAt, PassedEnabled, PassedUnknown                   map[string]int64
 	EnabledUnknown, MixDropped                              int64
+	CacheMiss, CacheWait                                    map[string]int64
 }
 
 // DecideCounts are the counts now; zero with the decide path off.
@@ -902,7 +968,8 @@ func (e *Edge) DecideCounts() DecideCounts {
 		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow), Windows: maps.Clone(t.windows),
 		DecidedVia: maps.Clone(t.via), Tickets: maps.Clone(t.tickets), FloatAt: maps.Clone(t.floatAt),
 		PassedEnabled: maps.Clone(t.passedEnabled), PassedUnknown: maps.Clone(t.passedUnknown),
-		EnabledUnknown: sum(t.passedUnknown), MixDropped: t.mixDropped}
+		EnabledUnknown: sum(t.passedUnknown), MixDropped: t.mixDropped, CacheMiss: maps.Clone(t.cacheMiss),
+		CacheWait: maps.Clone(t.cacheWait)}
 }
 
 func sum(m map[string]int64) int64 {
@@ -963,17 +1030,19 @@ func (dp *decider) flush() {
 		bodyRecent += n
 	}
 	dp.mu.Unlock()
-	// The pass mix goes last, after every field a reader of the line before
-	// it knew.
+	// The pass mix goes after every field a reader of the line before it
+	// knew, and the cache's counts after it.
 	dp.logf("fastpath edge decide: answered=%d read_back=%d unavailable=%d refunded=%d refund_failed=%d "+
 		"unavailable_by_code=%s passed=%s slow=%s windows=%s decided_via=%s tickets=%s "+
 		"ticket_call_ms_sum=%d ticket_call_ms_max=%d ticket_wait_ms_sum=%d ticket_wait_ms_max=%d "+
 		"insert_call_ms_sum=%d insert_call_ms_max=%d float_at=%s passed_enabled=%s passed_unknown=%s "+
-		"enabled_unknown=%d mix_dropped=%d", p.answered, p.readBack, unavailable,
+		"enabled_unknown=%d mix_dropped=%d cache_miss=%s cache_wait=%s cache_wait_ms_sum=%d cache_wait_ms_max=%d",
+		p.answered, p.readBack, unavailable,
 		p.refunded, p.refundFailed, jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow), jsonOf(p.windows),
 		jsonOf(p.via), jsonOf(p.tickets), p.ticketCall.sum, p.ticketCall.max, p.ticketWait.sum, p.ticketWait.max,
 		p.insertCall.sum, p.insertCall.max, jsonOf(p.floatAt), jsonOf(p.passedEnabled), jsonOf(p.passedUnknown),
-		sum(p.passedUnknown), p.mixDropped)
+		sum(p.passedUnknown), p.mixDropped, jsonOf(p.cacheMiss), jsonOf(p.cacheWait), p.cacheWaitTime.sum,
+		p.cacheWaitTime.max)
 	if unavailable > 0 {
 		dp.alert(AlertUnavailable, fmt.Sprintf("the edge answered %d authorizes unavailable, their insert's "+
 			"outcome not known; by the insert's gRPC code: %s", unavailable, jsonOf(p.unavailable)))

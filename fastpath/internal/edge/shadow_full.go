@@ -1764,8 +1764,9 @@ func (sh *fullShadow) flush() {
 	if c, ok := sh.cfg.Cache.(cacheCounters); ok {
 		n, was := c.Counters(), sh.cacheAt
 		sh.cacheAt = n
-		line += " cache_unrefreshed=%d cache_dropped=%d cache_read_failures=%d"
-		args = append(args, n.Unrefreshed-was.Unrefreshed, n.Dropped-was.Dropped, n.ReadFailures-was.ReadFailures)
+		line += " cache_unrefreshed=%d cache_dropped=%d cache_read_failures=%d cache_read_timeouts=%d"
+		args = append(args, n.Unrefreshed-was.Unrefreshed, n.Dropped-was.Dropped, n.ReadFailures-was.ReadFailures,
+			n.ReadTimeouts-was.ReadTimeouts)
 	}
 	sh.logf(line, args...)
 	sh.raceAlerts(time.Now())

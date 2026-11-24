@@ -71,7 +71,7 @@ def test_the_flag_waits_for_the_attribute_and_a_release_that_takes_it() -> None:
     tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
     local = re.findall(r'^\s*fastpath_settle_hedge\s*=\s*"([^"]*)"$', tf, re.M)
     assert len(local) == 1, local
-    assert "local.fastpath_settle_hedge_metadata)" in tf
+    assert re.search(r"local\.fastpath_settle_hedge_metadata[,)]", tf)
     if local[0]:
         assert re.fullmatch(r"0|[1-9][0-9]{0,3}ms", local[0]), local[0]
         pinned = re.search(r'fastpath_release\s*=\s*"([0-9a-f]{40})"', tf)

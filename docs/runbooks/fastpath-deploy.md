@@ -614,6 +614,58 @@ The script refuses any value but `0` or `1ms` to `9999ms` before writing the
 unit. The attribute is set only with a pinned release that takes
 `-settle-hedge` ("A flag the unit passes"); `""` leaves it off.
 
+## The decide cache's wait
+
+The decide path reads a key's facts and its workspace's credit rows from
+the edge's cache (`gwstate.Cache`). An entry not used for a minute is not
+refreshed, and 15 s later it is stale, so a key whose requests reach a node
+more than about 75 s apart finds it stale every time and passes as
+`cache.key`, as does a key the node has never seen or whose entry Python's
+refusal evicted. `-edge-decide-cache-wait` (0 by default, at most 250ms)
+has such a request wait up to that long for the strong read the miss starts
+anyway, and be decided on what it read, rather than pass
+(`docs/design/fast-admission-e2-decide.md` decision 2). It adds no read and
+never widens what the edge decides on: the read began after the request
+arrived, or within the facts' 15 s of it, and an eviction during the wait
+discards it. A read slower than the wait passes the request as before.
+
+The decide line counts it (`fastpath edge decide:`): `cache_miss` is the
+period's lookups whose key entry was cold or stale, by why
+(`cold.new`, `cold.evicted`, `cold.displaced`, `cold.negative`,
+`cold.read_failed`, `cold.read_timeout`, `stale.idle`, `stale.unrefreshed`,
+`stale.read_failed`, `stale.read_timeout`); with no wait each of them is a
+`cache.key` pass. `cache_wait` counts the waits by what they came to
+(`filled`, `unfilled`, `timed_out`), `cache_wait_ms_sum` and
+`cache_wait_ms_max` their time. With the wait on, `passed["cache.key"]`
+should fall to about `cache_wait["timed_out"]` plus `cache_wait["unfilled"]`,
+and `answered` rise by part of `cache_wait["filled"]` (a filled request may
+still pass a later gate, such as `key.budget_strict`). The decide shadow's
+line carries `cache_read_timeouts` beside `cache_read_failures`.
+
+Turning it on, one node first:
+
+1. Pin a release that takes `-edge-decide-cache-wait` ("Pinning a
+   release"). The decide line's `cache_miss` reads from then, with the wait
+   still off: a week of it says how many `cache.key` passes the wait could
+   take.
+2. On a node created from the script that reads
+   `fastpath-edge-decide-cache-wait` (check: `gcloud compute instances
+   describe NODE --zone=ZONE --project=quill-cloud-proxy
+   --format='value(metadata.items.startup-script)' | grep -c
+   decide-cache-wait` is not 0), set the attribute for that node alone, or
+   `fastpath_edge_decide_cache_wait = "100ms"` in `infra/fastpath.tf` for
+   all, apply (metadata, in place), and take the node by the unit rewrite
+   as for the settle log's hedge above; read `-edge-decide-cache-wait
+   100ms` back from the running process.
+3. Over an hour, compare the node's `passed["cache.key"]` share of its
+   authorizes with the other node's, and check `cache_wait_ms_max` (at most
+   the wait), `slow` (no new `at_edge.decide`) and `unavailable`.
+
+Turning it off: `fastpath_edge_decide_cache_wait = "0"` (or `""`), applied,
+and each node taken by the unit rewrite; or pin the release before it. The
+script refuses any value but `0` or `1ms` to `250ms`, and the attribute
+without `fastpath-edge-decide` `"true"`, before writing the unit.
+
 ## The front door's publish wait and its minute line
 
 A settle's full record goes to the record topic, and the front door waits

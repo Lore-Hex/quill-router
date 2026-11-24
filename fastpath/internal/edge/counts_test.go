@@ -64,14 +64,17 @@ func TestTheDecideLineReadsBackAsItsCounts(t *testing.T) {
 		"ticket_call_ms_sum": totals.ticketCall.sum, "ticket_call_ms_max": totals.ticketCall.max,
 		"ticket_wait_ms_sum": totals.ticketWait.sum, "ticket_wait_ms_max": totals.ticketWait.max,
 		"insert_call_ms_sum": totals.insertCall.sum, "insert_call_ms_max": totals.insertCall.max,
-		"enabled_unknown": want.EnabledUnknown, "mix_dropped": want.MixDropped}) ||
+		"enabled_unknown": want.EnabledUnknown, "mix_dropped": want.MixDropped,
+		"cache_wait_ms_sum": totals.cacheWaitTime.sum, "cache_wait_ms_max": totals.cacheWaitTime.max}) ||
 		!maps.Equal(got.ByName["unavailable_by_code"], want.UnavailableByCode) ||
 		!maps.Equal(got.ByName["passed"], want.Passed) || !maps.Equal(got.ByName["slow"], want.Slow) ||
 		!maps.Equal(got.ByName["windows"], want.Windows) ||
 		!maps.Equal(got.ByName["decided_via"], want.DecidedVia) || !maps.Equal(got.ByName["tickets"], want.Tickets) ||
 		!maps.Equal(got.ByName["float_at"], want.FloatAt) ||
 		!maps.Equal(got.ByName["passed_enabled"], want.PassedEnabled) ||
-		!maps.Equal(got.ByName["passed_unknown"], want.PassedUnknown) || len(got.ByName) != 9 {
+		!maps.Equal(got.ByName["passed_unknown"], want.PassedUnknown) ||
+		!maps.Equal(got.ByName["cache_miss"], want.CacheMiss) || !maps.Equal(got.ByName["cache_wait"], want.CacheWait) ||
+		len(got.ByName) != 11 {
 		t.Fatalf("read back %+v, counted %+v", got, want)
 	}
 	// The two insert passes are of the case's workspace, which the switch
@@ -175,7 +178,8 @@ func TestTheDecideShadowLinesReadBackAsTheirCounts(t *testing.T) {
 	// The cache's counts, each the sum of the periods'.
 	cache := h.cache.Counters()
 	if counts["cache_unrefreshed"] != cache.Unrefreshed || counts["cache_dropped"] != cache.Dropped ||
-		counts["cache_read_failures"] != cache.ReadFailures || cache.ReadFailures != 7 {
+		counts["cache_read_failures"] != cache.ReadFailures || cache.ReadFailures != 7 ||
+		counts["cache_read_timeouts"] != cache.ReadTimeouts || cache.ReadTimeouts != 3 {
 		t.Fatalf("the cache's counts read back %v, the cache's %+v", counts, cache)
 	}
 	// Every request Go would decide is in the cohort, by class.
