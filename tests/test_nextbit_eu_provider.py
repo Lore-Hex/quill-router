@@ -2,6 +2,7 @@
 
 import copy
 import json
+from dataclasses import replace
 
 import pytest
 from fastapi import HTTPException
@@ -44,7 +45,10 @@ def test_eu_discovery_prices_canaries_and_manifest_are_isolated(monkeypatch, tmp
 
     monkeypatch.setattr(_direct_openai, "fetch_json", fetch)
     monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
-    adapter = DirectOpenAIProvider(nextbit_eu.CATALOG.spec, manifest_path=tmp_path / "eu.json")
+    # This test covers EU isolation, not the operator hold on gemma-3-27b
+    # (see test_eu_gemma_3_27b_hold_survives_refresh_and_canary).
+    spec = replace(nextbit_eu.CATALOG.spec, operator_hold_reasons={})
+    adapter = DirectOpenAIProvider(spec, manifest_path=tmp_path / "eu.json")
     result = adapter.fetch()
     assert set(result.prices) == {"google/gemma-3-27b-it", "google/gemma-3-12b-it"}
     price = result.prices["google/gemma-3-27b-it"]
@@ -139,3 +143,83 @@ def test_eu_routes_are_eligible_for_constrained_aliases(monkeypatch, alias):
     )
     assert routes
     assert {endpoint.provider for _, endpoint in routes} == {"nextbit-eu"}
+
+
+GEMMA_3_27B = "google/gemma-3-27b-it"
+# A NextBit EU route that still probes healthy, so it stays served.
+EU_CONTROL = "google/gemma-3-12b-it"
+
+
+def test_eu_gemma_3_27b_is_held_while_the_provider_rate_limits_it():
+    # Since 2026-11-22 every configured-route probe fails with HTTP 429
+    # (Sentry QUILL-ROUTER-HT) and the 24h outage hold only deferred it.
+    # Only this EU route is held; its global twin and EU siblings serve.
+    from tests import catalog_vehicles
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    assert nextbit_eu._OPERATOR_HOLD_REASONS == {GEMMA_3_27B: "provider-access-unavailable"}
+    assert nextbit_eu.CATALOG.spec.operator_hold_reasons == nextbit_eu._OPERATOR_HOLD_REASONS
+    assert GEMMA_3_27B not in nextbit.CATALOG.spec.operator_hold_reasons
+    rows = {row["id"]: row for row in json.loads(nextbit_eu.MANIFEST_PATH.read_text())["models"]}
+    assert rows[GEMMA_3_27B]["upstream_id"] == "gemma3:27b"
+    assert rows[GEMMA_3_27B]["routable"] is False
+    assert rows[GEMMA_3_27B]["routable_reason"] == "provider-access-unavailable"
+    assert rows[EU_CONTROL].get("routable") is not False
+    built = catalog_vehicles.registry_endpoints()
+    assert f"{GEMMA_3_27B}@nextbit-eu/prepaid" not in built
+    assert f"{EU_CONTROL}@nextbit-eu/prepaid" in built
+    assert not any(
+        endpoint.provider == "nextbit-eu" and endpoint.model_id == GEMMA_3_27B
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
+
+
+def test_eu_gemma_3_27b_hold_survives_refresh_and_canary(monkeypatch, tmp_path):
+    # Neither a fresh listing with a price nor a passing canary may re-admit
+    # the route: only deleting the hold entry does. The shared direct-OpenAI
+    # writer keeps the held price for settling already-authorized calls, and
+    # the hourly refresh drops the held row from snapshot endpoints.
+    from scripts.pricing import refresh
+
+    monkeypatch.setenv("NEXTBIT_API_KEY", "fixture-key")
+    manifest = tmp_path / "nextbit-eu.json"
+    manifest.write_text(json.dumps({"provider": "nextbit-eu", "models": [
+        {"id": GEMMA_3_27B, "upstream_id": "gemma3:27b", "routable": True,
+         "input_token_price_per_m": 80_000, "output_token_price_per_m": 350_000},
+        {"id": EU_CONTROL, "upstream_id": "gemma3:12b-it", "routable": True,
+         "input_token_price_per_m": 80_000, "output_token_price_per_m": 350_000},
+    ]}))
+    monkeypatch.setattr(
+        _direct_openai, "fetch_json",
+        lambda *_a, **_kw: {"data": [eu_row(), eu_row("gemma3:12b-it")]},
+    )
+    probed = []
+
+    def probe(**kwargs):
+        probed.append(kwargs["model"])
+        return True
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
+    adapter = DirectOpenAIProvider(nextbit_eu.CATALOG.spec, manifest_path=manifest)
+    result = adapter.fetch()
+    assert GEMMA_3_27B in result.prices
+    # A held route is never canaried, so a PONG cannot lift it.
+    assert "gemma3:27b" not in probed
+    adapter.write_provider_manifest(result)
+    by_id = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+    assert by_id[GEMMA_3_27B]["routable"] is False
+    assert by_id[GEMMA_3_27B]["routable_reason"] == "provider-access-unavailable"
+    assert by_id[EU_CONTROL]["routable"] is True
+    # The hourly refresh keeps the committed held row out of snapshot endpoints.
+    assert GEMMA_3_27B in refresh._manifest_held_routes()["nextbit-eu"]
+
+
+def test_eu_gemma_3_27b_is_out_of_the_committed_snapshot():
+    from pathlib import Path
+
+    path = Path(nextbit_eu.MANIFEST_PATH).parents[1] / "openrouter_snapshot.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    model = next(model for model in snapshot["models"] if model["id"] == GEMMA_3_27B)
+    providers = {e.get("tr_provider_slug") for e in model["endpoints"]}
+    assert "nextbit-eu" not in providers
+    assert "nextbit" in providers  # The global route is not held.

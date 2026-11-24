@@ -8104,23 +8104,6 @@
           "quantization": "unknown"
         },
         {
-          "name": "nextbit-eu | google/gemma-3-27b-it",
-          "model_id": "google/gemma-3-27b-it",
-          "model_name": "Google: Gemma 3 27B",
-          "provider_name": "nextbit-eu",
-          "tag": "nextbit-eu",
-          "tr_provider_slug": "nextbit-eu",
-          "context_length": 131072,
-          "pricing": {
-            "prompt": "0.00000008",
-            "completion": "0.00000035",
-            "input_cache_read": "0.00000004"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
           "name": "amazon-bedrock | google/gemma-3-27b-it",
           "model_id": "google/gemma-3-27b-it",
           "model_name": "Google: Gemma 3 27B",
