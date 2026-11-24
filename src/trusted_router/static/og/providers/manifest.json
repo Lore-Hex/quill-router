@@ -226,28 +226,28 @@
   },
   "decisionmodelsio": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio"
   },
   "decisionmodelsio-eu": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 5,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio-eu"
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 77,
+    "model_count": 78,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 153,
+    "route_count": 155,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
