@@ -798,3 +798,27 @@ def test_the_leased_usage_backfill_assigns_no_limit_column() -> None:
     assert not assigns_limit_column(sql)
     assert not any(f"{column} =" in sql for column in LIMIT_COLUMNS)
     assert assigns_limit_column(sql.replace("usage = usage + 3", "limit_micro = 1"))
+
+
+def test_the_key_release_assigns_no_limit_column() -> None:
+    """storage_gcp_counter_dml.release_key_statement builds its window SQL
+    with str.replace in a loop, which the inventory's scanner cannot
+    resolve, so it fails closed there. Every statement it returns, for both
+    usage columns and each window mode, is one the strict grammar clears,
+    assigning reserved, usage or byok_usage and window usage only."""
+    import datetime as dt
+
+    from tests.fakes.spanner import _ParamTypes
+    from tests.key_limit_writers import LIMIT_COLUMNS, written_columns
+    from trusted_router.spend_windows import window_floors
+    from trusted_router.storage_gcp_counter_dml import release_key_statement
+
+    floors = window_floors(dt.datetime(2026, 11, 24, tzinfo=dt.UTC))
+    for book_to_byok in (False, True):
+        for windows in ("current", "stale", "any"):
+            sql, _params, _types = release_key_statement(
+                _ParamTypes(), "kh", 1, 1, book_to_byok=book_to_byok, window_floors=floors, windows=windows)
+            columns = written_columns(sql)
+            assert columns is not None, (book_to_byok, windows)
+            assert {"reserved", "byok_usage" if book_to_byok else "usage", "day_usage"} <= columns
+            assert not columns & LIMIT_COLUMNS, (book_to_byok, windows, columns)

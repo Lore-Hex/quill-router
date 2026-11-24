@@ -65,6 +65,12 @@ LIMIT_COLUMN_EXCEPTIONS = {
         "its SET list is built at run time from usage and window usage only "
         "(tests/test_strict_key_first_limit.py::test_the_leased_usage_backfill_assigns_no_limit_column)"
     ),
+    ("src/trusted_router/storage_gcp_counter_dml.py", "release_key_statement"): (
+        "its window SQL is built with str.replace in a loop, which the scanner cannot resolve, so the "
+        "statement holds a part filled in at run time and fails closed; every statement it returns, in each "
+        "mode, assigns reserved, usage or byok_usage and window usage only "
+        "(tests/test_strict_key_first_limit.py::test_the_key_release_assigns_no_limit_column)"
+    ),
 }
 
 KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
@@ -80,7 +86,10 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
     ),
     # Counter DML: no limit column assigned.
     ("key_limit.sql", "src/trusted_router/storage_gcp_counter_dml.py", "reserve_key_statement"): _COUNTER_DML,
-    ("key_limit.sql", "src/trusted_router/storage_gcp_counter_dml.py", "release_key_statement"): _COUNTER_DML,
+    ("key_limit.sql", "src/trusted_router/storage_gcp_counter_dml.py", "release_key_statement"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[("src/trusted_router/storage_gcp_counter_dml.py",
+                                                                 "release_key_statement")]
+    ),
     ("key_limit.sql", "src/trusted_router/storage_gcp_strict_budget.py", "reserve_strict_key"): _COUNTER_DML,
     ("key_limit.sql", "src/trusted_router/storage_postgres.py", "PostgresStore._release_key_hold_tx"): _COUNTER_DML,
     ("key_limit.sql", "src/trusted_router/storage_postgres.py",
@@ -355,13 +364,13 @@ def test_reads_and_mentions_are_not_writes(tmp_path: Path, name: str, source: st
 
 
 @pytest.mark.parametrize(("name", "suffix", "source", "expected"), [
-    # A shell argument's quoting is not SQL's: DML in one counts as writing
-    # every column until listed. A heredoc is SQL as written.
+    # Only a .sql file is read as SQL: DML near the table in any other text
+    # (a shell argument or heredoc, YAML, Go) counts as writing every column.
     ("shell DML in an argument", ".sh",
      "gcloud spanner databases execute-sql db --sql=\"UPDATE TR_KEY_LIMIT SET reserved=0\"\n",
      {("key_limit.text", "<file>"): True}),
     ("shell heredoc DML", ".sh", "psql <<'SQL'\nUPDATE tr_key_limit SET reserved = 0 WHERE key_hash = 'k;';\nSQL\n",
-     {("key_limit.text", "<file>"): False}),
+     {("key_limit.text", "<file>"): True}),
     ("shell heredoc limit", ".sh", "psql <<'SQL'\nUPDATE tr_key_limit SET reserved = 0, limit_micro = 1;\nSQL\n",
      {("key_limit.text", "<file>"): True}),
     ("SQL file delete", ".sql", "delete from tr_key_limit where key_hash = 'k';\n",
@@ -441,8 +450,8 @@ COLUMN_FORMS = [
      "(workspace_id, key_hash, shard) DO NOTHING", False),
     ("a target filled in", "UPDATE tr_key_limit SET {} WHERE key_hash = %s", True),
     ("an expression as a target", "UPDATE tr_key_limit SET coalesce(x) = 1", True),
-    ("DML and the table, no statement on it read", "UPDATE tr_key_limit_shadow SET a = 1; SELECT 1 FROM tr_key_limit",
-     True),
+    ("DML on another table, a read of this one", "UPDATE tr_key_limit_shadow SET a = 1; SELECT 1 FROM tr_key_limit",
+     False),
     ("a delete", "DELETE FROM tr_key_limit WHERE key_hash = %s", False),
     ("a merge", "MERGE INTO tr_key_limit USING x ON y WHEN MATCHED THEN UPDATE SET reserved = 0", True),
     # Review round 4: a boundary inside quotes or a comment is none. The
@@ -476,7 +485,38 @@ COLUMN_FORMS = [
     ("a CTE before the update", "WITH x AS (SELECT 5 AS cap) UPDATE public.tr_key_limit SET (reserved, "
      "day_limit_micro) = (0, (SELECT cap FROM x)) WHERE key_hash = %s", True),
     ("an update inside a CTE", "WITH u AS (UPDATE tr_key_limit SET reserved = 0 RETURNING key_hash) "
-     "SELECT * FROM u", False),
+     "SELECT * FROM u", True),
+    # Review round 6: the reviewer's probes, then what the grammar fails
+    # closed on by construction.
+    ("a nested block comment (the reviewer's)", "UPDATE tr_key_limit SET reserved = 0 /* outer /* inner */ ; */ , "
+     "day_limit_micro = 1 WHERE key_hash = %s", True),
+    ("a write beside one the grammar does not clear (the reviewer's)", "WITH u AS (UPDATE tr_key_limit SET reserved = 0 "
+     "WHERE FALSE RETURNING key_hash) UPDATE ONLY (tr_key_limit) SET day_limit_micro = 1 WHERE key_hash = %s", True),
+    ("a cleared statement beside one that is not", "UPDATE tr_key_limit SET reserved = 0; "
+     "UPDATE ONLY (tr_key_limit) SET day_limit_micro = 1", True),
+    ("a cleared statement beside a COPY", "UPDATE tr_key_limit SET reserved = 0; COPY tr_key_limit FROM STDIN", True),
+    ("a block comment that hides nothing", "UPDATE tr_key_limit SET reserved = 0 /* note */ WHERE key_hash = %s", True),
+    ("a hash comment", "UPDATE tr_key_limit SET reserved = 0 # ;\n , day_limit_micro = 1", True),
+    ("a backslash in a string", "UPDATE tr_key_limit SET reserved = length('a\\'), day_limit_micro = 1 WHERE x = 'b'",
+     True),
+    ("a triple-quoted string", "UPDATE tr_key_limit SET reserved = length(\'\'\'a\'b\'\'\'), day_limit_micro = 1",
+     True),
+    ("a prefixed literal", "UPDATE tr_key_limit SET reserved = length(E'x') WHERE key_hash = %s", True),
+    ("a parenthesized target", "UPDATE (tr_key_limit) SET reserved = 0", True),
+    ("ONLY", "UPDATE ONLY tr_key_limit SET reserved = 0", True),
+    ("a quoted target", 'UPDATE "tr_key_limit" SET reserved = 0', True),
+    ("a three-part target", "UPDATE db.public.tr_key_limit SET reserved = 0", True),
+    ("a write word in an expression", "UPDATE tr_key_limit SET reserved = (SELECT 0 FROM x WHERE y IN "
+     "(DELETE FROM z RETURNING 1))", True),
+    ("FROM after the SET list", "UPDATE tr_key_limit SET reserved = 0 FROM other WHERE other.k = key_hash", True),
+    ("a placeholder filled in at run time", "UPDATE tr_key_limit SET reserved = {} WHERE key_hash = %s", True),
+    ("a subquery in the SET list, no limit", "UPDATE tr_key_limit SET reserved = (SELECT 0 FROM x) WHERE key_hash = %s",
+     False),
+    ("an upsert updating a counter", "INSERT INTO tr_key_limit (key_hash, shard) VALUES (%s, 0) ON CONFLICT "
+     "(workspace_id, key_hash, shard) DO UPDATE SET reserved = 0", False),
+    ("a dollar quote, no limit", "UPDATE tr_key_limit SET reserved = length($$; where$$) WHERE key_hash = %s", False),
+    ("a cleared counter update", "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit SET reserved = reserved + @est "
+     "WHERE key_hash = @kh AND shard = @shard THEN RETURN reserved", False),
 ]
 
 
@@ -490,10 +530,31 @@ def test_each_way_to_write_a_limit_column_is_found(tmp_path: Path, name: str, sq
     assert _scan_sample(tmp_path, "sample.sql", sql + ";\n") == {("key_limit.text", "<file>"): writes_limit}, name
 
 
+def test_the_reviewers_unreadable_write_beside_a_cleared_one_is_caught(tmp_path: Path) -> None:
+    """Review round 5's second probe: _release_key_hold_tx's UPDATE turned
+    into a cleared CTE write followed by UPDATE ONLY (tr_key_limit) ... SET
+    day_limit_micro. The unreadable statement fails closed although the
+    other parses, and the chokepoint-only check names the scope."""
+    source = (ROOT / "src/trusted_router/storage_postgres.py").read_text()
+    begin = source.index("    def _release_key_hold_tx(")
+    end = source.index("\n    def ", begin + 1)
+    method = source[begin:end]
+    needle = '"UPDATE tr_key_limit SET"'
+    assert method.count(needle) == 1
+    method = method.replace(needle, '"WITH unused AS (UPDATE tr_key_limit SET reserved = reserved WHERE FALSE '
+                                    'RETURNING key_hash) UPDATE ONLY (tr_key_limit) SET"').replace(
+        '"   reserved = GREATEST(reserved - %s, 0)"', '"   reserved = GREATEST(reserved - %s, 0), day_limit_micro = 5000000"')
+    injected = tmp_path / "storage_postgres.py"
+    injected.write_text(source[:begin] + method + source[end:])
+    assert ("storage_postgres.py", "PostgresStore._release_key_hold_tx") in limit_column_writers(
+        scan_paths_detail([injected], []))
+
+
 @pytest.mark.parametrize("assignment", [
     '"   (reserved, day_limit_micro) = (GREATEST(reserved - %s, 0), 5000000)"',  # review round 3
     '"   reserved = GREATEST(reserved - %s, length(\';\') - 1), day_limit_micro = 5000000"',  # review round 4
-], ids=["tuple assignment", "semicolon in a string"])
+    '"   reserved = GREATEST(reserved - %s, 0) /* outer /* inner */ ; */ , day_limit_micro = 5000000"',  # round 5
+], ids=["tuple assignment", "semicolon in a string", "nested block comment"])
 def test_the_reviewers_injected_cap_write_is_caught(tmp_path: Path, assignment: str) -> None:
     """The reviewers' probes: a limit column written from a listed counter
     writer (PostgresStore._release_key_hold_tx). The column check names that

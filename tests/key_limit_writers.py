@@ -55,7 +55,7 @@ LIMIT_COLUMNS = frozenset({"limit_micro", "day_limit_micro", "week_limit_micro",
 
 _TOKEN = re.compile(r"(?<![A-Za-z0-9_])tr_key_limit(?![A-Za-z0-9_])", re.IGNORECASE)
 _LOCK = re.compile(r"\bfor\s+update\b", re.IGNORECASE)
-_DML_WORD = re.compile(r"\b(?:insert|update|delete|merge|upsert|replace)\b", re.IGNORECASE)
+_DML_WORD = re.compile(r"\b(?:insert|update|delete|merge|upsert|replace|truncate|copy)\b", re.IGNORECASE)
 _READ_WORD = re.compile(r"\bselect\b|\b(?:create|alter|drop)\s+(?:table|index|unique|null_filtered)\b",
                         re.IGNORECASE)
 _DML = (r"(?:insert\s+or\s+update(?:\s+into)?|insert\s+or\s+ignore(?:\s+into)?|insert\s+into|insert|"
@@ -115,9 +115,9 @@ def classify(text: str) -> str | None:
 
 
 class _Token(NamedTuple):
-    """One SQL token: ``word`` (lower-cased), ``ident`` (a quoted name,
-    lower-cased, its quotes off), ``string`` (a literal) or ``punct`` (one
-    character), with its span in the text."""
+    """One SQL token: ``word`` (lower-cased), ``ident`` (a double-quoted or
+    backtick name, its quotes off, lower-cased), ``string`` (a literal, as
+    written) or ``punct`` (one character), with its span in the text."""
 
     kind: str
     text: str
@@ -127,17 +127,22 @@ class _Token(NamedTuple):
 
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
+_PUNCT = frozenset("(),;=.<>+-*/%:@{}[]!|&~^?0123456789")
 
 
 def _quoted_end(sql: str, start: int, quote: str) -> int | None:
-    """The index past the quote that closes the one at ``start``: a doubled
-    quote and a backslash escape stay inside. None when it never closes."""
+    """The index past the quote closing the one at ``start``; a doubled
+    quote stays inside. None for anything PostgreSQL and GoogleSQL read
+    differently: a backslash (an escape in one, a character in the other)
+    or a tripled quote (GoogleSQL's triple-quoted literal); and for a quote
+    that never closes."""
+    if sql.startswith(quote * 3, start):
+        return None
     i = start + 1
     while i < len(sql):
         char = sql[i]
         if char == "\\":
-            i += 2
-            continue
+            return None
         if char == quote:
             if sql.startswith(quote * 2, i):
                 i += 2
@@ -148,11 +153,14 @@ def _quoted_end(sql: str, start: int, quote: str) -> int | None:
 
 
 def sql_tokens(sql: str) -> list[_Token] | None:
-    """``sql`` as tokens, quotes and comments understood: single-quoted
-    literals ('' and backslash escapes), double-quoted and backtick names,
-    $tag$ dollar quotes, -- and /* */ comments. A semicolon, keyword or
-    bracket inside any of them is no boundary. None when a quote or a
-    comment never closes, which the callers count as unreadable."""
+    """``sql`` as tokens under a small lexicon both PostgreSQL and GoogleSQL
+    read alike: words, single-quoted literals ('' inside), double-quoted and
+    backtick names, PostgreSQL dollar quotes, ``--`` comments, and the
+    punctuation in _PUNCT. None for anything else, which the callers count
+    as writing every column: any block comment (PostgreSQL's nest,
+    GoogleSQL's do not), ``#`` (a GoogleSQL comment, a PostgreSQL operator),
+    a backslash, a tripled quote, a prefixed literal (E'', B'', r'', ...),
+    or a quote or dollar quote that never closes."""
     tokens: list[_Token] = []
     i = 0
     while i < len(sql):
@@ -162,17 +170,16 @@ def sql_tokens(sql: str) -> list[_Token] | None:
         elif sql.startswith("--", i):
             newline = sql.find("\n", i)
             i = len(sql) if newline < 0 else newline
-        elif sql.startswith("/*", i):
-            close = sql.find("*/", i + 2)
-            if close < 0:
-                return None
-            i = close + 2
+        elif sql.startswith("/*", i) or sql.startswith("*/", i):
+            return None
         elif char in "'\"`":
+            if tokens and tokens[-1].kind == "word" and tokens[-1].end == i:
+                return None  # a prefixed literal
             end = _quoted_end(sql, i, char)
             if end is None:
                 return None
             body = sql[i + 1:end - 1]
-            tokens.append(_Token("string" if char == "'" else "ident", body.lower() if char != "'" else body, i, end))
+            tokens.append(_Token("string" if char == "'" else "ident", body if char == "'" else body.lower(), i, end))
             i = end
         elif (dollar := _DOLLAR_QUOTE.match(sql, i)) is not None:
             close = sql.find(dollar.group(0), dollar.end())
@@ -184,205 +191,230 @@ def sql_tokens(sql: str) -> list[_Token] | None:
         elif (word := _WORD.match(sql, i)) is not None:
             tokens.append(_Token("word", word.group(0).lower(), i, word.end()))
             i = word.end()
-        else:
+        elif char in _PUNCT:
             tokens.append(_Token("punct", char, i, i + 1))
             i += 1
+        else:
+            return None
     return tokens
 
 
 def _is(tokens: list[_Token], i: int, kind: str, *texts: str) -> bool:
-    return i < len(tokens) and tokens[i].kind == kind and (not texts or tokens[i].text in texts)
+    return 0 <= i < len(tokens) and tokens[i].kind == kind and (not texts or tokens[i].text in texts)
 
 
-def _skip_hint(tokens: list[_Token], i: int) -> int:
-    """Past a statement hint (``@{...}``) at ``i``."""
-    if _is(tokens, i, "punct", "@") and _is(tokens, i + 1, "punct", "{"):
-        j = i + 2
-        while j < len(tokens) and not _is(tokens, j, "punct", "}"):
-            j += 1
-        return j + 1
-    return i
+#: Words that make a statement a write (or a statement this grammar does not
+#: clear): each must be one the grammar accounts for.
+_WRITE_WORDS = frozenset({"insert", "update", "delete", "merge", "upsert", "replace", "truncate", "copy", "call",
+                          "do", "execute", "with"})
+_SET_END = frozenset({"where", "returning"})
 
 
-def _name_path(tokens: list[_Token], i: int) -> tuple[str | None, int]:
-    """A dotted name (``schema.table``, quoted parts too) at ``i``: its last
-    part and the index past it, or (None, i)."""
-    last = None
-    j = i
-    while _is(tokens, j, "word") or _is(tokens, j, "ident"):
-        last = tokens[j].text
-        if _is(tokens, j + 1, "punct", "."):
-            j += 2
-            continue
-        return last, j + 1
-    return (last, j) if last is not None else (None, i)
-
-
-def _top_level(tokens: list[_Token], separator: str) -> list[list[_Token]]:
-    """``tokens`` split at ``separator`` outside brackets."""
-    parts: list[list[_Token]] = [[]]
-    depth = 0
+def _statements(tokens: list[_Token]) -> list[list[_Token]]:
+    statements: list[list[_Token]] = [[]]
     for token in tokens:
-        if token.kind == "punct" and token.text in "([":
-            depth += 1
-        elif token.kind == "punct" and token.text in ")]":
-            depth -= 1
-        elif token.kind == "punct" and token.text == separator and depth == 0:
-            parts.append([])
-            continue
-        parts[-1].append(token)
-    return parts
+        if token.kind == "punct" and token.text == ";":
+            statements.append([])
+        else:
+            statements[-1].append(token)
+    return [statement for statement in statements if statement]
 
 
-def _names(tokens: list[_Token]) -> list[str] | None:
-    """The columns a target or a column list names: one dotted name, or a
-    bracketed list of them; None when it is anything else."""
-    if tokens and _is(tokens, 0, "punct", "(") and _is(tokens, len(tokens) - 1, "punct", ")"):
-        groups = _top_level(tokens[1:-1], ",")
-    else:
-        groups = [tokens]
-    names = []
-    for group in groups:
-        name, end = _name_path(group, 0)
-        if name is None or end != len(group):
+def _hint_end(tokens: list[_Token], i: int) -> int | None:
+    """Past a leading Spanner statement hint ``@{NAME=VALUE, ...}`` at ``i``
+    (``i`` itself when there is none); None for any other shape."""
+    if not _is(tokens, i, "punct", "@"):
+        return i
+    j = i + 1
+    if not _is(tokens, j, "punct", "{"):
+        return None
+    j += 1
+    while True:
+        if not (_is(tokens, j, "word") and _is(tokens, j + 1, "punct", "=") and _is(tokens, j + 2, "word")):
             return None
-        names.append(name)
-    return names
-
-
-_SET_END = frozenset({"where", "returning", "from"})
-
-
-def _assignments(tokens: list[_Token], i: int) -> set[str] | None:
-    """The columns a SET list at ``i`` assigns, up to WHERE, RETURNING,
-    THEN RETURN, FROM, ``;`` or the bracket that closes around it; None when
-    a target is not a column."""
-    collected: list[_Token] = []
-    depth = 0
-    for j in range(i, len(tokens)):
-        token = tokens[j]
-        if token.kind == "punct" and token.text in "([":
-            depth += 1
-        elif token.kind == "punct" and token.text in ")]":
-            depth -= 1
-            if depth < 0:
-                break
-        elif depth == 0 and (_is(tokens, j, "punct", ";") or _is(tokens, j, "word", *_SET_END) or (
-                _is(tokens, j, "word", "then") and _is(tokens, j + 1, "word", "return"))):
-            break
-        collected.append(token)
-    targets: set[str] = set()
-    for assignment in _top_level(collected, ","):
-        if not assignment:
-            continue
-        sides = _top_level(assignment, "=")
-        names = _names(sides[0]) if len(sides) > 1 else None
-        if names is None:
+        j += 3
+        if _is(tokens, j, "punct", "}"):
+            return j + 1
+        if not _is(tokens, j, "punct", ","):
             return None
-        targets.update(names)
-    return targets or None
+        j += 1
 
 
-def _statement_end(tokens: list[_Token], i: int) -> int:
-    while i < len(tokens) and not _is(tokens, i, "punct", ";"):
-        i += 1
-    return i
+def _target_end(tokens: list[_Token], i: int) -> int | None:
+    """Past the table at ``i``: ``tr_key_limit`` or ``schema.tr_key_limit``,
+    plain words only. None for any other target (ONLY, brackets, quotes,
+    another table)."""
+    if _is(tokens, i, "word", TABLE) and not _is(tokens, i + 1, "punct", "."):
+        return i + 1
+    if (_is(tokens, i, "word") and not _is(tokens, i, "word", "only") and _is(tokens, i + 1, "punct", ".")
+            and _is(tokens, i + 2, "word", TABLE) and not _is(tokens, i + 3, "punct", ".")):
+        return i + 3
+    return None
 
 
-def _insert_columns(tokens: list[_Token], i: int, end: int) -> set[str] | None:
-    """An INSERT's columns, from just past the table at ``i``: its column
-    list and an ON CONFLICT DO UPDATE SET list; None without a column list."""
-    if _is(tokens, i, "word", "as"):
-        i += 2
+def _column_list(tokens: list[_Token], i: int) -> tuple[list[str], int] | None:
+    """``( word, word, ... )`` at ``i``: its names and the index past it."""
     if not _is(tokens, i, "punct", "("):
         return None
-    depth = 0
-    for close in range(i, end):
-        if _is(tokens, close, "punct", "("):
-            depth += 1
-        elif _is(tokens, close, "punct", ")"):
-            depth -= 1
-            if depth == 0:
+    names = []
+    j = i + 1
+    while True:
+        if not _is(tokens, j, "word"):
+            return None
+        names.append(tokens[j].text)
+        j += 1
+        if _is(tokens, j, "punct", ")"):
+            return names, j + 1
+        if not _is(tokens, j, "punct", ","):
+            return None
+        j += 1
+
+
+def _set_list(tokens: list[_Token], i: int) -> tuple[set[str], int] | None:
+    """The SET list at ``i``: ``target = expression, ...``, each target a
+    plain word or a bracketed list of them, up to WHERE, RETURNING, THEN
+    RETURN or the end. Its targets and the index where it ends; None for
+    any other shape (FROM after it, an empty expression, unbalanced
+    brackets)."""
+    targets: set[str] = set()
+    j = i
+    while True:
+        if _is(tokens, j, "word") and _is(tokens, j + 1, "punct", "="):
+            targets.add(tokens[j].text)
+            j += 2
+        elif (listed := _column_list(tokens, j)) is not None and _is(tokens, listed[1], "punct", "="):
+            targets.update(listed[0])
+            j = listed[1] + 1
+        else:
+            return None
+        depth = 0
+        start = j
+        while j < len(tokens):
+            token = tokens[j]
+            if token.kind == "punct" and token.text in "([":
+                depth += 1
+            elif token.kind == "punct" and token.text in ")]":
+                depth -= 1
+                if depth < 0:
+                    return None
+            elif depth == 0 and (token.kind == "punct" and token.text == ","
+                                 or _is(tokens, j, "word", *_SET_END, "from")
+                                 or (_is(tokens, j, "word", "then") and _is(tokens, j + 1, "word", "return"))):
                 break
+            j += 1
+        if j == start or depth != 0:
+            return None
+        if _is(tokens, j, "punct", ","):
+            j += 1
+            continue
+        if _is(tokens, j, "word", "from"):
+            return None
+        return targets, j
+
+
+def _cleared_columns(statement: list[_Token]) -> set[str] | None:
+    """The tr_key_limit columns one statement writes, when it is one this
+    grammar clears; None (every column) for anything else.
+
+    A statement with no write word is a read. Otherwise it must be exactly
+    one of, after an optional leading Spanner hint:
+      UPDATE <table> [[AS] alias] SET <set list> [WHERE ...]
+      INSERT [OR UPDATE | OR IGNORE] [INTO] <table> (<columns>) ...
+          [ON CONFLICT ... DO NOTHING | DO UPDATE SET <set list> ...]
+      DELETE [FROM] <table> [WHERE ...]
+    with no other write word anywhere in it (a CTE, a subquery's DML, a
+    MERGE, a COPY, ...)."""
+    writes = [i for i, token in enumerate(statement) if token.kind == "word" and token.text in _WRITE_WORDS]
+    if not writes:
+        return set()
+    begin = _hint_end(statement, 0)
+    if begin is None or writes[0] != begin:
+        return None
+    verb = statement[begin].text
+    accounted = {begin}
+    columns: set[str] = set()
+    if verb == "update":
+        j = _target_end(statement, begin + 1)
+        if j is None:
+            return None
+        if _is(statement, j, "word", "as") and _is(statement, j + 1, "word"):
+            j += 2
+        elif _is(statement, j, "word") and not _is(statement, j, "word", "set"):
+            j += 1
+        if not _is(statement, j, "word", "set"):
+            return None
+        parsed = _set_list(statement, j + 1)
+        if parsed is None:
+            return None
+        columns = parsed[0]
+    elif verb == "insert":
+        j = begin + 1
+        if _is(statement, j, "word", "or") and _is(statement, j + 1, "word", "update", "ignore"):
+            accounted.add(j + 1)
+            j += 2
+        if _is(statement, j, "word", "into"):
+            j += 1
+        j = _target_end(statement, j)
+        listed = _column_list(statement, j) if j is not None else None
+        if listed is None:
+            return None
+        columns = set(listed[0])
+        for k in range(listed[1], len(statement)):
+            if _is(statement, k, "word", "do") and _is(statement, k + 1, "word", "update"):
+                if not (_is(statement, k + 2, "word", "set") and any(
+                        _is(statement, m, "word", "on") and _is(statement, m + 1, "word", "conflict")
+                        for m in range(listed[1], k))):
+                    return None
+                parsed = _set_list(statement, k + 3)
+                if parsed is None:
+                    return None
+                columns |= parsed[0]
+                accounted.update({k, k + 1})
+            elif _is(statement, k, "word", "do") and _is(statement, k + 1, "word", "nothing"):
+                accounted.add(k)
+    elif verb == "delete":
+        j = begin + 1
+        if _is(statement, j, "word", "from"):
+            j += 1
+        if _target_end(statement, j) is None:
+            return None
     else:
         return None
-    listed = _names(tokens[i:close + 1])
-    if listed is None:
+    if set(writes) - accounted:
         return None
-    columns = set(listed)
-    for j in range(close + 1, end):
-        if _is(tokens, j, "word", "do") and _is(tokens, j + 1, "word", "update") and _is(tokens, j + 2, "word", "set"):
-            more = _assignments(tokens, j + 3)
-            if more is None:
-                return None
-            columns |= more
     return columns
 
 
-def statements_on_table(text: str) -> list[tuple[int, int, set[str] | None]] | None:
-    """Each statement on the table in ``text``, at any depth (a CTE's too):
-    (start, end, the columns it writes, None when not known). None when the
-    text does not tokenize."""
+def written_columns(text: str) -> set[str] | None:
+    """The tr_key_limit columns the statements in ``text`` may write; None
+    for every column. Each statement that mentions the table must be one
+    the grammar clears (_cleared_columns), whatever the other statements
+    are; a text that does not tokenize under the lexicon (sql_tokens) fails
+    closed whole."""
     tokens = sql_tokens(text)
     if tokens is None:
         return None
-    found: list[tuple[int, int, set[str] | None]] = []
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        verb = token.text if token.kind == "word" else ""
-        j = i + 1
-        if verb == "insert" and _is(tokens, j, "word", "or") and _is(tokens, j + 1, "word", "update", "ignore",
-                                                                     "replace"):
-            j += 2
-        elif verb == "update" and _is(tokens, i - 1, "word", "or", "do", "for", "key", "no"):
-            verb = ""  # INSERT OR UPDATE, DO UPDATE, FOR UPDATE, FOR NO KEY UPDATE
-        if verb in ("insert", "replace", "upsert", "merge") and _is(tokens, j, "word", "into"):
-            j += 1
-        elif verb == "delete" and _is(tokens, j, "word", "from"):
-            j += 1
-        elif verb == "update" and _is(tokens, j, "word", "only"):
-            j += 1
-        j = _skip_hint(tokens, j)
-        if verb in ("insert", "replace", "upsert", "merge", "delete", "update") and _is(tokens, j, "word", "only"):
-            j += 1
-        name, after = _name_path(tokens, j) if verb else (None, j)
-        if verb not in ("insert", "replace", "upsert", "merge", "delete", "update") or name != TABLE:
-            i += 1
+    columns: set[str] = set()
+    for statement in _statements(tokens):
+        if not names_table(text[statement[0].start:statement[-1].end]):
             continue
-        end = _statement_end(tokens, after)
-        columns: set[str] | None
-        if verb == "delete":
-            columns = set()
-        elif verb == "merge":
-            columns = None
-        elif verb == "update":
-            k = after
-            if _is(tokens, k, "word", "as"):
-                k += 2
-            elif _is(tokens, k, "word") and not _is(tokens, k, "word", "set"):
-                k += 1
-            columns = _assignments(tokens, k + 1) if _is(tokens, k, "word", "set") else None
-        else:
-            columns = _insert_columns(tokens, after, end)
-        stop = tokens[end].start if end < len(tokens) else len(text)
-        found.append((token.start, stop, columns))
-        i = after
-    return found
+        if any(_is(statement, i, "punct", "{") and _is(statement, i + 1, "punct", "}") for i in range(len(statement))):
+            return None  # a part filled in at run time could be any SQL
+        cleared = _cleared_columns(statement)
+        if cleared is None:
+            return None
+        columns |= cleared
+    return columns
 
 
 def assigns_limit_column(text: str) -> bool:
-    """Whether DML naming the table may write a limit column: one it
-    assigns or lists, or columns it does not name (an INSERT without a
-    column list, a target that is not a column, a MERGE). DML and the table
-    in one string that does not tokenize, or holds no statement on the table
-    read here, counts too."""
+    """Whether DML naming the table may write a limit column: unless every
+    statement that mentions the table is one the grammar clears and none of
+    them writes a limit column, it may."""
     if classify(text) != "sql":
         return False
-    statements = statements_on_table(text)
-    if not statements:
-        return True
-    return any(columns is None or columns & LIMIT_COLUMNS for _start, _end, columns in statements)
+    columns = written_columns(text)
+    return columns is None or bool(columns & LIMIT_COLUMNS)
 
 
 def is_dynamic(text: str) -> bool:
@@ -793,53 +825,27 @@ def _strip_comments(path: Path, text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(markers))
 
 
-def _line_statements(text: str) -> list[tuple[int, int, set[str] | None]] | None:
-    """Statements on the table in a file whose own quoting is not SQL's (a
-    shell script): read from the DML word nearest before each line naming
-    the table (within three lines) to the end of the text, or of that line.
-    None when one of them does not tokenize either."""
-    lines = text.splitlines(keepends=True)
-    offsets = [0]
-    for line in lines:
-        offsets.append(offsets[-1] + len(line))
-    found: list[tuple[int, int, set[str] | None]] = []
-    for number, line in enumerate(lines):
-        if not names_table(line):
-            continue
-        window_start = offsets[max(0, number - 3)]
-        words = list(_DML_WORD.finditer(text, window_start, offsets[number + 1]))
-        if not words:
-            continue
-        start = words[-1].start()
-        for stop in (len(text), offsets[number + 1]):
-            statements = statements_on_table(text[start:stop])
-            if statements is not None:
-                break
-        else:
-            return None
-        found.extend((start + a, start + b, columns) for a, b, columns in statements)
-    return found
+def _dml_near_table(text: str) -> bool:
+    """Whether a DML word stands on a line naming the table or within the
+    three lines before it (a lock's FOR UPDATE aside)."""
+    lines = text.splitlines()
+    return any(
+        names_table(line) and _DML_WORD.search(_LOCK.sub(" ", "\n".join(lines[max(0, n - 3):n + 1])))
+        for n, line in enumerate(lines)
+    )
 
 
 def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
     text = _strip_comments(path, path.read_text(encoding="utf-8", errors="replace"))
     if names_table(text):
-        statements = statements_on_table(text)
-        # A file that does not tokenize as SQL (a shell script's own quoting)
-        # is read statement by statement from each line naming the table.
-        if statements is None:
-            statements = _line_statements(text)
-        limit = statements is None or any(
-            columns is None or columns & LIMIT_COLUMNS for _start, _end, columns in statements)
-        statements = statements or []
-        # A line with DML and the table that no statement read here covers:
-        # its columns are not known.
-        offset = 0
-        for line in text.splitlines(keepends=True):
-            if classify(line) == "sql" and not any(
-                    start < offset + len(line) and offset <= end for start, end, _columns in statements):
-                limit = True
-            offset += len(line)
+        if path.suffix == ".sql":
+            columns = written_columns(text)
+            limit = columns is None or bool(columns & LIMIT_COLUMNS)
+        else:
+            # SQL inside another language's quoting (a shell argument or
+            # heredoc, YAML, Terraform, Go) is not read as SQL: DML near
+            # the table counts as writing every column.
+            limit = _dml_near_table(text)
         if path.suffix == ".go" and _GO_MUTATION.search(text):
             limit = limit or any(re.search(rf'"{column}"', text) for column in LIMIT_COLUMNS)
         yield "key_limit.text", limit
