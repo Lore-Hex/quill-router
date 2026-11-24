@@ -30,17 +30,50 @@ table are not findings. A finding is (style, path, qualified name):
   key_limit.text       a non-Python file naming the table
   key_limit.indirect   code reached by a computed name, or an executor passed
                        on, in a scope that names the table (below)
+  key_limit.escape     a value naming the table leaving its scope other than
+                       by an executor, a mutation or a followed helper (below)
   mutation.unresolved  a mutation whose table is not a known string
   sql.dynamic          DML whose table is filled in at run time
 
 limit_column_writers() narrows them to the scopes that may write a limit
-column. Two layers decide it.
+column. Three layers decide it: the escape rule, the backstop and the
+parser.
 
 A scope is an outermost function with every function, lambda, comprehension
 and class body nested in it (_Module.outer), or a module statement or class
 body outside any function, or a text file. getattr(obj, "name") with a
 literal name, through any alias of getattr, and obj.__getattribute__("name")
 are read as obj.name before either layer runs (_Fetches).
+
+The escape rule (_escape_routes) decides where SQL text naming the table may
+go. A value whose rendering may name the table (a string constant, f-string,
+concatenation or format naming it, a name or attribute bound to one, or a
+list, tuple, dict or set holding one) may leave its scope only by:
+
+- a recognised executor call (any of its arguments: the statement is judged
+  by the rules below, its parameters are data) or mutation call (judged by
+  the mutation rules); or
+- a call to a helper of the module that derived_sinks follows, at a
+  parameter shown to reach only executors (clean_sinks: every use of it,
+  and of each name it is bound to or put into, is one of these routes).
+
+It may be built on (concatenated, formatted, put in a container literal,
+indexed, given to a str method or to str, repr, list, tuple, set or sorted),
+bound to a name (whose uses are followed, a closure's included), put into a
+local container with append, extend, insert, add, update, setdefault or +=
+(one made in the function, whose uses, and those of every name it was bound
+to, are followed; a container from a parameter, a module, a class or a loop
+is shared with other scopes, an escape), looped
+over into a name, or used in a way that keeps none of its text (compared,
+tested, measured with len, given to isinstance, used as a lookup key, a str
+predicate's receiver, or a discarded expression). Every other route is
+key_limit.escape, every column: given to any other callee (a function,
+method, lambda, class, callable object, exception or unknown name,
+positionally, by keyword or spread: a raised message reaches a handler in
+another scope), returned, yielded, stored in an attribute, a subscript or a
+global, unpacked, a default argument, an assert's message, or anything not
+listed. The routes are an allow list, so a
+construct not thought of lands in the escape by default.
 
 The backstop (scope_marks) does not depend on parsing. A scope that holds
 the key-limit table (by name or through the constant holding it), a limit
@@ -109,18 +142,19 @@ writes to the table is understood.
 
 Threat model. The inventory guards against accidental limit writers in
 reviewed code: a new statement, mutation or script that writes
-tr_key_limit's limit columns outside the guarded functions. Any scope that
-names the table, a limit column and a write is a limit writer unless it is a
-listed, behavior-pinned exception, and the parser fails closed, as listed
-above, on SQL or a mutation it cannot resolve within the module that
-executes it. What remains outside its scope is SQL whose limit column or
-table only arrives from another module or from data at run time: a
-statement built in one module and edited by another, where the running scope
-names neither, a helper in another module that changes a statement it is
-given, or an interpolated value carrying SQL; and code that reaches an
-executor in ways not listed above (through a container of methods filled
-elsewhere, say). Code review covers that. A cross-module helper whose result
-runs in a scope that mentions the table does fail closed
+tr_key_limit's limit columns outside the guarded functions. SQL text naming
+the table may reach an executor only directly or through followed helpers of
+the same module; every other route fails closed (the escape rule). Any scope
+that names the table, a limit column and a write is a limit writer unless it
+is a listed, behavior-pinned exception, and the parser fails closed, as
+listed above, on SQL or a mutation it cannot resolve within the module that
+executes it. What remains outside its scope is SQL whose table only arrives
+from another module or from data at run time: a statement built in one
+module from text that does not name the table and completed in another, or
+an interpolated value carrying SQL. A module constant naming the table (such
+as KEY_LIMIT_TABLE) is followed into every scanned module that reads it.
+Code review covers the rest. A cross-module helper whose result runs in a
+scope that mentions the table does fail closed
 (test_a_cross_module_helpers_statement_fails_closed).
 
 api_key entity writers are out of scope by design: whatever writes an entity,
@@ -600,8 +634,14 @@ class _Module:
         self._locals: dict[int, dict[str, list[ast.AST]]] = {}
         self._memo: dict[int, list[str] | None] = {}
         self.callees: dict[int, set[str]] = {}
-        #: The module's helpers that run a statement they are given.
+        #: The module's helpers that run a statement they are given, and
+        #: those shown to only run it (clean_sinks).
         self.sinks: dict[str, list[_Sink]] = {}
+        self.clean: set[tuple[str, _Sink]] = set()
+        self.loads: dict[str, list[ast.AST]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                self.loads.setdefault(node.id, []).append(node)
 
     def _qualify(self, node: ast.AST, prefix: str, stack: list[ast.AST], outer: str) -> None:
         for child in ast.iter_child_nodes(node):
@@ -1154,6 +1194,7 @@ def _python_findings(m: _Module) -> Iterator[_Finding]:
     mentions = {outer for outer, (seen, _anchor) in marks.items() if "table" in seen}
     found += list(_statement_calls(m, mentions))
     found += list(_indirect_uses(m, mentions))
+    found += list(_escape_findings(m))
     yield from found
     # The backstop, which does not depend on parsing: a scope holding the
     # table, a limit column and a write anywhere (in the functions, lambdas,
@@ -1629,6 +1670,287 @@ def _unknown_could_write(text: str) -> bool:
         return False
     known = text.replace(UNKNOWN, " ")
     return bool(_SQL_CLAUSE.search(known)) and not known.lstrip().lower().startswith("select")
+
+
+# -- the escape rule ---------------------------------------------------------
+#
+# A value whose rendering may name the table (a string constant, f-string,
+# concatenation or format naming it, a name bound to one, or a container
+# literal holding one) may leave its scope only by a recognised executor or
+# mutation call (judged by the rules above), or by a followed helper of the
+# module, through a parameter shown to reach only executors. Every other
+# route fails closed (key_limit.escape, every column). The routes are an
+# allow list: a consumer not listed, of any shape, is an escape.
+
+#: Builtins whose result holds no text of their argument.
+_ABSORBING_BUILTINS = frozenset({"len", "bool", "isinstance", "issubclass", "hash", "id", "type", "callable", "print"})
+#: Builtins whose result is their argument's text, judged in turn.
+_TEXT_BUILTINS = frozenset({"str", "repr", "format", "list", "tuple", "set", "frozenset", "sorted", "reversed"})
+#: str methods whose result holds no text of the string.
+_STR_PREDICATES = frozenset({"startswith", "endswith", "count", "find", "rfind", "index", "rindex", "isidentifier",
+                             "isalnum", "isalpha", "isascii", "isdecimal", "isdigit", "islower", "isnumeric",
+                             "isprintable", "isspace", "istitle", "isupper"})
+#: str methods whose result is the string's text, judged in turn.
+_STR_TEXT_METHODS = frozenset(name for name in dir(str) if not name.startswith("_")) - _STR_PREDICATES
+#: Methods that put a value into the local container they are called on.
+_CONTAINER_MUTATORS = frozenset({"append", "extend", "insert", "add", "update", "setdefault"})
+
+TaintKey = tuple[int, str]
+_STOP: tuple[str, ast.AST | None] = ("stop", None)
+_ESCAPE: tuple[str, ast.AST | None] = ("escape", None)
+
+
+def _carries_table(texts: Iterable[str]) -> bool:
+    return any(names_table(text.replace(UNKNOWN, " ")) for text in texts)
+
+
+def _binding_scope(m: _Module, node: ast.AST, name: str) -> int:
+    """The function whose local a name is where it is used, or 0 for a
+    module or class name."""
+    for function in reversed(m.functions.get(id(node), [])):
+        if name in m._scope_locals(function):
+            return id(function)
+    return 0
+
+
+def _declared_global(m: _Module, node: ast.AST, name: str) -> bool:
+    functions = m.functions.get(id(node), [])
+    return bool(functions) and any(isinstance(sub, (ast.Global, ast.Nonlocal)) and name in sub.names
+                                   for sub in ast.walk(functions[-1]))
+
+
+def _route(m: _Module, node: ast.AST, clean: set[tuple[str, _Sink]], binds: list[TaintKey]) -> ast.AST | None:
+    """Follow a value naming the table up through what builds on it (a
+    concatenation, an f-string, a format, a str method, a container, a
+    subscript, a conditional) to where it goes: a name it is bound to (added
+    to binds, its uses judged in turn), an allowed consumer, or an escape
+    (the node returned)."""
+    while True:
+        parent = m.parents.get(id(node))
+        if parent is None:
+            return None
+        verdict, after = _step(m, node, parent, clean, binds)
+        if verdict == "up":
+            node = after or parent
+            continue
+        return node if verdict == "escape" else None
+
+
+def _bind(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
+    if not isinstance(target, ast.Name) or _declared_global(m, target, target.id):
+        return _ESCAPE  # unpacked, stored in an attribute or subscript, or a global
+    binds.append((_binding_scope(m, target, target.id), target.id))
+    return _STOP
+
+
+def _bind_container(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
+    """A value put into the container a name holds. The container must be
+    made in this function (a list, dict or set display, comprehension, or
+    list(), dict() or set()), directly or through names bound to one: then
+    that name and every name it was bound to are followed (b = a;
+    b.append(value) changes a too). A container from anywhere else (a
+    parameter, a module or class name, a loop, an attribute, a call) is
+    shared with other scopes: an escape."""
+    if not isinstance(target, ast.Name):
+        return _ESCAPE
+    keys: list[TaintKey] = []
+    queue: list[ast.Name] = [target]
+    while queue and len(keys) < 64:
+        alias = queue.pop()
+        key = (_binding_scope(m, alias, alias.id), alias.id)
+        if key in keys:
+            continue
+        if key[0] == 0 or _declared_global(m, alias, alias.id):
+            return _ESCAPE
+        keys.append(key)
+        for value in m.bindings(alias, alias.id) or [ast.Name(id="<parameter>")]:
+            if isinstance(value, ast.BinOp) and getattr(value, "augmented", False):
+                value = value.left  # x += ...: x's value before
+            if isinstance(value, ast.Name) and not _is_parameter(value):
+                queue.append(value)
+            elif not (isinstance(value, (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)) or (
+                    isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                    and value.func.id in ("list", "dict", "set") and not m.bindings(value.func, value.func.id))):
+                return _ESCAPE
+    binds.extend(keys)
+    return _STOP
+
+
+def _bind_augmented(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
+    """x += value: a string is rebound (x is followed, as for x = ...); any
+    other value is changed in place, as a container is."""
+    if isinstance(target, ast.Name):
+        bases = [value.left if isinstance(value, ast.BinOp) and getattr(value, "augmented", False) else value
+                 for value in m.bindings(target, target.id) or []]
+        if bases and all(isinstance(value, (ast.JoinedStr, ast.BinOp)) or (
+                isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes))) for value in bases):
+            return _bind(m, target, binds)
+    return _bind_container(m, target, binds)
+
+
+def _step(m: _Module, node: ast.AST, parent: ast.AST, clean: set[tuple[str, _Sink]],
+          binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
+    """One step of a route: ("up", next) when the next node holds the
+    value's text, ("stop", None) for an allowed consumer, a binding or a use
+    that keeps none of the text, else ("escape", None)."""
+    if isinstance(parent, (ast.BinOp, ast.JoinedStr, ast.FormattedValue, ast.BoolOp, ast.Starred, ast.ListComp,
+                           ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+        return ("up", parent)
+    if isinstance(parent, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+        return ("up", parent) if isinstance(getattr(parent, "ctx", ast.Load()), ast.Load) else _ESCAPE
+    if isinstance(parent, ast.IfExp):
+        return _STOP if node is parent.test else ("up", parent)
+    if isinstance(parent, ast.comprehension):
+        return _bind(m, parent.target, binds) if node is parent.iter else _STOP
+    if isinstance(parent, ast.Subscript):
+        if node is parent.value:
+            return ("up", parent) if isinstance(parent.ctx, ast.Load) else _STOP
+        return _STOP if isinstance(parent.ctx, ast.Load) else _ESCAPE
+    if isinstance(parent, (ast.Compare, ast.Expr)) or (
+            isinstance(parent, ast.UnaryOp) and isinstance(parent.op, ast.Not)):
+        return _STOP
+    if isinstance(parent, (ast.If, ast.While, ast.Assert)) and node is parent.test:
+        return _STOP  # (an assert's message is raised with it: an escape)
+    if isinstance(parent, ast.NamedExpr):
+        verdict = _bind(m, parent.target, binds)
+        return ("up", parent) if verdict == _STOP else verdict
+    if isinstance(parent, ast.AugAssign) and node is parent.value:
+        return _bind_augmented(m, parent.target, binds)
+    if isinstance(parent, (ast.Assign, ast.AnnAssign)) and node is parent.value:
+        targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+        verdicts = [_bind(m, target, binds) for target in targets]
+        return _ESCAPE if _ESCAPE in verdicts else _STOP
+    if isinstance(parent, (ast.For, ast.AsyncFor)) and node is parent.iter:
+        return _bind(m, parent.target, binds)
+    if isinstance(parent, ast.Attribute) and node is parent.value:
+        call = m.parents.get(id(parent))
+        if isinstance(call, ast.Call) and call.func is parent:
+            if parent.attr in _STR_PREDICATES or parent.attr in _CONTAINER_MUTATORS:
+                return _STOP  # a bool, or a value put into this container (judged on its own)
+            if parent.attr in _STR_TEXT_METHODS:
+                return ("up", call)  # the method's result is the text
+        return _ESCAPE
+    if isinstance(parent, ast.keyword):
+        call = m.parents.get(id(parent))
+        return _argument_step(m, node, call, clean, binds) if isinstance(call, ast.Call) else _ESCAPE
+    if isinstance(parent, ast.Call):
+        # A value called is not text (a str is not callable); an argument is.
+        return _STOP if node is parent.func else _argument_step(m, node, parent, clean, binds)
+    return _ESCAPE
+
+
+def _argument_step(m: _Module, node: ast.AST, call: ast.Call, clean: set[tuple[str, _Sink]],
+                   binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
+    """A value given to a call, positionally, by keyword or spread."""
+    verbs = _verbs(m, call)
+    if verbs & _EXECUTORS or _mutation_parts(m, call) is not None:
+        return _STOP  # judged by the executor and mutation rules
+    for name in sorted(verbs & m.sinks.keys()):
+        for sink in m.sinks[name]:
+            if (name, sink) in clean and any(given is node for given in _sink_arguments(call, sink)):
+                return _STOP  # a followed helper of the module that only runs it
+    func = call.func
+    if isinstance(func, ast.Name) and not m.bindings(func, func.id):
+        if func.id in _ABSORBING_BUILTINS:
+            return _STOP
+        if func.id in _TEXT_BUILTINS:
+            return ("up", call)
+    if isinstance(func, ast.Attribute) and func.attr in _STR_TEXT_METHODS and _is_text(m, func.value):
+        return ("up", call)  # sep.join(...), template.format(...), text.replace(..., value)
+    if isinstance(func, ast.Attribute) and func.attr in _CONTAINER_MUTATORS and isinstance(func.value, ast.Name):
+        return _bind_container(m, func.value, binds)  # into a local container, whose uses are judged in turn
+    return _ESCAPE
+
+
+def _is_text(m: _Module, node: ast.AST) -> bool:
+    """Whether a method's receiver is a string (a literal, or a name bound
+    only to strings), so its .join, .format or .replace builds text."""
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, ast.Name):
+        bound = m.bindings(node, node.id) or []
+        return bool(bound) and all(isinstance(value, (ast.Constant, ast.JoinedStr)) and (
+            not isinstance(value, ast.Constant) or isinstance(value.value, str)) for value in bound)
+    return False
+
+
+def _escape_routes(m: _Module, seeds: Iterable[ast.AST], tainted: Iterable[TaintKey],
+                   clean: set[tuple[str, _Sink]]) -> list[ast.AST]:
+    """Every escape of the given values and of the names given, following
+    each name a value is bound to (or put into) to its uses."""
+    escapes: list[ast.AST] = []
+    done: set[int] = set()
+    names: set[TaintKey] = set()
+    queue = list(seeds)
+    for key in tainted:
+        names.add(key)
+        queue += _uses(m, key)
+    while queue:
+        node = queue.pop()
+        if id(node) in done:
+            continue
+        done.add(id(node))
+        binds: list[TaintKey] = []
+        escape = _route(m, node, clean, binds)
+        if escape is not None:
+            escapes.append(escape)
+        for key in binds:
+            if key not in names:
+                names.add(key)
+                queue += _uses(m, key)
+    return escapes
+
+
+def _uses(m: _Module, key: TaintKey) -> list[ast.AST]:
+    scope, name = key
+    return [use for use in m.loads.get(name, []) if _binding_scope(m, use, name) == scope]
+
+
+def _table_values(m: _Module) -> list[ast.AST]:
+    """The values whose rendering may name the table: string expressions
+    (docstrings aside), and names and attributes resolved to such text or
+    bound to a list, tuple, dict or set holding it (in any module)."""
+    seeds: list[ast.AST] = [node for node in _top_level_strings(m) if _carries_table(m.texts(node))]
+    for node in ast.walk(m.tree):
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
+            resolved = m.values(node)
+            bound = (m.bindings(node, node.id) if isinstance(node, ast.Name) else m.index.globals.get(node.attr)) or []
+            if (resolved and _carries_table(resolved)) or any(_holds_table(m, value) for value in bound):
+                seeds.append(node)
+    return seeds
+
+
+def _holds_table(m: _Module, value: ast.AST) -> bool:
+    return isinstance(value, (ast.Tuple, ast.List, ast.Set, ast.Dict)) and any(
+        _carries_table(m.texts(sub)) for sub in ast.walk(value)
+        if isinstance(sub, ast.JoinedStr) or (isinstance(sub, ast.Constant) and isinstance(sub.value, str)))
+
+
+def clean_sinks(m: _Module) -> set[tuple[str, _Sink]]:
+    """The module's helper parameters shown to reach only executors: every
+    use of the parameter, and of each name it is bound to or put into, goes
+    to an executor or mutation call, or to another such parameter, or keeps
+    none of its text."""
+    entries = [(name, sink, function) for name, sinks in m.sinks.items() for sink in sinks
+               for function in ast.walk(m.tree)
+               if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and function.name == name]
+    clean = {(name, sink) for name, sink, _function in entries}
+    changed = True
+    while changed:
+        changed = False
+        for name, sink, function in entries:
+            if (name, sink) in clean and _escape_routes(m, [], [(id(function), sink.name)], clean):
+                clean.discard((name, sink))
+                changed = True
+    return clean
+
+
+def _escape_findings(m: _Module) -> Iterator[_Finding]:
+    m.clean = clean_sinks(m)
+    for node in _escape_routes(m, _table_values(m), [], m.clean):
+        yield _Finding("key_limit.escape", node, True)
 
 
 def _string_findings(m: _Module) -> Iterator[_Finding]:

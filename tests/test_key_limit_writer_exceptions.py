@@ -352,6 +352,200 @@ def test_the_leased_usage_backfill_reads_key_counters_only(monkeypatch: pytest.M
     assert len(seen) == 1
 
 
+# --- review round 10: the table's name or a statement leaving its scope ------
+#
+# The escape rule counts a value naming the table that leaves its scope other
+# than by an executor, a mutation or a followed helper as writing every
+# limit column. Each scope below hands one on, and is run to show what it does.
+
+
+def test_the_shard_expansion_reader_only_reads_tr_key_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """scripts/expand_billing_shards.Reader.plan gives the table's name to
+    Reader.read, a Spanner read request. Run with a client that has only
+    read and execute_sql (any other call fails), every request it makes is a
+    read and its one statement is a SELECT."""
+    from google.cloud.spanner_v1.types import ResultSet
+
+    import scripts.expand_billing_shards as expand
+
+    calls: list[tuple[str, Any]] = []
+
+    class ReadOnlyClient:
+        def read(self, *, request: dict[str, Any], timeout: float, retry: Any) -> Any:
+            calls.append(("read", (request["table"], tuple(request["columns"]))))
+            if request["table"] == "tr_entities":
+                return ResultSet(rows=[[kind, entity, json.dumps({"owner_user_id": "owner"})]
+                                       for kind, entity in request["key_set"]["keys"]])
+            return ResultSet(rows=[])
+
+        def execute_sql(self, *, request: dict[str, Any], timeout: float, retry: Any) -> Any:
+            calls.append(("execute_sql", request["sql"]))
+            return ResultSet(rows=[["ws"]])
+
+    plans: list[tuple[Any, ...]] = []
+
+    def plan(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        plans.append(args)
+        return {"changed": False}
+
+    monkeypatch.setattr(expand, "make_plan", plan)
+    reader = expand.Reader(ReadOnlyClient(), "session", {"id": b"tx"}, expand.time.monotonic() + 10)
+    reader.plan("ws", "kh", 2)
+    assert ("read", ("tr_key_limit", expand.KEY_COLUMNS)) in calls and plans
+    for kind, detail in calls:
+        assert kind in ("read", "execute_sql")
+        if kind == "execute_sql":
+            assert written_columns(detail) == set(), detail
+
+
+def test_the_authorize_vectors_record_only_reads_tr_key_limit() -> None:
+    """scripts/fastpath/authorize_vectors.stored records the world the Go
+    edge reads, the table's name a key of the in-memory fake's rows. Run on
+    read-only mappings (any write raises), it reads a strict key's shard 0."""
+    import types
+
+    import scripts.fastpath.authorize_vectors as vectors
+    from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
+
+    frozen = types.MappingProxyType
+    limits = {"limit_micro": None, "day_limit_micro": None, "week_limit_micro": None, "month_limit_micro": None}
+    database = SimpleNamespace(rows=frozen({}), typed=frozen({
+        CREDIT_BALANCE_TABLE: frozen({("ws", 0): frozen({"shard": 0, "in_debt": False, "trust_tier": 0,
+                                                         "trust_latched_at": None, "billing_pause_causes": ()})}),
+        KEY_LIMIT_TABLE: frozen({("kh", 0): frozen(dict(limits, reserved=0))}),
+    }))
+    key = {"hash": "kh", "budget_strict": True, "disabled": False, "expires_at": None, "scopes": [],
+           "federated_home": "", "app_id": "", "limit_microdollars": None, "budget_alert_only": False}
+    world = {"key": key, "workspace": {"id": "ws", "billing_pause_causes": [], "federated_home": "",
+                                       "deleted": False}}
+    assert vectors.stored(database, world)["key_limit_row"] == limits
+
+
+def test_the_orphan_replay_trace_check_only_reads() -> None:
+    """scripts/deploy/replay_orphan_writes.key_traces returns the traces a
+    target holds of a key, one labelled with the table's name. Run against a
+    transaction that only answers execute_sql, every statement is a SELECT."""
+    from scripts.deploy import replay_orphan_writes as replay
+
+    statements: list[str] = []
+
+    class ReadOnlyTransaction:
+        def execute_sql(self, sql: str, **kwargs: Any) -> list[tuple[Any, ...]]:
+            statements.append(sql)
+            return [("{}",)]
+
+    held, body = replay.key_traces(ReadOnlyTransaction(), "kh", {"lookup_hash": "lh", "workspace_id": "ws"})
+    assert body == "{}" and "tr_key_limit rows" in held
+    assert any(names_table(sql) for sql in statements)
+    for sql in statements:
+        assert written_columns(sql) == set(), sql
+
+
+def test_the_missing_key_release_log_only_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """storage_gcp_authorize._log_missing_key_releases logs a message naming
+    the table. Run with a recording logger, it only pops its warnings from
+    the result and logs one line for each."""
+    import trusted_router.storage_gcp_authorize as authorize
+
+    lines: list[str] = []
+
+    def warning(message: str, *args: Any, **kwargs: Any) -> None:
+        lines.append(message % args)
+
+    monkeypatch.setattr(authorize, "log", SimpleNamespace(warning=warning))
+    result = {"missing_key_releases": [
+        {"usage_unbooked": True, "key_hash": "k", "shard": 1, "actual_micro": 5, "book_to_byok": False},
+        {"missing_shard": 2, "key_hash": "k", "actual_micro": 5},
+        {"key_hash": "k", "hold_micro": 7},
+    ], "reservation_id": "r"}
+    authorize._log_missing_key_releases(result)
+    assert result == {"reservation_id": "r"}
+    assert len(lines) == 3 and "missing tr_key_limit row key_hash=k hold_micro=7" in lines[2]
+
+
+_INCOMPLETE = "configured tr_key_limit usage shard set is incomplete"
+
+
+def _api_key(**fields: Any) -> Any:
+    from trusted_router.storage_models import ApiKey
+
+    return ApiKey(hash="kh", salt="s", secret_hash="x",  # noqa: S106 - inert test fixture digest.
+                  lookup_hash="lh", name="key", label="lbl", workspace_id="ws", creator_user_id=None, **fields)
+
+
+class _ReadOnlySnapshot:
+    """A snapshot that answers execute_sql with the rows given, and records
+    the statements; it has no method that writes."""
+
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self.rows = rows
+        self.statements: list[str] = []
+
+    def execute_sql(self, sql: str, **kwargs: Any) -> list[tuple[Any, ...]]:
+        self.statements.append(sql)
+        return list(self.rows)
+
+
+def _snapshot_database(snapshot: _ReadOnlySnapshot) -> Any:
+    from contextlib import contextmanager
+
+    @contextmanager
+    def opened(**kwargs: Any) -> Any:
+        yield snapshot
+
+    return SimpleNamespace(snapshot=opened)
+
+
+def test_the_key_mirror_rows_raise_a_message_naming_the_table() -> None:
+    """storage_gcp_counters.key_limit_mirror_rows raises a message naming the
+    table on an incomplete shard set; it builds rows the chokepoint writes
+    and writes nothing itself."""
+    from trusted_router.storage_gcp_counters import KEY_LIMIT_COLUMNS, key_limit_mirror_rows
+
+    key = _api_key(usage_shard_count=2, limit_microdollars=10)
+    with pytest.raises(RuntimeError, match=_INCOMPLETE):
+        key_limit_mirror_rows("kh", key, None, usage_rows=[(0, 0, 0, 0)])
+    rows = key_limit_mirror_rows("kh", key, None, usage_rows=[(0, 0, 0, 0), (1, 0, 0, 0)])
+    assert [len(row) for row in rows] == [len(KEY_LIMIT_COLUMNS)] * 2
+
+
+def test_the_key_usage_snapshot_raises_a_message_naming_the_table() -> None:
+    """storage_key_usage.api_key_usage_snapshot sums rows it is given and
+    raises a message naming the table on an incomplete set."""
+    from trusted_router.storage_key_usage import api_key_usage_snapshot
+
+    key = _api_key(usage_shard_count=2)
+    with pytest.raises(RuntimeError, match=_INCOMPLETE):
+        api_key_usage_snapshot(key, [(0, 1, 0, 0, 0, None, 0, None, 0, None)])
+
+
+def test_the_key_window_decision_only_reads_and_raises_a_message() -> None:
+    """storage_gcp_authorize.key_window_limit_decision reads the key's
+    window rows in a snapshot (SELECTs only) and raises a message naming the
+    table on an incomplete set."""
+    from trusted_router.storage_gcp_authorize import key_window_limit_decision
+
+    snapshot = _ReadOnlySnapshot([(0, 0, None, 0, None, 0, None)])
+    with pytest.raises(RuntimeError, match=_INCOMPLETE):
+        key_window_limit_decision(_snapshot_database(snapshot), _ParamTypes(), key_hash="kh", estimate=1,
+                                  window_limits={"daily": 10}, shard_count=2)
+    assert snapshot.statements and all(written_columns(sql) == set() for sql in snapshot.statements)
+
+
+def test_the_typed_key_usage_only_reads_and_raises_a_message() -> None:
+    """SpannerStore.typed_key_usage reads the key's rows in a snapshot
+    (SELECTs only) and raises a message naming the table on an incomplete
+    set."""
+    from trusted_router.storage_gcp import SpannerStore
+
+    snapshot = _ReadOnlySnapshot([(0, 0, 0, 0, 0, None, 0, None, 0, None)])
+    store = SimpleNamespace(_param_types=_ParamTypes(), _database=_snapshot_database(snapshot),
+                            _read_entity_from=lambda snap, kind, pk, cls: _api_key(usage_shard_count=2))
+    with pytest.raises(RuntimeError, match=_INCOMPLETE):
+        SpannerStore.typed_key_usage(store, "kh")
+    assert snapshot.statements and all(written_columns(sql) == set() for sql in snapshot.statements)
+
+
 # --- fastpath/schema/fastpath.sql --------------------------------------------
 
 
