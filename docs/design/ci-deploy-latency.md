@@ -1,5 +1,37 @@
 # CI and production rollout latency
 
+## Publishing just the TrustedRouter website
+
+Merge a PR that modifies existing homepage HTML or copy
+(`src/trusted_router/templates/homepage/*.html` or `content.json`), homepage
+`application.css` or `components.css`, or the public `docs.html`, `about.html`
+or `blog_index.html` template. Tests and repository documentation can accompany
+the change. An eligible push publishes the site in the four GCP regions
+without replacing API revisions. From the checkout, preview the classification
+of the most recent commit with `python3 -m scripts.deploy.public_docs scope`.
+
+For an explicit **website or nothing** run on an eligible main commit:
+
+```sh
+gh workflow run deploy.yml --ref main -f website_only=true
+```
+
+Or select **Deploy TR control plane → Run workflow → website_only**. Leave
+hotfix and track_main off. CI for the exact main commit and the immutable build
+must pass. The publisher checks the diff from *every serving source*, acquires
+the same exclusive production lock and rechecks before mutation. A mixed change,
+a new/renamed file, an application or routing change, or an unshipped backend
+change prevents website-only publication. Normal pushes can fall back to the
+full rollout; this explicit mode cannot. Look for the `public-release-*` receipt
+after regional smoke checks, including the website pages and both stylesheets.
+This is for trustedrouter.com, not the separate Token Exchange site.
+
+Full routed releases still deploy and smoke the public service unconditionally.
+The public companion job's **Website redeploy comparison** summary records
+image, source and configuration differences across all four regions. Missing
+evidence is unknown, not a match. The report has no deploy output and does not
+check IAM or resolve secret contents; do not use it as skip authorization.
+
 ## November 24 measurements
 
 The default-clock billing proof runs in eight groups of four workers. Its
