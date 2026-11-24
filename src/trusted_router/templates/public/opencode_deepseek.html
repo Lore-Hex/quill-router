@@ -34,7 +34,7 @@
 </section>{% endif %}
 <section class="content-section" id="choose"><h2>Which DeepSeek route should I choose?</h2>
 <p>Direct DeepSeek is simplest for a DeepSeek-only setup and has no gateway fee; choose a gateway when one key across model families and provider fallback are useful.</p>
-<p>TrustedRouter offers 600+ models and 100+ providers, Open, ZDR and TEE <a href="/who-can-see-your-data">privacy tiers</a>, and <a href="/docs/spend-controls">daily, weekly and monthly key limits</a>. OpenRouter's Standard fee is 5.5% on credits purchased; TrustedRouter's standard token markup is {{ cost_guide.fee_percent }}%, with payment processing on credit purchases. Compare <a href="https://openrouter.ai/pricing">OpenRouter's terms</a> and <a href="/llm-gateway-pricing">the fee table</a>.</p>
+<p>TrustedRouter offers 600+ models and 100+ providers, Open, ZDR and TEE <a href="/who-can-see-your-data">privacy tiers</a>, and <a href="/docs/spend-controls">daily, weekly and monthly key limits</a>. OpenRouter's Standard fee is 5.5% on credits purchased; TrustedRouter's standard token markup is {{ cost_guide.fee_percent }}%. Compare <a href="https://openrouter.ai/pricing">OpenRouter's terms</a> and <a href="/llm-gateway-pricing">the fee table</a>.</p>
 </section>
 <section class="content-section" id="thinking"><h2>How does OpenCode handle DeepSeek thinking?</h2>
 <p>According to <a href="https://opencode.ai/docs/models/">OpenCode's model reference</a>, OpenCode reads streamed reasoning from <code>reasoning</code>, <code>reasoning_content</code> or <code>reasoning_text</code>, and restores that field in prior assistant messages.</p>
