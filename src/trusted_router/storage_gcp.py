@@ -446,6 +446,10 @@ def _iso_timestamp(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
+# Per-page RPC deadline for the deploy-time receipt-key projection backfill.
+RECEIPT_KEY_BACKFILL_PAGE_TIMEOUT_SECONDS = 30.0
+
+
 class SpannerStore(OperationalAnalyticsReads):
     """Production Spanner store with ClickHouse analytics.
 
@@ -7639,6 +7643,10 @@ class SpannerStore(OperationalAnalyticsReads):
                     "after": self._param_types.STRING,
                     "limit": self._param_types.INT64,
                 },
+                # A deploy step runs this; a read with no deadline once hung the
+                # deploy for hours (2026-11-24). Seek on (kind, id), low priority.
+                timeout=RECEIPT_KEY_BACKFILL_PAGE_TIMEOUT_SECONDS,
+                request_options={"priority": "PRIORITY_LOW"},
             )
             known = {field.name for field in dataclasses.fields(ReceiptKey)}
             updated: list[str] = []
