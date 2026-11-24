@@ -943,11 +943,64 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-11-23"
+    },
+    {
+      "display_name": "GLM-5.3 Flash Abliterated",
+      "title": "boundless/glm-5.3-flash-abliterated",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "boundless/glm-5.3-flash-abliterated",
+      "upstream_id": "boundless/glm-5.3-flash-abliterated",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1048576,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "z-ai/glm-5.3-flash-abliterated",
+      "title": "glm-5.3-flash-abliterated",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash-abliterated",
+      "upstream_id": "glm-5.3-flash-abliterated",
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-11-24"
     }
   ],
   "source": "https://api.inference.boundless.network/v1/models",
   "pricing_source": "https://inference.boundless.network/models",
-  "generated_at": "2026-11-24T13:12:19Z",
+  "generated_at": "2026-11-24T15:28:37Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 31
+  "model_count": 33
 }
