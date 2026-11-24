@@ -329,7 +329,7 @@ print(response.choices[0].message.content)
   {% endif %}
   {% set columns = 3 if model.supports_rerank else (6 if page.token_priced else 4) %}
   <table class="md-provider-table{% if not page.token_priced %} md-providers-flat{% endif %}{% if page.rows|length > 10 %} md-provider-table--sticky{% endif %}" aria-label="Provider comparison" data-md-providers>
-    <caption class="md-sr">{{ name }} providers and prices per 1M tokens</caption>
+    <caption class="md-sr">{{ name }} providers and prices{% if page.token_priced %} per 1M tokens{% endif %}</caption>
     <thead>
       <tr>
         <th scope="col" class="md-col-provider">Provider</th>
@@ -408,7 +408,7 @@ print(response.choices[0].message.content)
           </div>
           <div>
             <p class="md-detail-label">Price and speed</p>
-            <p>Input {{ endpoint.prompt_price }}{% if not model.supports_rerank %} · Cached input {{ endpoint.cached_prompt_price }} · Output {{ endpoint.completion_price }}{% endif %}</p>
+            <p>{% if page.token_priced %}Input {{ endpoint.prompt_price }}{% if not model.supports_rerank %} · Cached input {{ endpoint.cached_prompt_price }} · Output {{ endpoint.completion_price }}{% endif %}{% else %}Price {{ row.input }}{% endif %}</p>
             {% set measured = endpoint.measured %}
             {% if measured and measured.p50_ttft_ms is not none and measured.ttft_sample_count|default(0) >= 2 %}
             <p>TTFT: {{ '%.2f'|format(measured.p50_ttft_ms / 1000) }} s</p>

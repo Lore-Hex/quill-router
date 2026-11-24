@@ -7,7 +7,7 @@ list shows their per-image or per-second price instead.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from decimal import Decimal
 from typing import Final
 
@@ -71,11 +71,10 @@ def _image_view(model: Model) -> dict[str, object]:
     }
 
 
-def _video_view(model: Model, endpoints: Sequence[ModelEndpoint]) -> dict[str, object]:
+def _video_view(model: Model, providers: set[str]) -> dict[str, object]:
     spec = _VIDEO.get(model.id)
     if spec is None:
         return {"media_price": None, "media_price_sort": None}
-    providers = {endpoint.provider for endpoint in endpoints}
     per_second: list[Decimal] = []
     for provider, examples in spec.get("examples", {}).items():
         if providers and provider not in providers:
@@ -108,5 +107,17 @@ def model_kind_view(model: Model, endpoints: Sequence[ModelEndpoint]) -> dict[st
     if kind == "image":
         view.update(_image_view(model))
     elif kind == "video":
-        view.update(_video_view(model, endpoints))
+        view.update(_video_view(model, {endpoint.provider for endpoint in endpoints}))
     return view
+
+
+def media_price(model: Model, providers: Iterable[str] = ()) -> str | None:
+    """Lowest per-image or per-second price, optionally for the given provider slugs."""
+    kind = model_kind(model)
+    if kind == "image":
+        price = _image_view(model)["media_price"]
+    elif kind == "video":
+        price = _video_view(model, set(providers))["media_price"]
+    else:
+        return None
+    return price if isinstance(price, str) else None
