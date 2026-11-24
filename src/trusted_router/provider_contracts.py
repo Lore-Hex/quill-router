@@ -2,6 +2,8 @@
 
 MAPLE_MODEL_ID = "dealignai/deepseek-v4.1-flash-1017-uncensored"
 MAPLE_NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
+VENICE_1017_LEGACY_ID = "deepseek/deepseek-v4-1-flash-1017-uncensored"
+DEALIGN_1017_SOURCE = "https://huggingface.co/dealignai/DeepSeek-V4.1-Flash-1017-UNCENSORED-FP8"
 BASETEN_SYSTEMONE_PREFIX = "decision-models/"
 BASETEN_SYSTEMONE_HOLD_REASON = "systemone-adapter-not-implemented"
 CONFIDENTIAL_AI_RETIRED_MODEL_IDS = frozenset({

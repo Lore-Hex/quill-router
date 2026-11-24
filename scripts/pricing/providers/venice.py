@@ -11,6 +11,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json, 
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import canonicalize_unqualified_model_id
 from scripts.pricing.openai_catalog import positive_int
+from trusted_router.provider_contracts import DEALIGN_1017_SOURCE, MAPLE_MODEL_ID, MAPLE_NATIVE_ID
 from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "venice"
@@ -27,6 +28,7 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = ["z-ai/glm-5.2"]
 
 UPSTREAM_ID_MAP = {
+    MAPLE_MODEL_ID: MAPLE_NATIVE_ID,
     "minimax/minimax-m3.1-flash": "minimax-m3-1-flash",
     "z-ai/glm-5.2": "zai-org-glm-5-2",
     "z-ai/glm-5.1": "zai-org-glm-5-1",
@@ -50,6 +52,7 @@ UPSTREAM_ID_MAP = {
 }
 _NATIVE_TO_MODEL_ID = {native: model_id for model_id, native in UPSTREAM_ID_MAP.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+_SOURCE_HOLD = "checkpoint-source-unverified"
 
 
 def _model_id(native_id: str) -> str | None:
@@ -89,6 +92,16 @@ def fetch() -> ProviderPricingResult:
         if not isinstance(native_id, str) or not isinstance(spec, dict):
             continue
         if spec.get("offline") is True:
+            continue
+        # Only the 1017 FP8 checkpoint is shared with Maple. The undated and
+        # E2EE Venice products have different source declarations.
+        if native_id == MAPLE_NATIVE_ID and spec.get("modelSource") != DEALIGN_1017_SOURCE:
+            discovered[MAPLE_MODEL_ID] = {
+                "id": MAPLE_MODEL_ID,
+                "upstream_id": native_id,
+                "routable": False,
+                "routable_reason": _SOURCE_HOLD,
+            }
             continue
         model_id = _model_id(native_id)
         pricing = spec.get("pricing")
@@ -172,4 +185,8 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
+        operator_hold_reasons={
+            model: _SOURCE_HOLD for model, row in _DISCOVERED_MANIFEST_ROWS.items()
+            if row.get("routable_reason") == _SOURCE_HOLD
+        },
     )

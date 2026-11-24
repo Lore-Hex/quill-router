@@ -4,12 +4,15 @@ import json
 from collections.abc import Iterable
 from typing import Any
 
+from trusted_router.provider_contracts import MAPLE_MODEL_ID, VENICE_1017_LEGACY_ID
+
 _OPENROUTER_MODEL_ID_ALIASES = {
     # Published from Mistral's native catalog before OpenRouter listed it.
     "mistralai/mistral-large-4-0": "mistralai/mistral-large-4",
 }
 
 _ROUTER_MODEL_ID_ALIASES = {
+    VENICE_1017_LEGACY_ID: MAPLE_MODEL_ID,
     "minimax/minimax-m3-1-flash": "minimax/minimax-m3.1-flash",
     "z-ai/glm-5.3-flash-uncensored": "z-ai/glm-5-3-flash-uncensored",
 }
