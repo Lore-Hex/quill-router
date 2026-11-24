@@ -7,7 +7,9 @@ hour, and a rollout for each snapshot spent several of those a day on nothing
 but prices while code waited in the queue. So a snapshot rides the next
 control-plane rollout, and gets one of its own only when no rollout has
 carried it for SNAPSHOT_MAX_WAIT_SECONDS. The trade is deliberate: prices
-reach production later, code reaches it sooner.
+reach production later, code reaches it sooner. The exception is a snapshot
+that holds or removes a route (the fast path, below): it is dispatched at
+once, so a failing route leaves production within about one rollout.
 
 A snapshot must never wait without a bound. A GITHUB_TOKEN push starts no
 push-triggered workflow, so nothing deploys a snapshot unless a later push or
@@ -29,8 +31,9 @@ track_main=true. The rule, in order:
 3. The waiting snapshots are the commits main has beyond the delivered
    release whose subject starts with SNAPSHOT_SUBJECT_PREFIX. With none,
    wait: a code commit that deploys has its own push run.
-4. The oldest waiting snapshot is younger than the limit: wait. A rollout
-   may still carry it.
+4. The oldest waiting snapshot is younger than the limit and main has no
+   protective change beyond the delivered release (below): wait. A rollout
+   may still carry it. A protective change takes the fast path instead.
 5. A deploy.yml run of main's head has not completed: wait, that run is the
    carrier.
 6. A deploy.yml run on main has not completed and its commit contains the
@@ -44,6 +47,53 @@ track_main=true. The rule, in order:
    not answer `wait` either: the snapshot is "stuck" (below) until a person
    redeploys or main moves on.
 8. Otherwise dispatch.
+
+The fast path. A protective change is one that only takes routes away, and
+production should stop using a route as soon as the hold is committed, not
+three to seven hours later (on 2026-11-23 a hold committed at 06:31Z was
+still not live at 09:56Z while customers were routed to the failing route).
+The refresh records every change to the public routes in
+PROTECTIVE_HISTORY_PATH (src/trusted_router/model_changes.py), so main is
+protective when the lines that file gained beyond the delivered release hold
+any of:
+
+* an endpoint or a model removed (`endpoint_removed`, `model_removed`) that
+  existed in the delivered release. A route the refresh holds
+  (`routable: false`, whatever its reason: provider-route-unserved,
+  provider-access-unavailable, operator-credit-exhausted, a retirement) or
+  drops leaves the public catalog this way. A removal of a route that was
+  added after the delivered release, or a removal that a later line in the
+  same range re-adds, nets to nothing and does not count;
+* a `retirement_scheduled` whose effective time has come and that no later
+  `schedule_cancelled` in the range cancels.
+
+Price changes, additions and re-admissions are not protective. A range that
+mixes them with a protective change is protective: the hold is the urgent
+part, and the prices and additions ride along a few hours early. A range the
+check cannot classify (the compare omits the file's patch, lists 300 files
+or more, or a gained line is not an event) is not protective: it keeps the
+four-hour rule, which is never slower than before. A hold in code
+(PREPAID_PROVIDER_HOLD_REASONS) is a code commit and deploys with its own
+push run.
+
+A protective snapshot younger than the limit dispatches only when all of:
+
+a. no deploy run of main's head exists. One in flight carries it; one that
+   completed was the head's one automatic dispatch, so the snapshot waits,
+   and reaches rule 7 (stuck) at the limit as before;
+b. no deploy.yml run on main is in flight, whatever its commit. This is the
+   rate limit: a run of hourly protective snapshots coalesces behind the
+   rollout in flight, and the first check after it ends dispatches one
+   rollout for all of them (or nothing, if that rollout delivered them). The
+   deploy mutex and its FIFO lease order are untouched: at most one
+   automatic snapshot rollout is ever queued;
+c. main's head has a completed, successful ci.yml run (the newest push or
+   workflow_dispatch run of that exact commit, the run deploy.yml's
+   gate-on-ci reads). A dispatch the gate would refuse would spend the
+   head's one dispatch, so the check waits for green instead. The gate
+   itself still runs in the dispatched deploy and is never bypassed.
+
+Otherwise it waits, naming which of them held it.
 
 Every answer the rule needs and cannot get is "unknown": a gh call that
 fails GH_ATTEMPTS times in a row, a commit id that is not 40 hex digits, a
@@ -64,6 +114,7 @@ the next check waits for its push run or dispatches.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import time
@@ -84,6 +135,14 @@ SNAPSHOT_SUBJECT_PREFIX = "[bot] hourly price refresh"
 # hour), and the check runs once per refresh run (hourly when GitHub starts
 # every scheduled run), so this is roughly three hours on main.
 SNAPSHOT_MAX_WAIT_SECONDS = 4 * 3600
+# The committed history of public route changes (src/trusted_router/model_changes.py).
+PROTECTIVE_HISTORY_PATH = "src/trusted_router/data/model_changes.jsonl"
+# History events that take a route away, and the ones that bring it back.
+REMOVAL_TYPES = frozenset({"endpoint_removed", "model_removed"})
+ADDITION_TYPES = frozenset({"endpoint_added", "model_added"})
+# The compare API lists at most this many files; a list that long may lack the history.
+COMPARE_FILE_LIMIT = 300
+CI_WORKFLOW = "ci.yml"
 # The check runs every hour, and one API blip must not turn the refresh run
 # red: each gh call is asked this many times, this far apart.
 GH_ATTEMPTS = 3
@@ -168,6 +227,78 @@ def oldest_waiting_snapshot(commits: list[dict]) -> tuple[str, float] | None:
     return sha, committed
 
 
+def protective_changes(compare: dict, now: float) -> tuple[list[str] | None, str]:
+    """The route removals main has beyond the delivered release, from the compare's files.
+
+    Returns (changes, note): changes is None when the range cannot be
+    classified, and the note says why; an empty list means not protective.
+    """
+
+    files = compare.get("files")
+    if not isinstance(files, list) or not all(isinstance(entry, dict) for entry in files):
+        return None, "the compare lists no files"
+    history = [entry for entry in files if entry.get("filename") == PROTECTIVE_HISTORY_PATH]
+    if not history:
+        if len(files) >= COMPARE_FILE_LIMIT:
+            return None, f"the compare lists {len(files)} files and not the route history"
+        return [], "no route history change"
+    patch = history[0].get("patch")
+    if not isinstance(patch, str):
+        return None, "the compare omits the route history's patch"
+    gained: list[dict] = []
+    dropped: set[str] = set()
+    for line in patch.splitlines():
+        if line.startswith(("+++", "---")) or not line.startswith(("+", "-")) or not line[1:].strip():
+            continue
+        try:
+            event = json.loads(line[1:])
+        except ValueError:
+            return None, "a changed route history line is not JSON"
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            return None, "a changed route history line is not an event"
+        if line.startswith("-"):
+            dropped.add(str(event.get("id")))
+        else:
+            gained.append(event)
+    # A line the range only moved (dropped and gained again) is not a new event.
+    gained = [event for event in gained if str(event.get("id")) not in dropped]
+    gained.sort(key=lambda event: str(event.get("recorded_at") or event.get("effective_at") or ""))
+    first: dict[tuple[str, str], str] = {}
+    last: dict[tuple[str, str], str] = {}
+    cancelled = {str(event["before"].get("id")) for event in gained
+                 if event["type"] == "schedule_cancelled" and isinstance(event.get("before"), dict)}
+    changes: list[str] = []
+    for event in gained:
+        kind = event["type"]
+        if kind in REMOVAL_TYPES or kind in ADDITION_TYPES:
+            route = (str(event.get("model")), str(event.get("endpoint") or ""))
+            first.setdefault(route, kind)
+            last[route] = kind
+        elif kind == "retirement_scheduled" and str(event.get("id")) not in cancelled:
+            effective = _epoch(event.get("effective_at"))
+            if effective is not None and effective <= now:
+                changes.append(f"retirement of {event.get('model')} in effect")
+    for route, kind in last.items():
+        if kind in REMOVAL_TYPES and first[route] not in ADDITION_TYPES:
+            model, endpoint = route
+            changes.append(f"{endpoint or model} removed")
+    return sorted(changes), f"{len(gained)} route history event(s)"
+
+
+def ci_green(runs: object, sha: str) -> tuple[bool, str]:
+    """Whether the run deploy.yml's gate-on-ci reads for SHA (the newest push or dispatch ci.yml run) is green."""
+
+    if not isinstance(runs, list) or not all(isinstance(run, dict) for run in runs):
+        raise Unknown(f"the ci.yml runs of {sha[:9]} are not a list of runs")
+    gated = [run for run in runs if run.get("event") in ("push", "workflow_dispatch")]
+    if not gated:
+        return False, f"main's head {sha[:9]} has no ci.yml run yet"
+    run = gated[0]  # newest first, as the gate reads it
+    state = f"ci.yml run {run.get('databaseId')} of main's head {sha[:9]} is {run.get('status')} " \
+            f"{run.get('conclusion') or '-'}"
+    return run.get("status") == "completed" and run.get("conclusion") == "success", state
+
+
 def waited_too_long(committed: float, now: float) -> bool:
     return now - committed >= SNAPSHOT_MAX_WAIT_SECONDS
 
@@ -218,6 +349,50 @@ def delivered_release(repo: str) -> str:
     raise Unknown(f"none of the {len(runs)} newest successful deploy runs on main delivered a rollout")
 
 
+def runs_of_head(repo: str, main_sha: str) -> tuple[list[dict], str]:
+    """The deploy runs of main's head, each with a status, and a summary of their states."""
+
+    of_head = _gh(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--commit", main_sha,
+                   "--limit", "20", "--json", "databaseId,status,conclusion"])
+    if not isinstance(of_head, list) or not all(isinstance(run, dict) for run in of_head):
+        raise Unknown(f"the deploy runs of main's head {main_sha[:9]} are not a list of runs")
+    if not all(isinstance(run.get("status"), str) and run["status"] for run in of_head):
+        raise Unknown(f"a deploy run of main's head {main_sha[:9]} has no status")
+    states = ", ".join(f"{run.get('databaseId')} {run['status']} {run.get('conclusion') or '-'}" for run in of_head)
+    return of_head, states
+
+
+def active_deploy_runs(repo: str) -> object:
+    return _gh(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--branch", MAIN_BRANCH,
+                "--limit", "100", "--json", "databaseId,status,headSha,headBranch"])
+
+
+def fast_path(repo: str, main_sha: str, waited: str, changes: list[str] | None, note: str) -> tuple[str, str]:
+    """A snapshot younger than the limit: DISPATCH only for a protective change and when (a)-(c) allow it."""
+
+    if changes is None:
+        return WAIT, f"{waited}; cannot classify it as protective ({note}), so a rollout may still carry it"
+    if not changes:
+        return WAIT, f"{waited}; not protective ({note}), so a rollout may still carry it"
+    shown = ", ".join(changes[:5]) + (f" and {len(changes) - 5} more" if len(changes) > 5 else "")
+    protective = f"{waited}; protective ({shown})"
+    of_head, states = runs_of_head(repo, main_sha)
+    if any(run["status"] != "completed" for run in of_head):
+        return WAIT, f"{protective}, and a deploy run of main's head {main_sha[:9]} is in flight ({states}): it carries it"
+    if of_head:
+        return WAIT, (f"{protective}, but main's head {main_sha[:9]} already had its one automatic deploy "
+                      f"({states}); the snapshot waits for a new head or the limit")
+    in_flight = active_main_heads(active_deploy_runs(repo))
+    if in_flight:
+        return WAIT, (f"{protective}, and deploy run(s) of {', '.join(head[:9] for head in in_flight)} are in "
+                      "flight: it coalesces into the next rollout")
+    green, ci_state = ci_green(_gh(["run", "list", "--repo", repo, "--workflow", CI_WORKFLOW, "--commit", main_sha,
+                                    "--limit", "20", "--json", "databaseId,status,conclusion,event"]), main_sha)
+    if not green:
+        return WAIT, f"{protective}, but {ci_state}: no dispatch before CI is green on the same commit"
+    return DISPATCH, f"{protective}; fast path: no deploy run in flight and {ci_state}"
+
+
 def decide(repo: str, now: float) -> tuple[str, str]:
     """DISPATCH or WAIT, and why (see the module docstring).
 
@@ -228,7 +403,8 @@ def decide(repo: str, now: float) -> tuple[str, str]:
     shipped = delivered_release(repo)
     head = _gh(["api", f"repos/{repo}/commits/{MAIN_BRANCH}"])
     main_sha = commit_sha(head.get("sha") if isinstance(head, dict) else None, "main's head")
-    commits = undelivered_commits(_gh(["api", f"repos/{repo}/compare/{shipped}...{main_sha}"]))
+    compare = _gh(["api", f"repos/{repo}/compare/{shipped}...{main_sha}"])
+    commits = undelivered_commits(compare)
     if not commits:
         return WAIT, f"main {main_sha[:9]} is the delivered release"
     snapshot = oldest_waiting_snapshot(commits)
@@ -238,20 +414,14 @@ def decide(repo: str, now: float) -> tuple[str, str]:
     limit = SNAPSHOT_MAX_WAIT_SECONDS / 3600
     waited = f"snapshot {snapshot_sha[:9]} has waited {(now - committed) / 3600:.1f} h (limit {limit:g} h)"
     if not waited_too_long(committed, now):
-        return WAIT, f"{waited}; a rollout may still carry it"
-    of_head = _gh(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--commit", main_sha,
-                   "--limit", "20", "--json", "databaseId,status,conclusion"])
-    if not isinstance(of_head, list) or not all(isinstance(run, dict) for run in of_head):
-        raise Unknown(f"the deploy runs of main's head {main_sha[:9]} are not a list of runs")
-    if not all(isinstance(run.get("status"), str) and run["status"] for run in of_head):
-        raise Unknown(f"a deploy run of main's head {main_sha[:9]} has no status")
-    states = ", ".join(f"{run.get('databaseId')} {run['status']} {run.get('conclusion') or '-'}" for run in of_head)
+        if not isinstance(compare, dict):  # undelivered_commits already refused anything else
+            raise Unknown("the compare of the delivered release with main is not an object")
+        return fast_path(repo, main_sha, waited, *protective_changes(compare, now))
+    of_head, states = runs_of_head(repo, main_sha)
     if any(run["status"] != "completed" for run in of_head):
         return WAIT, (f"{waited}, and a deploy run of main's head {main_sha[:9]} is in flight ({states}): "
                       "it carries the snapshot")
-    active = _gh(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--branch", MAIN_BRANCH,
-                  "--limit", "100", "--json", "databaseId,status,headSha,headBranch"])
-    for run_head in active_main_heads(active):
+    for run_head in active_main_heads(active_deploy_runs(repo)):
         if carries(_gh(["api", f"repos/{repo}/compare/{snapshot_sha}...{run_head}"])):
             return WAIT, f"{waited}, and an active deploy run of {run_head[:9]} carries it"
     if of_head:
