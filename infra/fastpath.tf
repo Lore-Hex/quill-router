@@ -265,7 +265,24 @@ locals {
   #   - test vectors and a test-only port fix (#2865, the price refreshes).
   # The wire format is unchanged, so the nodes may run either release while
   # one is replaced. Off switch: pin 5e3ebc8b7 again. One node at a time.
-  fastpath_release        = "e1ed7b362a83d74fb7a0fdf972c65f2b86ba68e2"
+  # ddde9504f: main after #2904. Its fastpath/ changes since e1ed7b362:
+  #   - #2906: an owner notices a starved shard (no room under any lease,
+  #     its top-up refused for the floor or allowance) under
+  #     -starved-leases; this release's default `log` writes one line a
+  #     minute per such shard and closes nothing.
+  #   - #2903: the decide line names each key-fact cache miss's cause
+  #     (cache_miss) and the inline read-through's outcome (cache_wait);
+  #     the read-through itself stays off (-edge-decide-cache-wait 0) until
+  #     a node carries the new startup attribute.
+  #   - #2904: the edge can decide budget_strict keys with no limits, dark:
+  #     it acts only once the control plane publishes the
+  #     fastpath_pilot_strict_keys policy member, which waits for the
+  #     product rule that a limitless strict key never gains a first limit.
+  #   - test vectors (the price refreshes).
+  # No decision changes until a switch is set. The wire format is
+  # unchanged, so the nodes may run either release while one is replaced.
+  # Off switch: pin e1ed7b362 again. One node at a time.
+  fastpath_release        = "ddde9504f147db9d83402f9fb1cbb8d3820186a9"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -283,6 +300,10 @@ locals {
   # a rollback may return to its release. b1d3dbcf9 is #2666's pin, listed
   # so that change and this one land in either order.
   fastpath_release_digests = {
+    "ddde9504f147db9d83402f9fb1cbb8d3820186a9" = {
+      fastpath   = "f8c0ae718e27acba890730426964017b3587f383fb0a686aa75096a323b28887"
+      sha256sums = "3a3c52badd01b15063d18aa38b95eb6abfadc0da20fb47145a314b0df5fee876"
+    }
     "e1ed7b362a83d74fb7a0fdf972c65f2b86ba68e2" = {
       fastpath   = "42eff1075063eb065ed35e86aca47b01a1a0626bc077238db35d8701f860f935"
       sha256sums = "1b625c5550d8f96d6515a064360f2ee721cc23bfbb6038e63d205824e94f3320"
