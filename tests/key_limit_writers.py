@@ -32,9 +32,22 @@ table are not findings. A finding is (style, path, qualified name):
   sql.dynamic          DML whose table is filled in at run time
 
 limit_column_writers() narrows them to the scopes that may write a limit
-column. It fails closed: a scope is cleared only when everything it writes
-to the table is understood, and anything else counts as writing every limit
-column until it is listed:
+column. Two layers decide it.
+
+The backstop (scope_marks) does not depend on parsing. A Python function
+scope (or module statement), or a text file, that holds the key-limit table
+(by name or through the constant holding it), a limit column name and a
+write (a DML word in a string, or a mutation or DML API name such as update,
+insert_or_update, replace, execute_update, batch_update or Mutation...)
+anywhere counts as writing every limit column, whatever the parser reads. A
+scope that writes none is a reviewed exception, listed with a behavioral pin
+test and pinned to a fingerprint of its source (ScanDetail.fingerprints), so
+a later change to it fails the check until it is reviewed again. The
+parser's precision decides only how many exceptions are listed, never
+whether a writer is missed.
+
+The parser fails closed too: a scope is cleared only when everything it
+writes to the table is understood.
 
 - SQL must tokenize under a lexicon PostgreSQL and GoogleSQL read alike
   (sql_tokens) and each statement mentioning the table must be one of a
@@ -42,30 +55,38 @@ column until it is listed:
   a carriage return, and any other line end inside one, any block comment,
   ``#``, a backslash in a quote, a tripled quote or a prefixed literal fails
   closed.
-- Python SQL must resolve to literals. ``x += piece`` is modelled as
-  concatenation; a part it cannot resolve (an f-string interpolation, a %
-  or .format argument, a str method's result, a join of non-literals)
-  fails closed when the statement names the table and is shaped as SQL, and
-  a statement an executor runs in a scope that writes the table must be
-  resolved there (one from a helper, an import or an argument fails closed).
+- Python SQL must resolve to literals. ``x += piece`` is modelled as every
+  piece in order and each piece alone; .format renders every named
+  alternative. Any call given SQL text naming the table, and any executor
+  (by name or alias, its list or tuple arguments included), runs a
+  statement: it is classified where it is whole, and in a scope that
+  mentions the table a part not resolved to literals (a helper's result, an
+  interpolation, a % or .format argument, a str method's result) fails
+  closed whatever is known around it. The one form that clears is
+  f"SET LOCAL statement_timeout = {<int>}", its value provably an int.
 - A Spanner mutation's columns must be written out at the call as a tuple or
-  list of string literals. Insert, Update and InsertOrUpdate keep the
-  columns they omit, so only a listed limit column is written; Replace nulls
-  what it omits, so it, and any other write call, counts as every column.
+  list of string literals (columns from a spread dict count as every
+  column). Insert, Update and InsertOrUpdate keep the columns they omit, so
+  only a listed limit column is written; Replace nulls what it omits, so it,
+  and any other write call, counts as every column.
 - Only a .sql file is read as SQL. In other text (a shell argument or
-  heredoc, YAML, Terraform, Go), a DML word followed by the table before a
-  ``;`` within sixty words, whitespace collapsed, counts as every column.
+  heredoc, YAML, Terraform, Go), shell line continuations are joined, and a
+  DML word followed by the table before a ``;`` within sixty words,
+  whitespace collapsed, counts as every column, as does one where a comment
+  marker could hide the ``;``.
 
 Threat model. The inventory guards against accidental limit writers in
 reviewed code: a new statement, mutation or script that writes
-tr_key_limit's limit columns outside the guarded functions. It fails closed
-on any SQL or mutation it cannot resolve within the module that executes
-it. It is not a defense against SQL deliberately split across modules (a
-helper in one module that edits a statement another module builds and runs,
-where the running scope never names the table) or built from data at run
-time (an interpolated value that breaks out of a literal); code review
-covers those. A cross-module helper whose result is run in a scope that
-writes the table does fail closed (test_a_cross_module_helpers_statement_fails_closed).
+tr_key_limit's limit columns outside the guarded functions. Any scope that
+names the table, a limit column and a write is a limit writer unless it is a
+listed, behavior-pinned exception, and the parser fails closed on any SQL or
+mutation it cannot resolve within the module that executes it. What remains
+outside its scope is SQL whose limit column or table only arrives from
+another module or from data at run time: a statement built in one module and
+edited by another, where the running scope names neither, or an interpolated
+value carrying SQL. Code review covers that. A cross-module helper whose
+result runs in a scope that mentions the table does fail closed
+(test_a_cross_module_helpers_statement_fails_closed).
 
 api_key entity writers are out of scope by design: whatever writes an entity,
 the mirror changes only through the guarded functions above.
@@ -74,6 +95,7 @@ the mirror changes only through the guarded functions above.
 from __future__ import annotations
 
 import ast
+import hashlib
 import itertools
 import re
 from collections.abc import Iterable, Iterator
@@ -576,9 +598,12 @@ class _Module:
                 tail = cast(ast.expr, pieces[0])
                 for piece in pieces[1:]:
                     tail = ast.BinOp(left=tail, op=ast.Add(), right=cast(ast.expr, piece))
+                tails = [tail, *(cast(ast.expr, piece) for piece in pieces)] if len(pieces) > 1 else [tail]
                 bases = found.get(appended_name) or [ast.Name(id="<parameter>")]
-                found[appended_name] = [_augmented(ast.BinOp(left=cast(ast.expr, base), op=ast.Add(), right=tail))
-                                 for base in bases]
+                found[appended_name] = [
+                    _augmented(ast.BinOp(left=cast(ast.expr, base), op=ast.Add(), right=one))
+                    for base in bases for one in tails
+                ]
             self._locals[id(function)] = found
         return self._locals[id(function)]
 
@@ -680,6 +705,16 @@ class _Module:
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             return _combine([self.texts(node.left, seen), self.texts(node.right, seen)])
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            if isinstance(node.right, ast.Dict):
+                keys = [k.value if isinstance(k, ast.Constant) and isinstance(k.value, str) else None
+                        for k in node.right.keys]
+                mapped = [part(v) for v in node.right.values]
+                rendered = []
+                for template in self.texts(node.left, seen):
+                    for choice in itertools.islice(itertools.product(*mapped), MAX_RENDERINGS):
+                        by_name = {k: v for k, v in zip(keys, choice, strict=True) if k is not None}
+                        rendered.append(_percent_named(template, by_name))
+                return rendered[:MAX_RENDERINGS] or [UNKNOWN]
             arguments = node.right.elts if isinstance(node.right, ast.Tuple) else [node.right]
             rendered = [
                 _percent(template, list(choice))
@@ -691,11 +726,16 @@ class _Module:
             method = node.func.attr
             if method == "format":
                 positional = [part(a) for a in node.args]
-                named = {kw.arg: part(kw.value) for kw in node.keywords if kw.arg}
+                names = [kw.arg for kw in node.keywords if kw.arg]
+                named = [part(kw.value) for kw in node.keywords if kw.arg]
+                spread = any(kw.arg is None for kw in node.keywords)
                 rendered = []
                 for template in self.texts(node.func.value, seen):
-                    for choice in itertools.islice(itertools.product(*positional), MAX_RENDERINGS):
-                        rendered.append(_brace(template, list(choice), {k: v[0] for k, v in named.items()}))
+                    for choice in itertools.islice(itertools.product(*positional, *named), MAX_RENDERINGS):
+                        values = list(choice)
+                        by_name = dict(zip(names, values[len(positional):], strict=True))
+                        text = _brace(template, values[:len(positional)], by_name)
+                        rendered.append(text + UNKNOWN if spread else text)
                 return rendered[:MAX_RENDERINGS] or [UNKNOWN]
             if method in ("upper", "lower", "strip", "lstrip", "rstrip"):
                 return [getattr(text, method)() for text in self.texts(node.func.value, seen)]
@@ -703,7 +743,21 @@ class _Module:
                 # Not modelled: the receiver's text, then a part not known.
                 return [text + UNKNOWN for text in self.texts(node.func.value, seen)]
         resolved = self.values(node, seen)
-        return resolved if resolved else [UNKNOWN]
+        if resolved:
+            return resolved
+        if isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in seen:
+            # A name not resolved to literals: what it is bound to, with the
+            # parts not known in place, so the known SQL around them is kept.
+            bound = (self.bindings(node, node.id) if isinstance(node, ast.Name)
+                     else self.index.globals.get(node.attr)) or []
+            through: list[str] = []
+            for value in bound:
+                if isinstance(value, ast.Name) and value.id == "<parameter>":
+                    through.append(UNKNOWN)
+                else:
+                    through.extend(self.texts(value, seen | {id(node)}))
+            return through[:MAX_RENDERINGS] or [UNKNOWN]
+        return [UNKNOWN]
 
 
 #: String methods whose result the scanner does not compute; a string built
@@ -740,10 +794,22 @@ def _combine(pieces: list[list[str]]) -> list[str]:
     return out or [""]
 
 
+def _percent_named(template: str, by_name: dict[str, str]) -> str:
+    """``template % {...}``: each %(name)s from the mapping, else UNKNOWN."""
+    def substitute(match: re.Match[str]) -> str:
+        if match.group(0) == "%%":
+            return "%"
+        return by_name.get(match.group(1) or "", UNKNOWN)
+
+    return re.sub(r"%%|%\((\w+)\)[sdr]|%[sdr]", substitute, template)
+
+
 def _percent(template: str, arguments: list[str]) -> str:
     def substitute(match: re.Match[str]) -> str:
         if match.group(0) == "%%":
             return "%"
+        if match.group(0).startswith("%("):
+            return UNKNOWN  # a mapping key with no mapping given
         return arguments.pop(0) if arguments else UNKNOWN
 
     return re.sub(r"%%|%(?:\(\w+\))?[sdr]", substitute, template)
@@ -818,14 +884,19 @@ def _mutation_parts(m: _Module, call: ast.Call) -> tuple[ast.AST | None, ast.AST
         is_mutation = any(names_table(value) for value in resolved)
     if not is_mutation:
         return None
+    spread_columns = False
     for payload in payloads:
         for key, item in payload.items():
-            keywords.setdefault(key, item)
+            if key not in keywords:
+                keywords[key] = item
+                spread_columns = spread_columns or key == "columns"
         if not payload:
             return None, None, name == "delete"
     table = keywords.get("table", call.args[0] if call.args else None)
     columns = keywords.get("columns", call.args[1] if len(call.args) > 1 and name != "delete" else None)
-    return table, columns, name == "delete"
+    # Columns from a spread dict are not written out at the call (the dict may
+    # be changed before it is spread): every column.
+    return table, None if spread_columns else columns, name == "delete"
 
 
 def _positional_shape(m: _Module, name: str, args: list[ast.expr]) -> bool:
@@ -841,6 +912,12 @@ def _dict_fields(m: _Module, node: ast.AST) -> dict[str, ast.AST]:
     """The literal fields of a dict a ``**`` spreads: a dict display or
     dict(...) bound to the name, and ``name['key'] = value`` after it."""
     fields: dict[str, ast.AST] = {}
+    if (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)):
+        # payload["update"] of a dict display bound to payload.
+        outer = _dict_fields(m, node.value)
+        inner = outer.get(node.slice.value)
+        return _dict_fields(m, inner) if inner is not None else {}
     sources = m.bindings(node, node.id) or [] if isinstance(node, ast.Name) else [node]
     for source in sources:
         if isinstance(source, ast.Dict):
@@ -886,24 +963,153 @@ _EXECUTORS = frozenset({"execute", "executemany", "executescript", "execute_sql"
 
 def _python_findings(m: _Module) -> Iterator[_Finding]:
     found = list(_string_findings(m))
+    marks = scope_marks(m)
+    mentions = {where for where, (seen, _anchor) in marks.items() if "table" in seen}
+    found += list(_statement_calls(m, mentions))
     yield from found
-    # A statement run in a scope that writes the table must be resolved to
-    # literals there: one built by a helper, from an import, or by anything
-    # the scanner does not model counts as writing every column.
-    writing = {m.where(f.node) for f in found if f.style.startswith("key_limit.")}
+    # The backstop, which does not depend on parsing: a scope holding the
+    # table, a limit column and a write anywhere writes every limit column.
+    by_scope: dict[str, list[_Finding]] = {}
+    for finding in found:
+        if finding.style.startswith("key_limit."):
+            by_scope.setdefault(m.where(finding.node), []).append(finding)
+    for where, (seen, anchor) in marks.items():
+        if seen >= _BACKSTOP:
+            for existing in by_scope.get(where, []):
+                yield _Finding(existing.style, existing.node, True)
+            if where not in by_scope:
+                yield _Finding("key_limit.scope", anchor, True)
+
+
+_LIMIT_WORD = re.compile(r"\b(?:" + "|".join(sorted(LIMIT_COLUMNS)) + r")\b", re.IGNORECASE)
+#: Names of mutation and DML APIs, as identifiers or attributes.
+_WRITE_APIS = frozenset({"insert", "update", "insert_or_update", "replace", "upsert", "execute_update",
+                         "batch_update", "execute_partitioned_dml", "execute_batch_dml", "insert_map", "update_map",
+                         "insert_or_update_map", "replace_map"})
+_BACKSTOP = frozenset({"table", "limit", "write"})
+
+
+def scope_marks(m: _Module) -> dict[str, tuple[set[str], ast.AST]]:
+    """Per scope (innermost function, or module statement): which of the
+    table, a limit column and a write it holds anywhere, and a node in it.
+
+    The table: a string piece naming it, or a name or attribute holding it (a
+    module constant such as KEY_LIMIT_TABLE). A limit column: a string piece
+    naming one, an identifier or attribute spelled as one, or a name holding
+    one. A write: a DML word in a string piece, or an identifier or attribute
+    spelled as a mutation or DML API (or Mutation...). Docstrings aside."""
+    marks: dict[str, tuple[set[str], ast.AST]] = {}
     for node in ast.walk(m.tree):
-        if not (isinstance(node, ast.Call) and _callee(node) in _EXECUTORS):
+        seen, _anchor = marks.setdefault(m.where(node), (set(), node))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if _is_docstring(node, m.parents):
+                continue
+            if names_table(node.value):
+                seen.add("table")
+            if _LIMIT_WORD.search(node.value):
+                seen.add("limit")
+            if _DML_WORD.search(_LOCK.sub(" ", node.value)):
+                seen.add("write")
+        elif isinstance(node, ast.keyword) and node.arg and node.arg.lower() in LIMIT_COLUMNS:
+            seen.add("limit")
+        elif isinstance(node, (ast.Name, ast.Attribute)):
+            ident = node.id if isinstance(node, ast.Name) else node.attr
+            if ident.lower() in LIMIT_COLUMNS:
+                seen.add("limit")
+            if ident in _WRITE_APIS or ident.startswith("Mutation"):
+                seen.add("write")
+            if isinstance(node.ctx, ast.Load):
+                values = m.values(node) or []
+                if any(classify(value) == "name" for value in values):
+                    seen.add("table")
+                if any(_LIMIT_WORD.search(value) for value in values):
+                    seen.add("limit")
+    # Rendered string expressions too, so a name split across literals
+    # ('day_limit_' + 'micro') is seen whole.
+    for node in _top_level_strings(m):
+        if isinstance(node, ast.Constant):
             continue
-        statement = _executed_statement(m, node)
-        texts = m.texts(statement) if statement is not None else [UNKNOWN]
-        if m.where(node) in writing and any(_unknown_could_run(text) for text in texts):
-            yield _Finding("key_limit.sql", node, True)
-        # A statement built with += is read here, where it is whole.
-        if isinstance(statement, ast.Name) and any(
-                getattr(value, "augmented", False) for value in m.bindings(statement, statement.id) or []):
+        seen, _anchor = marks.setdefault(m.where(node), (set(), node))
+        for text in m.texts(node):
+            known = text.replace(UNKNOWN, " ")
+            if names_table(known):
+                seen.add("table")
+            if _LIMIT_WORD.search(known):
+                seen.add("limit")
+            if _DML_WORD.search(_LOCK.sub(" ", known)):
+                seen.add("write")
+    return marks
+
+
+def _statement_calls(m: _Module, mentions: set[str]) -> Iterator[_Finding]:
+    """Each call that runs a statement (an executor by name or alias, or any
+    call given SQL text naming the table): its statement is classified
+    where it is whole, and in a scope that mentions the table a part not
+    resolved to literals fails closed, whatever is known around it."""
+    for node in ast.walk(m.tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for statement in _statements_run(m, node):
+            texts = m.texts(statement)
             for text in texts:
                 if classify(text) == "sql":
                     yield _Finding("key_limit.sql", node, assigns_limit_column(text))
+            if m.where(node) in mentions and any(UNKNOWN in text for text in texts) and not _timeout_setting(
+                    statement):
+                yield _Finding("key_limit.sql", node, True)
+
+
+def _elements(node: ast.AST) -> list[ast.AST]:
+    """A statement argument's statements: each of a list or tuple literal
+    (the first of a nested tuple, a batch's (sql, params, types)), or itself."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return [element.elts[0] if isinstance(element, (ast.List, ast.Tuple)) and element.elts else element
+                for element in node.elts]
+    return [node]
+
+
+def _statements_run(m: _Module, call: ast.Call) -> list[ast.AST]:
+    statements: list[ast.AST] = []
+    if _mutation_verb(m, call) in _EXECUTORS:
+        first = _executed_statement(m, call)
+        statements += _elements(first) if first is not None else [ast.Name(id="<parameter>")]
+    for argument in [*call.args, *(kw.value for kw in call.keywords)]:
+        for element in _elements(argument):
+            if element in statements:
+                continue
+            texts = m.texts(element)
+            if any(names_table(text) and classify(text) != "name" and (
+                    classify(text) == "sql" or _READ_WORD.search(text) or _SQL_CLAUSE.search(text))
+                   for text in texts):
+                statements.append(element)
+    return statements
+
+
+_TIMEOUT_SETTING = re.compile(r"\s*set\s+local\s+statement_timeout\s*=\s*", re.IGNORECASE)
+
+
+def _timeout_setting(statement: ast.AST) -> bool:
+    """The one statement with a part not known that clears:
+    f"SET LOCAL statement_timeout = {<int>}", its value provably an int
+    (int(...), or min/max of ints)."""
+    if not isinstance(statement, ast.JoinedStr) or len(statement.values) != 2:
+        return False
+    head, value = statement.values
+    return (isinstance(head, ast.Constant) and isinstance(head.value, str)
+            and _TIMEOUT_SETTING.fullmatch(head.value) is not None
+            and isinstance(value, ast.FormattedValue) and value.conversion == -1 and value.format_spec is None
+            and _provably_int(value.value))
+
+
+def _provably_int(node: ast.AST) -> bool:
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, int) and not isinstance(node.value, bool)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
+        if node.func.id == "int" and len(node.args) == 1:
+            return True
+        if node.func.id in ("min", "max") and node.args:
+            return all(_provably_int(argument) for argument in node.args)
+    return False
 
 
 def _executed_statement(m: _Module, call: ast.Call) -> ast.AST | None:
@@ -917,16 +1123,6 @@ def _executed_statement(m: _Module, call: ast.Call) -> ast.AST | None:
                 if isinstance(key, ast.Constant) and key.value == "sql":
                     return value
     return call.args[0] if call.args else None
-
-
-def _unknown_could_run(text: str) -> bool:
-    """Whether an executed statement not resolved to literals could write
-    the table: nothing of it is known, or its known text names the table or
-    holds a write word."""
-    if UNKNOWN not in text:
-        return False
-    known = text.replace(UNKNOWN, " ")
-    return not known.strip() or names_table(known) or bool(_DML_WORD.search(known))
 
 
 _SQL_CLAUSE = re.compile(r"\b(?:set|into|from|values|where|using|join)\b", re.IGNORECASE)
@@ -1004,10 +1200,13 @@ def _dml_near_table(text: str) -> bool:
     sixty words, whitespace collapsed (so blank lines, padding and
     indentation in a heredoc or a multiline string do not separate them); a
     lock's FOR UPDATE aside."""
-    collapsed = " ".join(_LOCK.sub(" ", text).split())
+    collapsed = " ".join(_LOCK.sub(" ", text.replace("\\\n", "")).split())
     for match in _DML_WORD.finditer(collapsed):
-        window = collapsed[match.end():].split(";", 1)[0]
-        if names_table(" ".join(window.split(" ")[:61])):
+        region = " ".join(collapsed[match.end():].split(" ")[:61])
+        if names_table(region.split(";", 1)[0]):
+            return True
+        # A comment may hold the ; that seemed to end the statement.
+        if names_table(region) and any(mark in region for mark in ("/*", "*/", "--", "#")):
             return True
     return False
 
@@ -1025,6 +1224,9 @@ def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
             limit = _dml_near_table(text)
         if path.suffix == ".go" and _GO_MUTATION.search(text):
             limit = limit or any(re.search(rf'"{column}"', text) for column in LIMIT_COLUMNS)
+        # The backstop, per file: the table, a limit column and a write.
+        if _LIMIT_WORD.search(text) and _DML_WORD.search(_LOCK.sub(" ", text.replace("\\\n", ""))):
+            limit = True
         yield "key_limit.text", limit
     if _DYNAMIC.search(text):
         yield "sql.dynamic", True
@@ -1037,22 +1239,56 @@ def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
 Finding = tuple[str, str, str]
 
 
-def scan_paths_detail(python: Iterable[Path], text: Iterable[Path]) -> dict[Finding, bool]:
+class ScanDetail(dict[Finding, bool]):
+    """Every finding, with whether its scope may write a limit column, and a
+    fingerprint of the source of each finding's scope (a reviewed exception
+    is pinned to the source it was reviewed at)."""
+
+    fingerprints: dict[tuple[str, str], str]
+
+
+def _fingerprint(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _scope_fingerprint(m: _Module, where: str) -> str:
+    """The scope's code, positions aside (the SQL manifest's fingerprint,
+    stable across Python versions): its function or module statement, or
+    the whole module."""
+    from tests.conformance.spanner_sql_inventory import fingerprint
+
+    for node in ast.walk(m.tree):
+        if m.names.get(id(node)) == where and isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Assign, ast.AnnAssign)):
+            parent = m.parents.get(id(node))
+            if parent is None or m.names.get(id(parent)) != where:
+                return fingerprint(node)
+    return fingerprint(m.tree)
+
+
+def scan_paths_detail(python: Iterable[Path], text: Iterable[Path]) -> ScanDetail:
     """Every finding, with whether its scope may write a limit column."""
     python = list(python)
-    trees = [ast.parse(p.read_text(encoding="utf-8")) for p in python]
+    sources = [p.read_text(encoding="utf-8") for p in python]
+    trees = [ast.parse(source) for source in sources]
     index = _Index(trees)
-    found: dict[Finding, bool] = {}
+    found = ScanDetail()
+    found.fingerprints = {}
     for path, tree in zip(python, trees, strict=True):
         m = _Module(path, tree, index)
         for finding in _python_findings(m):
-            key = (finding.style, m.relative, m.where(finding.node))
+            where = m.where(finding.node)
+            key = (finding.style, m.relative, where)
             found[key] = found.get(key, False) or finding.limit
+            if (m.relative, where) not in found.fingerprints:
+                found.fingerprints[(m.relative, where)] = _scope_fingerprint(m, where)
     for path in text:
         relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.name
+        raw = path.read_text(encoding="utf-8", errors="replace")
         for style, limit in _text_findings(path):
             key = (style, relative, "<file>")
             found[key] = found.get(key, False) or limit
+            found.fingerprints[(relative, "<file>")] = _fingerprint(raw)
     return found
 
 
@@ -1082,7 +1318,7 @@ def repository_paths() -> tuple[list[Path], list[Path]]:
     return python, text
 
 
-def scan_repository_detail() -> dict[Finding, bool]:
+def scan_repository_detail() -> ScanDetail:
     return scan_paths_detail(*repository_paths())
 
 
@@ -1091,5 +1327,8 @@ def scan_repository() -> set[Finding]:
 
 
 if __name__ == "__main__":
-    for finding, limit in sorted(scan_repository_detail().items()):
+    detail = scan_repository_detail()
+    for finding, limit in sorted(detail.items()):
         print(finding, "LIMIT" if limit else "")
+    for scope in sorted(limit_column_writers(detail)):
+        print("fingerprint", scope, detail.fingerprints[scope])

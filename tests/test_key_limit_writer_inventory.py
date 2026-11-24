@@ -25,9 +25,11 @@ from __future__ import annotations
 import functools
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tests.fakes.spanner import _ParamTypes
 from tests.key_limit_writers import (
     ROOT,
     limit_column_writers,
@@ -35,6 +37,7 @@ from tests.key_limit_writers import (
     scan_paths,
     scan_paths_detail,
     scan_repository_detail,
+    written_columns,
 )
 
 
@@ -71,6 +74,54 @@ LIMIT_COLUMN_EXCEPTIONS = {
         "mode, assigns reserved, usage or byok_usage and window usage only "
         "(tests/test_strict_key_first_limit.py::test_the_key_release_assigns_no_limit_column)"
     ),
+    # Review round 8: scopes the backstop counts as limit writers, each read
+    # and pinned by running it.
+    ('src/trusted_router/storage_gcp_counter_dml.py', 'reserve_key_statement'): (
+        'the capped-key hold: its UPDATE assigns reserved only and reads limit_micro in its WHERE (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_key_reserve_statement_assigns_reserved_only)'
+    ),
+    ('src/trusted_router/storage_gcp_counter_dml.py', 'reserve_key'): (
+        'runs reserve_key_statement and reads limit_micro back to classify a refusal (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_key_reserve_writes_no_limit)'
+    ),
+    ('src/trusted_router/storage_gcp_strict_budget.py', 'reserve_strict_key'): (
+        'the strict hold: its UPDATE assigns reserved only, and its WHERE reads each limit column (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_strict_reserve_writes_no_limit)'
+    ),
+    ('src/trusted_router/storage_postgres.py', 'PostgresStore.reserve_key_limit.reserve'): (
+        "the Postgres hold: reads the key's limits and assigns reserved only (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_postgres_reserve_writes_no_limit)"
+    ),
+    ('src/trusted_router/storage_gcp_key_shard_admin.py', 'reshard_key_usage.txn'): (
+        'writes the partitioned limits only through write_key_limit_rows, the chokepoint, and refuses a strict key first (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_key_reshard_writes_limits_only_through_the_chokepoint)'
+    ),
+    ('src/trusted_router/storage_gcp_speculation_shadow.py', 'SpannerSpeculationShadow.resolve'): (
+        "reads the key's limit rows in a read-only snapshot; its writes are the shadow's own records and dict.update (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_speculation_shadow_resolve_only_reads_tr_key_limit)"
+    ),
+    ('scripts/backfill_leased_key_usage.py', 'read_key_counters'): (
+        'a SELECT with the key hash interpolated after a [A-Za-z0-9_-] check (an unknown part at a call) (tests/test_key_limit_writer_exceptions.py::test_the_leased_usage_backfill_reads_key_counters_only)'
+    ),
+    ('fastpath/schema/fastpath.sql', '<file>'): (
+        "the fast path's schema: its write words are other tables' ON DELETE CASCADE (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_fast_path_schema_only_defines_tr_key_limit)"
+    ),
+    ('scripts/deploy/migrate_typed_counters.sh', '<file>'): (
+        "the typed-counter DDL migration: its one write word is gcloud's ddl update (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_typed_counter_migration_only_defines_tr_key_limit)"
+    ),
+}
+
+#: The source each exception was reviewed at (tests/key_limit_writers.py,
+#: ScanDetail.fingerprints). A change to an exception's scope fails the
+#: chokepoint check until it is reviewed again: rerun its pin test, then
+#: update the fingerprint here.
+REVIEWED_FINGERPRINTS = {
+    ('scripts/expand_billing_shards.py', 'mutations'): "41a6af0298dbbfe5955a6ab948be3cff3100235b14421cc408cb539c033c54a1",
+    ('scripts/backfill_leased_key_usage.py', 'update_sql'): "31b77d42e95fea45792dd724063678f08e57edbdb5331ab0207b45842bf67cc5",
+    ('src/trusted_router/storage_gcp_counter_dml.py', 'release_key_statement'): "6c8dbe4b2008257aba213b1662a9b1bc53a577813441ede612f893d49a15fbeb",
+    ('src/trusted_router/storage_gcp_counter_dml.py', 'reserve_key_statement'): "6d4ae8e97d823993394d4d01ba2e87daa9894f7dd22a8146d01aa394bbd3fe6b",
+    ('src/trusted_router/storage_gcp_counter_dml.py', 'reserve_key'): "2b60f448c465b4e09304138e051112d653b413e758361e9068e0a830516346de",
+    ('src/trusted_router/storage_gcp_strict_budget.py', 'reserve_strict_key'): "e04729c0c164a2da9412ae17ed4709c8f5bcda80e84d4eb82750a5741dbced62",
+    ('src/trusted_router/storage_postgres.py', 'PostgresStore.reserve_key_limit.reserve'): "d2f410b9ca31a9e2e42c5e2a3f4ac99e1575f7e027ffab86a241fae841f6e0e3",
+    ('src/trusted_router/storage_gcp_key_shard_admin.py', 'reshard_key_usage.txn'): "ae7a52bd3053060c904bc49032201621fd136eae129010b862293579495a781b",
+    ('src/trusted_router/storage_gcp_speculation_shadow.py', 'SpannerSpeculationShadow.resolve'): "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
+    ('scripts/backfill_leased_key_usage.py', 'read_key_counters'): "932870aadb7f7d37a3822b865fd3abd7638bbbb9135711f72a99f48db5ec261a",
+    ('fastpath/schema/fastpath.sql', '<file>'): "ea907766c7fcad450405fa2499164b874ab95a31f9c3b0dbf738ee6cadb7b5ff",
+    ('scripts/deploy/migrate_typed_counters.sh', '<file>'): "662d7925229da597a7ddfa947f07f70bfdffef9b4bb0438ce05512f9b85ec465",
 }
 
 KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
@@ -85,17 +136,30 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
         "defines the table name; every scope that uses it is a finding of its own"
     ),
     # Counter DML: no limit column assigned.
-    ("key_limit.sql", "src/trusted_router/storage_gcp_counter_dml.py", "reserve_key_statement"): _COUNTER_DML,
+    ("key_limit.sql", "src/trusted_router/storage_gcp_counter_dml.py", "reserve_key_statement"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('src/trusted_router/storage_gcp_counter_dml.py', 'reserve_key_statement')]
+    ),
+    ("key_limit.sql", "src/trusted_router/storage_gcp_counter_dml.py", "reserve_key"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('src/trusted_router/storage_gcp_counter_dml.py', 'reserve_key')]
+    ),
     ("key_limit.sql", "src/trusted_router/storage_gcp_counter_dml.py", "release_key_statement"): (
         "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[("src/trusted_router/storage_gcp_counter_dml.py",
                                                                  "release_key_statement")]
     ),
-    ("key_limit.sql", "src/trusted_router/storage_gcp_strict_budget.py", "reserve_strict_key"): _COUNTER_DML,
+    ("key_limit.sql", "src/trusted_router/storage_gcp_strict_budget.py", "reserve_strict_key"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('src/trusted_router/storage_gcp_strict_budget.py', 'reserve_strict_key')]
+    ),
     ("key_limit.sql", "src/trusted_router/storage_postgres.py", "PostgresStore._release_key_hold_tx"): _COUNTER_DML,
     ("key_limit.sql", "src/trusted_router/storage_postgres.py",
      "PostgresStore.finalize_gateway_authorization.finalize"): _COUNTER_DML,
     ("key_limit.sql", "src/trusted_router/storage_postgres.py", "PostgresStore.reserve_key_limit.reserve"): (
-        _COUNTER_DML
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('src/trusted_router/storage_postgres.py', 'PostgresStore.reserve_key_limit.reserve')]
+    ),
+    ("key_limit.scope", "src/trusted_router/storage_gcp_speculation_shadow.py", "SpannerSpeculationShadow.resolve"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('src/trusted_router/storage_gcp_speculation_shadow.py', 'SpannerSpeculationShadow.resolve')]
+    ),
+    ("key_limit.sql", "scripts/backfill_leased_key_usage.py", "read_key_counters"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/backfill_leased_key_usage.py', 'read_key_counters')]
     ),
     ("key_limit.name", "src/trusted_router/storage_gcp_counter_reconcile.py", "repair_typed_reserved._txn"): (
         "repairs reserved only (its columns are key_hash, shard, reserved, updated_at)"
@@ -109,8 +173,7 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
         "deletes a deleted key's row (Postgres)"
     ),
     ("key_limit.name", "src/trusted_router/storage_gcp_key_shard_admin.py", "reshard_key_usage.txn"): (
-        "deletes shards past a shrunk count; its limit columns go through the chokepoint, and a strict key is "
-        "refused before anything is written"
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('src/trusted_router/storage_gcp_key_shard_admin.py', 'reshard_key_usage.txn')]
     ),
     ("key_limit.name", "scripts/cleanup_smoke_signups.py", "main.txn"): (
         "deletes synthetic smoke signups whole, key and rows together"
@@ -131,9 +194,13 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
     ("key_limit.text", "fastpath/internal/store/keywindows.go", "<file>"): (
         "the edge's read of a key's window rows (ReadWithOptions)"
     ),
-    ("key_limit.text", "fastpath/schema/fastpath.sql", "<file>"): _DDL,
+    ("key_limit.text", "fastpath/schema/fastpath.sql", "<file>"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('fastpath/schema/fastpath.sql', '<file>')]
+    ),
     ("key_limit.text", "src/trusted_router/storage_postgres_schema.sql", "<file>"): _DDL,
-    ("key_limit.text", "scripts/deploy/migrate_typed_counters.sh", "<file>"): _DDL,
+    ("key_limit.text", "scripts/deploy/migrate_typed_counters.sh", "<file>"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/deploy/migrate_typed_counters.sh', '<file>')]
+    ),
     ("key_limit.text", "infra/key_usage_alerts.tf", "<file>"): "an alert's documentation text",
     # Mutations and DML whose table is computed: none is tr_key_limit.
     ("mutation.unresolved", "src/trusted_router/fastpath_enabler.py", "_apply"): (
@@ -190,6 +257,13 @@ def test_only_the_chokepoints_write_a_limit_column() -> None:
     )
     assert writers >= CHOKEPOINTS, "the scanner no longer sees a chokepoint write its limit columns"
     assert LIMIT_COLUMN_EXCEPTIONS.keys() <= writers, "a listed exception no longer writes a limit column"
+    assert REVIEWED_FINGERPRINTS.keys() == LIMIT_COLUMN_EXCEPTIONS.keys()
+    changed = sorted(scope for scope, fingerprint in REVIEWED_FINGERPRINTS.items()
+                     if _detail().fingerprints.get(scope) != fingerprint)
+    assert not changed, (
+        "A reviewed exception's source changed; review it again, rerun its pin test, and update "
+        f"REVIEWED_FINGERPRINTS: {changed}"
+    )
 
 
 def test_the_scan_covers_python_shell_sql_and_go() -> None:
@@ -235,7 +309,8 @@ REVIEWER_FORMS = {
     "variable.sh": (
         "table=tr_key_limit\ngcloud spanner databases execute-sql db "
         "--sql=\"UPDATE $table SET limit_micro=1 WHERE key_hash='k' AND shard=0\"\n",
-        {("key_limit.text", "<file>"): False, ("sql.dynamic", "<file>"): True},
+        # The table, a limit column and a write in one file: the backstop.
+        {("key_limit.text", "<file>"): True, ("sql.dynamic", "<file>"): True},
     ),
     "quoted.sql": (
         "UPDATE `tr_key_limit` SET limit_micro=1 WHERE key_hash='k' AND shard=0;\n",
@@ -299,13 +374,74 @@ KEY_LIMIT_FORMS = [
      {("key_limit.sql", "f"): True}),
     ("a join of non-literals", "def f(c, parts):\n    c.execute('UPDATE tr_key_limit SET ' + ', '.join(parts))\n",
      {("key_limit.sql", "f"): True}),
+    ("a read with an interpolated value (an unknown part at a call, whatever is known)",
+     "def f(c, k):\n    c.execute(f\"SELECT reserved FROM tr_key_limit WHERE key_hash = '{k}'\")\n",
+     {("key_limit.sql", "f"): True}),
     ("an unknown verb before the table", "def f(c, verb):\n    c.execute(f'{verb} tr_key_limit SET limit_micro = 1')\n",
      {("key_limit.sql", "f"): True}),
     ("a statement from an argument, in a scope that writes the table", "def f(c, sql):\n"
      "    c.execute('UPDATE tr_key_limit SET reserved = 0')\n    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
-    ("a session setting with an unknown value, in a scope that writes the table", "def f(c, ms):\n"
+    ("a session setting with an unknown value, in a scope that mentions the table", "def f(c, ms):\n"
      "    c.execute(f'SET LOCAL statement_timeout = {ms}')\n    c.execute('UPDATE tr_key_limit SET reserved = 0')\n",
-     {("key_limit.sql", "f"): False}),
+     {("key_limit.sql", "f"): True}),
+    ("the statement timeout, provably an int", "def f(c, remaining):\n"
+     "    c.execute(f'SET LOCAL statement_timeout = {max(1, int(remaining * 1000))}')\n"
+     "    c.execute('UPDATE tr_key_limit SET reserved = 0')\n", {("key_limit.sql", "f"): False}),
+    ("the statement timeout with more after it", "def f(c, remaining, more):\n"
+     "    c.execute(f'SET LOCAL statement_timeout = {int(remaining)}; {more}')\n"
+     "    c.execute('UPDATE tr_key_limit SET reserved = 0')\n", {("key_limit.sql", "f"): True}),
+    # Review round 8: the round-7 reviewer's variants (items 1-6), and
+    # unknown parts at any call in a scope that mentions the table.
+    ("conditional +=", "def f(c, comment=False):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n"
+     "    if comment:\n        sql += ' -- no cap'\n    else:\n        sql += ', day_limit_micro=1'\n"
+     "    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
+    ("named format alternatives", "def f(c, counter=False):\n"
+     "    col = 'reserved' if counter else 'day_limit_micro'\n"
+     "    c.execute('UPDATE tr_key_limit SET {col}=1'.format(col=col))\n", {("key_limit.sql", "f"): True}),
+    ("aliased executor", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n"
+     "    sql += ', day_limit_micro=1'\n    run = c.execute\n    run(sql)\n", {("key_limit.sql", "f"): True}),
+    ("aliased executor, an unknown piece", "def add_cap(sql):\n    return sql + ', usage = 0'\n"
+     "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    sql += add_cap('')\n    run = c.execute\n"
+     "    run(sql)\n", {("key_limit.sql", "f"): True}),
+    ("batch DML", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    sql += ', day_limit_micro=1'\n"
+     "    c.batch_update([sql])\n", {("key_limit.sql", "f"): True}),
+    ("a SELECT ahead of a helper's statement", "def add_cap(sql):\n    return sql + ', usage = 0'\n"
+     "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    c.execute('SELECT 1; ' + add_cap(sql))\n",
+     {("key_limit.sql", "f"): True}),
+    ("SET LOCAL ahead of a helper's statement", "def add_cap(sql):\n    return sql + ', usage = 0'\n"
+     "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n"
+     "    c.execute('SET LOCAL statement_timeout=1000; ' + add_cap(sql))\n", {("key_limit.sql", "f"): True}),
+    ("mutable mutation payload", "def f(tx):\n    payload = {'update': {'table': 'tr_key_limit', "
+     "'columns': ['key_hash', 'shard', 'reserved'], 'values': [('probe', 0, 0, 1)]}}\n"
+     "    payload['update']['columns'].append('usage')\n    tx.update(**payload['update'])\n",
+     {("key_limit.name", "f"): True}),
+    ("a %(name)s mapping with an unknown value", "def f(c, col):\n"
+     "    c.execute('UPDATE tr_key_limit SET %(col)s = 1' % {'col': col})\n", {("key_limit.sql", "f"): True}),
+    ("a %(name)s mapping of a known column", "def f(c):\n"
+     "    c.execute('UPDATE tr_key_limit SET %(col)s = 1' % {'col': 'reserved'})\n", {("key_limit.sql", "f"): False}),
+    (".format(**kw)", "def f(c, kw):\n    c.execute('UPDATE tr_key_limit SET reserved={v}'.format(**kw))\n",
+     {("key_limit.sql", "f"): True}),
+    ("a returned statement with an unknown verb", "def f(verb):\n"
+     "    return f'{verb} tr_key_limit SET limit_micro = 1'\n", {("key_limit.sql", "f"): True}),
+    ("a returned statement edited by str.replace with an unknown part", "def f(column):\n"
+     "    return 'UPDATE tr_key_limit SET reserved=0'.replace('reserved', column)\n", {("key_limit.sql", "f"): True}),
+    ("the backstop sees a limit column split across literals", "def f(store, rows):\n"
+     "    store.update('tr_key_limit', ('key_hash', 'day_limit_' + 'micro'), rows)\n",
+     {("key_limit.name", "f"): True}),
+    ("an aliased executor running a helper's statement", "def helper():\n    return 'x'\n"
+     "def f(c):\n    c.execute('SELECT 1 FROM tr_key_limit')\n    run = c.execute\n    run(helper())\n",
+     {("key_limit.sql", "f"): True}),
+    ("a statement built with += and given to any call", "def f(store, more):\n"
+     "    sql = 'UPDATE tr_key_limit SET reserved = 0'\n    sql += more\n    store.run_later(sql)\n",
+     {("key_limit.sql", "f"): True}),
+    ("SQL naming the table, given to any call", "def f(store, rhs):\n"
+     "    store.run_later(sql='UPDATE tr_key_limit SET reserved=' + rhs)\n", {("key_limit.sql", "f"): True}),
+    ("the backstop: table, limit column and a write in one scope", "def f(rows, store):\n"
+     "    table = 'tr_key_limit'\n    column = 'day_limit_micro'\n    store.update(table, column, rows)\n",
+     {("key_limit.name", "f"): True}),
+    ("the backstop through the table constant", "KEY_LIMIT_TABLE = 'tr_key_limit'\n"
+     "def f(store):\n    store.write(Mutation(table=KEY_LIMIT_TABLE, day_limit_micro=1))\n",
+     {("key_limit.name", "f"): True, ("key_limit.name", "<module>.KEY_LIMIT_TABLE"): False}),
     # Spanner mutations: columns written out as literals, or every column.
     ("mutable mutation columns", "def f(tx):\n    cols = ['key_hash', 'shard', 'reserved']\n"
      "    cols.append('day_limit_micro')\n    tx.update('tr_key_limit', cols, [('k', 0, 0, 1)])\n",
@@ -327,7 +463,7 @@ KEY_LIMIT_FORMS = [
     ("%-formatted SQL",
      "def f(txn):\n    table = 'tr_key_limit'\n"
      "    txn.execute_update('UPDATE %s SET limit_micro=1 WHERE key_hash=@k AND shard=0' % table)\n",
-     {("key_limit.name", "f"): False, ("key_limit.sql", "f"): True}),
+     {("key_limit.name", "f"): True, ("key_limit.sql", "f"): True}),
     ("%-formatted SQL, table not known",
      "def f(txn, table):\n    txn.execute_update('UPDATE %s SET limit_micro=1 WHERE key_hash=@k' % table)\n",
      {("sql.dynamic", "f"): True}),
@@ -398,8 +534,6 @@ NOT_WRITES = [
     ("a log line", "def f(log, n):\n    log.info('could not update %s keys', n)\n"),
     ("a message naming the table, with an unknown part",
      "def f(m):\n    raise ValueError(f'unknown tr_key_limit mutation: {m!r}')\n"),
-    ("a read with an interpolated value (data at run time, see the threat model)",
-     "def f(c, k):\n    c.execute(f\"SELECT reserved FROM tr_key_limit WHERE key_hash = '{k}'\")\n"),
 ]
 
 
@@ -423,6 +557,14 @@ def test_reads_and_mentions_are_not_writes(tmp_path: Path, name: str, source: st
     ("indented multiline SQL in a shell string", ".sh",
      "gcloud spanner databases execute-sql db --sql=\"\n    UPDATE\n\n        tr_key_limit\n    SET reserved = 0\"\n",
      {("key_limit.text", "<file>"): True}),
+    ("a semicolon in a comment, heredoc", ".sh", "psql <<'SQL'\nUPDATE /* clear stale cap; use small test value "
+     "*/ tr_key_limit SET reserved=1;\nSQL\n", {("key_limit.text", "<file>"): True}),
+    ("a semicolon in a comment, YAML", ".yaml", "args: ['--sql=UPDATE /* stale cap; small value */ tr_key_limit "
+     "SET reserved=1;']\n", {("key_limit.text", "<file>"): True}),
+    ("a shell line continuation", ".sh", "psql <<SQL\nUP\\\nDATE tr_key_limit SET reserved=1;\nSQL\n",
+     {("key_limit.text", "<file>"): True}),
+    ("the backstop in a heredoc", ".sh", "psql <<'SQL'\nWITH c AS (SELECT 1) SELECT 1; -- tr_key_limit\n"
+     "-- update\nSQL\necho day_limit_micro\n", {("key_limit.text", "<file>"): True}),
     ("a DDL command beside the table", ".sh",
      "gcloud spanner databases ddl update db --ddl='ALTER TABLE x ADD COLUMN y INT64'\n\n" + "echo ok\n" * 70
      + "apply_ddl 'CREATE TABLE tr_key_limit (key_hash STRING(64)) PRIMARY KEY (key_hash)'\n",
@@ -619,6 +761,7 @@ def _injected(tmp_path: Path, relative: str, change: str) -> set[tuple[str, str]
         assert source.count(_RELEASE_END) == 1
         where = source.index(_RELEASE_END)
         source = source[:where] + "\n" + textwrap.indent(textwrap.dedent(change), "        ") + source[where:]
+        source += "\n\ndef add_cap(sql):\n    return sql + ', day_limit_micro=1'\n"
     elif relative.endswith(".py"):
         needle = '        return {"keys": len(plan)}'
         assert source.count(needle) == 1
@@ -653,10 +796,7 @@ def _injected(tmp_path: Path, relative: str, change: str) -> set[tuple[str, str]
     ("src/trusted_router/storage_gcp_counter_reconcile.py", "repair_typed_reserved._txn", """
         transaction.replace('tr_key_limit', ('key_hash', 'shard', 'usage', 'reserved'), [('probe', 0, 0, 0)])
     """),
-    ("scripts/deploy/migrate_typed_counters.sh", "<file>",
-     "psql <<'SQL'\nUPDATE\n\n\n\ntr_key_limit SET day_limit_micro=1;\nSQL\n"),
-], ids=["augmented SQL", "str.replace SQL", "quoted f-string", "mutable mutation columns", "REPLACE mutation",
-        "padded heredoc"])
+], ids=["augmented SQL", "str.replace SQL", "quoted f-string", "mutable mutation columns", "REPLACE mutation"])
 def test_the_round_7_probes_injected_into_listed_scopes_are_caught(tmp_path: Path, relative: str, scope: str,
                                                                    change: str) -> None:
     """Review round 7's injections, each into a scope the inventory lists:
@@ -665,6 +805,113 @@ def test_the_round_7_probes_injected_into_listed_scopes_are_caught(tmp_path: Pat
     clean = tmp_path / "clean"
     clean.mkdir()
     assert (Path(relative).name, scope) not in _injected(clean, relative, "")
+
+
+_ROUND_7 = {
+    "conditional +=": (_PG, "PostgresStore._release_key_hold_tx", """
+        comment = False
+        probe_sql = 'UPDATE tr_key_limit SET reserved=0'
+        if comment:
+            probe_sql += ' -- no cap'
+        else:
+            probe_sql += ', day_limit_micro=1'
+        conn.execute(probe_sql)
+    """),
+    "named format alternatives": (_PG, "PostgresStore._release_key_hold_tx", """
+        counter = False
+        probe_col = 'reserved' if counter else 'day_limit_micro'
+        conn.execute('UPDATE tr_key_limit SET {col}=1'.format(col=probe_col))
+    """),
+    "aliased executor": (_PG, "PostgresStore._release_key_hold_tx", """
+        probe_sql = 'UPDATE tr_key_limit SET reserved=0'
+        probe_sql += ', day_limit_micro=1'
+        probe_run = conn.execute
+        probe_run(probe_sql)
+    """),
+    "aliased executor unknown piece": (_PG, "PostgresStore._release_key_hold_tx", """
+        probe_sql = 'UPDATE tr_key_limit SET reserved=0'
+        probe_sql += add_cap('')
+        probe_run = conn.execute
+        probe_run(probe_sql)
+    """),
+    "SELECT prefix": (_PG, "PostgresStore._release_key_hold_tx", """
+        probe_sql = 'UPDATE tr_key_limit SET reserved=0'
+        conn.execute('SELECT 1; ' + add_cap(probe_sql))
+    """),
+    "SET LOCAL prefix": (_PG, "PostgresStore._release_key_hold_tx", """
+        probe_sql = 'UPDATE tr_key_limit SET reserved=0'
+        conn.execute('SET LOCAL statement_timeout=1000; ' + add_cap(probe_sql))
+    """),
+    "mutable mutation payload": ("src/trusted_router/storage_gcp_counter_reconcile.py", "repair_typed_reserved._txn", """
+        payload = {'update': {
+            'table': 'tr_key_limit', 'columns': ['key_hash', 'shard', 'reserved'],
+            'values': [('probe', 0, 0, 1)]}}
+        payload['update']['columns'].append('day_limit_micro')
+        transaction.update(**payload['update'])
+    """),
+}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_7))
+def test_the_round_7_reviewers_injections_into_listed_scopes_are_caught(tmp_path: Path, label: str) -> None:
+    """Review round 7's variants, injected where the reviewer put them (a
+    helper add_cap beside the module): the chokepoint-only check names the
+    scope a limit-column writer."""
+    relative, scope, change = _ROUND_7[label]
+    assert (Path(relative).name, scope) in _injected(tmp_path, relative, change)
+
+
+def _injected_detail(tmp_path: Path, relative: str, source: str) -> Any:
+    injected = tmp_path / Path(relative).name
+    injected.write_text(source)
+    return scan_paths_detail([injected], []) if injected.suffix == ".py" else scan_paths_detail([], [injected])
+
+
+def test_a_write_injected_into_the_strict_reserve_fails_its_review_and_its_pin(tmp_path: Path) -> None:
+    """Review round 7's "batch DML", injected into reserve_strict_key, a
+    reviewed exception: the scope's fingerprint no longer matches the one it
+    was reviewed at, and its pin, running the changed function, sees the
+    limit written."""
+    import inspect
+
+    from tests.test_key_limit_writer_exceptions import _Capture
+    from trusted_router import storage_gcp_strict_budget as strict
+
+    relative = "src/trusted_router/storage_gcp_strict_budget.py"
+    scope = (relative, "reserve_strict_key")
+    body = ("    probe_sql = 'UPDATE tr_key_limit SET reserved=0'\n    probe_sql += ', day_limit_micro=1'\n"
+            "    transaction.batch_update([probe_sql])\n")
+    source = (ROOT / relative).read_text().replace("    now = utcnow()\n", body + "    now = utcnow()\n", 1)
+    detail = _injected_detail(tmp_path, relative, source)
+    assert detail.fingerprints[(Path(relative).name, "reserve_strict_key")] != REVIEWED_FINGERPRINTS[scope]
+    function = inspect.getsource(strict.reserve_strict_key).replace("    now = utcnow()\n", body + "    now = utcnow()\n", 1)
+    namespace = dict(vars(strict))
+    exec(compile(function, strict.__file__, "exec"), namespace)  # noqa: S102 - the injected function, run by its pin
+    transaction = _Capture(count=1, rows=[(True, 0, 10, 0, None, 20, 0, None, 30, 0, None)])
+    namespace["reserve_strict_key"](transaction, _ParamTypes(), "kh", 5, is_byok=False, enforce_windows=True)
+    assert any("day_limit_micro" in (written_columns(sql) or {"day_limit_micro"}) for sql in transaction.statements)
+
+
+@pytest.mark.parametrize("heredoc", [
+    "psql <<'SQL'\nUPDATE\n\n\n\ntr_key_limit SET day_limit_micro=1;\nSQL\n",
+    "psql <<'SQL'\nUPDATE /* clear stale cap; use small test value */ tr_key_limit SET day_limit_micro=1;\nSQL\n",
+    "psql <<SQL\nUP\\\nDATE tr_key_limit SET day_limit_micro=1;\nSQL\n",
+], ids=["padded heredoc", "comment semicolon", "shell line continuation"])
+def test_a_write_appended_to_the_migration_fails_its_review_and_its_pin(tmp_path: Path, heredoc: str) -> None:
+    """The round-6 and round-7 shell injections, appended to
+    migrate_typed_counters.sh, a reviewed exception: its fingerprint no
+    longer matches, and its pin, running the script with only a recording
+    gcloud on PATH, fails on the psql it does not expect."""
+    import subprocess
+
+    from tests.test_key_limit_writer_exceptions import MIGRATION, run_migration
+
+    relative = "scripts/deploy/migrate_typed_counters.sh"
+    source = MIGRATION.read_text() + "\n" + heredoc
+    detail = _injected_detail(tmp_path, relative, source)
+    assert detail.fingerprints[(Path(relative).name, "<file>")] != REVIEWED_FINGERPRINTS[(relative, "<file>")]
+    with pytest.raises(subprocess.CalledProcessError):
+        run_migration(tmp_path / "run", source)
 
 
 def test_the_reviewers_unreadable_write_beside_a_cleared_one_is_caught(tmp_path: Path) -> None:
