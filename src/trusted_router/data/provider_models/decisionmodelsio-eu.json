@@ -676,7 +676,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-11-24T21:28:20Z",
+  "generated_at": "2026-11-24T23:19:08Z",
   "price_scale": "microdollars_per_million",
   "model_count": 20
 }

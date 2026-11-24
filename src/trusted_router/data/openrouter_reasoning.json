@@ -3008,6 +3008,12 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "xiaomi/mimo-v2.6-flash-mopd": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "xiaomi/mimo-v2.6-pro": {
       "mandatory": false,
       "default_enabled": false,
