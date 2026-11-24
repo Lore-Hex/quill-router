@@ -686,9 +686,16 @@ refreshed, and 15 s later it is stale, so a key whose requests reach a node
 more than about 75 s apart finds it stale every time and passes as
 `cache.key`, as does a key the node has never seen or whose entry Python's
 refusal evicted. `-edge-decide-cache-wait` (0 by default, at most 250ms)
-has such a request wait up to that long for the strong read the miss starts
-anyway, and be decided on what it read, rather than pass
-(`docs/design/fast-admission-e2-decide.md` decision 2). It adds no read and
+has such a request wait for the strong read the miss starts anyway, and be
+decided on what it read, rather than pass
+(`docs/design/fast-admission-e2-decide.md` decision 2). The wait is a timer
+of that length (`gwstate.Cache.LookupWithin`), started after the request's
+first look at the cache and cancelled by nothing else, as the lookup has no
+request context. A read seen at or past the wait's deadline, counted from
+before that first look, is never taken. A wait that times out is counted
+when its timer fires, so its time, and `cache_wait_ms_max`, can pass the
+setting slightly. The wait is spent inside the decide path's 1.5 s budget
+from the request's arrival (`DecideBudget`) and never extends it. It adds no read and
 never widens what the edge decides on: the read began after the request
 arrived, or within the facts' 15 s of it, and an eviction during the wait
 discards it. A read slower than the wait passes the request as before.
@@ -741,14 +748,34 @@ Turning it on, one node first:
    `fastpath_edge_decide_cache_wait = "100ms"` instead and take each node
    the same way, one at a time.
 3. Over an hour, compare the node's `passed["cache.key"]` share of its
-   authorizes with the other node's, and check `cache_wait_ms_max` (at most
-   the wait), `slow` (no new `at_edge.decide`) and `unavailable`.
+   authorizes with the other node's, and check `cache_wait_ms_max` (about
+   the wait; a little over it is the timer starting after the first look,
+   above, while well over it is not), `slow` (no new `at_edge.decide`) and
+   `unavailable`.
 
-Turning it off: the node's `cache_wait = "0"` (or `""`), or
-`fastpath_edge_decide_cache_wait = "0"` (or `""`) for every node, applied,
-and each node that carried it taken by the unit rewrite; or pin the release
-before it. The
-script refuses any value but `0` or `1ms` to `250ms`, and the attribute
+Turning it off. A node's own `cache_wait` comes after the fleet value in
+its metadata and takes its place, so `fastpath_edge_decide_cache_wait`
+alone turns nothing off where a node carries one: with the fleet value
+`"0"` or `""`, a node whose `cache_wait` is `"100ms"` still carries
+`100ms`. Either:
+
+- **The values.** In `infra/fastpath.tf`, `cache_wait = ""` (or
+  `cache_wait = "0"`) in every node's `for_each` entry, and
+  `fastpath_edge_decide_cache_wait = ""` (or
+  `fastpath_edge_decide_cache_wait = "0"`) if it was set. Apply, and take
+  each node that carried a wait by the unit rewrite of step 2, one at a
+  time, the other nodes serving. Read back from its process that
+  `-edge-decide-cache-wait` is gone, or reads `0`.
+- **The release before it.** Pin the release before #2903 ("Taking a
+  pinned release") only with the attribute absent on every node: every
+  node's `cache_wait` and `fastpath_edge_decide_cache_wait` `""`, never
+  `"0"`. `"0"` still passes `-edge-decide-cache-wait 0`, a flag that release
+  does not take, and its unit then stops before either role starts ("A flag
+  the unit passes"). Each node takes the pin by a reset whose script run
+  writes the unit, so it writes none of the flag once the attribute is
+  absent.
+
+The script refuses any value but `0` or `1ms` to `250ms`, and the attribute
 without `fastpath-edge-decide` `"true"`, before writing the unit.
 
 ## The front door's publish wait and its minute line

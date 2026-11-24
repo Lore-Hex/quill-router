@@ -496,14 +496,17 @@ locals {
   # The decide path's read-through (-edge-decide-cache-wait,
   # docs/design/fast-admission-e2-decide.md decision 2): "" leaves the
   # attribute off, and a node runs its release's default, no wait; "100ms"
-  # has a request whose cached key or credit entry is cold or stale wait up
-  # to that for the strong read that fills it, rather than pass as
-  # cache.key. Set only with a pinned release that takes the flag, and only
-  # a node created from the script that reads the attribute takes it, by the
-  # unit rewrite in docs/runbooks/fastpath-deploy.md, "The decide cache's
-  # wait". "0", or "" again, is the off switch. A node's own value, its
-  # for_each entry's cache_wait below, takes this one's place on that node
-  # alone; "" there leaves this one.
+  # has a request whose cached key or credit entry is cold or stale wait,
+  # on a timer of that length started after its first look, for the strong
+  # read that fills it, rather than pass as cache.key. Set only with a
+  # pinned release that takes the flag, and only a node created from the
+  # script that reads the attribute takes it, by the unit rewrite in
+  # docs/runbooks/fastpath-deploy.md, "The decide cache's wait". A node's
+  # own value, its for_each entry's cache_wait below, takes this one's place
+  # on that node alone; "" there leaves this one. So "0", or "" again, here
+  # turns the wait off only where no node carries its own: the off switch is
+  # every cache_wait "" (or "0") as well, and before pinning a release
+  # without the flag, every value "", since "0" still passes it.
   fastpath_edge_decide_cache_wait = ""
   fastpath_edge_decide_cache_wait_metadata = {
     for name, value in { fastpath-edge-decide-cache-wait = local.fastpath_edge_decide_cache_wait } : name => value if value != ""

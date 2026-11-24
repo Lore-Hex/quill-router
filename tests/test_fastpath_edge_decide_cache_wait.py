@@ -259,18 +259,125 @@ def test_the_runbook_names_the_switch_and_its_counts() -> None:
         assert needed in section, needed
 
 
-def test_the_runbook_takes_one_node_by_its_own_wait() -> None:
-    """Step 2 sets the wait for one node by its for_each entry and takes the
-    node by the unit rewrite, in order: leaving, the leases and the
-    balancer, the stop, the script run again, the flag read back."""
+def _wait_section() -> str:
     deploy = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text(encoding="utf-8")
     section = deploy[deploy.index("## The decide cache's wait"):]
-    section = section[:section.index("\n## ", 1)]
-    step = section[section.index("\n2. On a node"):section.index("\n3. Over an hour")]
-    order = [step.index(needed) for needed in (
-        'cache_wait = "100ms"', 'cache_wait = ""', "sudo systemctl kill -s USR1 fastpath", "UNHEALTHY",
-        "sudo systemctl stop fastpath", "sudo google_metadata_script_runner startup",
-        "-edge-decide-cache-wait 100ms",
-    )]
-    assert order == sorted(order), order
-    assert "A reset is not enough" in step
+    return section[:section.index("\n## ", 1)]
+
+
+# Step 2's unit rewrite, in its order: the node's value, then leaving, and
+# all three waits (its leases, the balancer turning away, the authorize
+# route's timeout) before the stop, then the script run again and the flag
+# read back. Matched on the step with its whitespace collapsed.
+_STEP_TWO = (
+    ("the node's value", 'cache_wait = "100ms"'),
+    ("leaving", "sudo systemctl kill -s USR1 fastpath"),
+    ("the leases", "`fastpathctl node` exits 0"),
+    ("the balancer", "`UNHEALTHY` for it in `gcloud compute backend-services get-health tr-fastpath-edge-backend --global`"),
+    ("the route's 24 s", "the authorize route's 24 s"),
+    ("the stop", "sudo systemctl stop fastpath"),
+    ("the script", "sudo google_metadata_script_runner startup"),
+    ("the read-back", "-edge-decide-cache-wait 100ms"),
+)
+
+
+def _step_two() -> str:
+    section = _wait_section()
+    return " ".join(section[section.index("\n2. On a node"):section.index("\n3. Over an hour")].split())
+
+
+def _step_two_problems(step: str) -> list[str]:
+    problems = [f"missing {label}" for label, needle in _STEP_TWO if needle not in step]
+    if not problems:
+        at = {label: step.index(needle) for label, needle in _STEP_TWO}
+        before = ("the node's value", "leaving", "the leases", "the balancer", "the route's 24 s")
+        problems = [f"{label} after the stop" for label in before if at[label] > at["the stop"]]
+        problems += [f"{label} before the stop" for label in ("the script", "the read-back") if at[label] < at["the stop"]]
+        problems += [f"{label} before leaving" for label in before[2:] if at[label] < at["leaving"]]
+        if at["leaving"] < at["the node's value"]:
+            problems.append("leaving before the node's value")
+        if at["the read-back"] < at["the script"]:
+            problems.append("the read-back before the script")
+    if "A reset is not enough" not in step:
+        problems.append("missing the reset warning")
+    return problems
+
+
+def test_the_runbook_takes_one_node_by_its_own_wait() -> None:
+    """Step 2 sets the wait for one node by its for_each entry and takes the
+    node by the unit rewrite, in order: leaving; its leases drained
+    (`fastpathctl node` exiting 0), the balancer's UNHEALTHY and the
+    authorize route's 24 s, all before the stop; the script run again; the
+    flag read back."""
+    assert _step_two_problems(_step_two()) == []
+
+
+def test_the_step_check_refuses_a_missing_or_late_wait() -> None:
+    """The negative controls: each wait before the stop, removed, is
+    reported, as is each moved after the stop."""
+    step = _step_two()
+    for label, needle in _STEP_TWO[2:5]:
+        assert _step_two_problems(step.replace(needle, "")) == [f"missing {label}"], label
+    stop = "sudo systemctl stop fastpath"
+    for label, needle in _STEP_TWO[2:5]:
+        late = step.replace(needle, "").replace(stop, f"{stop} {needle}")
+        assert _step_two_problems(late) == [f"{label} after the stop"], label
+
+
+def _merged_cache_wait(tf: str, node: str) -> str | None:
+    """fastpath-edge-decide-cache-wait in the node's metadata as Terraform's
+    merge renders it: the arguments in the resource's order, a later one's
+    key over an earlier one's; None when no argument carries it."""
+    assert len(re.findall(r"fastpath-edge-decide-cache-wait\s*=", tf)) == 2
+    assert ("fastpath_edge_decide_cache_wait_metadata = {\n    for name, value in { fastpath-edge-decide-cache-wait = "
+            'local.fastpath_edge_decide_cache_wait } : name => value if value != ""\n  }') in tf
+    resource = tf[tf.index('resource "google_compute_instance" "fastpath_node"'):]
+    resource = resource[:resource.index("\n}\n")].replace(NODE_CACHE_WAIT, "NODE_CACHE_WAIT")
+    line = re.search(r"^\s*metadata\s*=\s*merge\(\{[^}]*\},\s*([^\n]*)\)$", resource, re.M)
+    assert line
+    fleet = re.findall(r'^\s*fastpath_edge_decide_cache_wait\s*=\s*"([^"]*)"$', tf, re.M)
+    assert len(fleet) == 1
+    carried = {"local.fastpath_edge_decide_cache_wait_metadata": fleet[0], "NODE_CACHE_WAIT": _node_cache_waits(tf)[node]}
+    value = None
+    for argument in line.group(1).split(", "):
+        if carried.get(argument, "") != "":
+            value = carried[argument]
+    return value
+
+
+def test_a_nodes_own_wait_wins_over_the_fleets() -> None:
+    """What the off switch rests on: a node's cache_wait merges after the
+    fleet value, so the fleet at "0" leaves a node at "100ms" carrying
+    100ms; only every node's "" with the fleet's "" leaves the attribute
+    absent. The control: with the node's map first, the fleet's would win."""
+    tf = TF.read_text(encoding="utf-8")
+    waits = _node_cache_waits(tf)
+    assert _merged_cache_wait(tf, "tr-fastpath-17") == "100ms"
+    assert [name for name in waits if name != "tr-fastpath-17" and _merged_cache_wait(tf, name) is not None] == []
+    fleet_zero = re.sub(r'^(\s*fastpath_edge_decide_cache_wait\s*=\s*)""$', r'\1"0"', tf, flags=re.M)
+    assert fleet_zero != tf
+    assert _merged_cache_wait(fleet_zero, "tr-fastpath-17") == "100ms"
+    assert _merged_cache_wait(fleet_zero, "tr-fastpath-18") == "0"
+    cleared = fleet_zero
+    for name in waits:
+        cleared = _with_wait(cleared, name, "")
+    assert _merged_cache_wait(cleared, "tr-fastpath-17") == "0"
+    cleared = re.sub(r'^(\s*fastpath_edge_decide_cache_wait\s*=\s*)"0"$', r'\1""', cleared, flags=re.M)
+    assert [_merged_cache_wait(cleared, name) for name in waits] == [None] * len(waits)
+    fleet_merge = "local.fastpath_edge_decide_cache_wait_metadata"
+    swapped = fleet_zero.replace(f"{fleet_merge}, {NODE_CACHE_WAIT}", f"{NODE_CACHE_WAIT}, {fleet_merge}")
+    assert swapped != fleet_zero
+    assert _merged_cache_wait(swapped, "tr-fastpath-17") == "0"
+
+
+def test_the_runbook_turns_the_wait_off_on_every_node() -> None:
+    """The off switch names the per-node values, since the fleet value alone
+    leaves a node's own in place, and the release before the flag only
+    with the attribute absent everywhere, since "0" still passes the flag."""
+    section = _wait_section()
+    off = " ".join(section[section.index("Turning it off"):].split())
+    for needed in ("alone turns nothing off where a node carries one", "still carries `100ms`",
+                   "`cache_wait = \"\"` (or `cache_wait = \"0\"`) in every node's `for_each` entry",
+                   "take each node that carried a wait by the unit rewrite", "absent on every node",
+                   'never `"0"`', '`"0"` still passes `-edge-decide-cache-wait 0`'):
+        assert needed in off, needed
