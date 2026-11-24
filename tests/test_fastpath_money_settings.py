@@ -401,8 +401,9 @@ def test_the_runbook_lowers_the_floor_on_the_nodes_before_the_enabler() -> None:
 def test_the_lower_allowances_reach_the_fleet_on_new_nodes() -> None:
     """A node keeps the script it was created with, so the script that reads
     the lower allowances reaches the fleet only on nodes added under new
-    names; 13 and 14 (from before #2542) stay until 15 and 16 serve."""
+    names: every node is 15 or later, 13 and 14 (from before #2542) having
+    been removed once 15 and 16 served."""
     tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
     assert "ignore_changes = [metadata_startup_script]" in tf
-    for node in ("tr-fastpath-15", "tr-fastpath-16"):
-        assert re.search(rf'^\s*"{node}"\s*=\s*{{ zone = "us-central1-[ab]"', tf, re.M), node
+    nodes = re.findall(r'^\s*"tr-fastpath-(\d+)"\s*=\s*{ zone = "us-central1-[ab]"', tf, re.M)
+    assert nodes and all(int(node) >= 15 for node in nodes), nodes

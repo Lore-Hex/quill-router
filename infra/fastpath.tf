@@ -787,9 +787,19 @@ resource "google_compute_instance" "fastpath_node" {
   # passed neither -allowance-tier2 nor -allowance-tier1 from their
   # attributes. The same release and metadata; 13 and 14 were drained, left
   # the edge backend one apply before their removal, then were removed.
+  #
+  # 17 and 18 take the places of 15 and 16 the same way, for the settle
+  # log's hedge (#2671), starved leases (#2906) and the decide cache's wait
+  # (#2903): the script 15 and 16 run, from before them, passes none of
+  # -settle-hedge, -starved-leases or -edge-decide-cache-wait from their
+  # attributes, and checks no release against its pinned digests (#2668).
+  # The same release and metadata; 15 and 16 are drained, leave the edge
+  # backend one apply before their removal, then are removed.
   for_each = {
     "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
+    "tr-fastpath-17" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
+    "tr-fastpath-18" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
 
   project      = local.gcp_project_id

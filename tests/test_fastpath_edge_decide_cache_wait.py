@@ -99,6 +99,21 @@ def test_the_flag_waits_for_the_attribute_and_a_release_that_takes_it() -> None:
         assert "edge-decide-cache-wait" in taken
 
 
+def test_the_script_that_reads_the_wait_reaches_the_fleet_on_new_nodes() -> None:
+    """A node keeps the script it was created with, so the script that reads
+    fastpath-edge-decide-cache-wait, fastpath-starved-leases and
+    fastpath-settle-hedge reaches the fleet only on nodes added under new
+    names; 15 and 16 (from before #2671, #2906 and #2903) stay until 17 and
+    18 serve."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    for attribute in ("fastpath-edge-decide-cache-wait", "fastpath-starved-leases", "fastpath-settle-hedge"):
+        assert f"$(attribute {attribute})" in script, attribute
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    assert "ignore_changes = [metadata_startup_script]" in tf
+    for node in ("tr-fastpath-17", "tr-fastpath-18"):
+        assert re.search(rf'^\s*"{node}"\s*=\s*{{ zone = "us-central1-[ab]"', tf, re.M), node
+
+
 def test_the_runbook_names_the_switch_and_its_counts() -> None:
     deploy = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text(encoding="utf-8")
     section = deploy[deploy.index("## The decide cache's wait"):]
