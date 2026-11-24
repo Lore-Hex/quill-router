@@ -226,9 +226,12 @@ type Cache struct {
 	cfg CacheConfig
 	// reads are every read's turn; refreshes the refresh's share of them.
 	reads, refreshes chan struct{}
-	ctx              context.Context
-	stop             context.CancelFunc
-	wg               sync.WaitGroup
+	// monotonic is LookupWithin's clock, time.Now (its monotonic reading);
+	// a test moves it.
+	monotonic func() time.Time
+	ctx       context.Context
+	stop      context.CancelFunc
+	wg        sync.WaitGroup
 
 	mu sync.Mutex
 	// keys are held by lookup hash; order their uses, the most recent at
@@ -349,7 +352,7 @@ func NewCache(cfg CacheConfig) (*Cache, error) {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	return &Cache{cfg: cfg, reads: make(chan struct{}, cfg.Reads),
-		refreshes: make(chan struct{}, max(1, cfg.Reads-cfg.Reads/4)), ctx: ctx, stop: stop,
+		refreshes: make(chan struct{}, max(1, cfg.Reads-cfg.Reads/4)), monotonic: time.Now, ctx: ctx, stop: stop,
 		keys: map[string]*keyEntry{}, order: list.New(), credits: map[string]*creditEntry{},
 		members: map[string]map[string]struct{}{}, keyReads: map[string]*flight{},
 		creditReads: map[string]*flight{}, gone: map[string]*list.Element{}, goneOrder: list.New()}, nil
@@ -385,13 +388,25 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 // (WaitTimedOut), and the read goes on in the background, as Lookup's does.
 // A miss that finds every read busy, or a fresh entry, waits for nothing.
 //
+// The wait ends at a deadline, wait after the call, and nothing seen at or
+// past it is taken: a read that answers then (a select with the read done
+// and the timer fired may take either) returns the first look, timed out,
+// as one that answered later would. The deadline is checked again after the
+// last look, so the answer returned was read before it.
+//
 // The wait holds no lock and no read: other lookups go on, and a lookup of
 // the same key waits on the same read. Its time is the process's monotonic
-// clock, not the cache's Clock, as it bounds the request's own time.
+// clock (monotonic), not the cache's Clock, as it bounds the request's own
+// time.
 func (c *Cache) LookupWithin(lookupHash string, now time.Time, wait time.Duration) Read {
-	began := time.Now()
+	began := c.monotonic()
 	r, flights := c.lookup(lookupHash, now, true)
 	if wait <= 0 || len(flights) == 0 {
+		return r
+	}
+	deadline := began.Add(wait)
+	late := func() Read {
+		r.Wait, r.Waited = WaitTimedOut, c.monotonic().Sub(began)
 		return r
 	}
 	timer := time.NewTimer(wait)
@@ -400,12 +415,17 @@ func (c *Cache) LookupWithin(lookupHash string, now time.Time, wait time.Duratio
 		select {
 		case <-f.done:
 		case <-timer.C:
-			r.Wait, r.Waited = WaitTimedOut, time.Since(began)
-			return r
+			return late()
 		}
 	}
+	if !c.monotonic().Before(deadline) {
+		return late()
+	}
 	again, _ := c.lookup(lookupHash, now, false)
-	again.KeyMiss, again.Wait, again.Waited = r.KeyMiss, WaitUnfilled, time.Since(began)
+	if !c.monotonic().Before(deadline) {
+		return late()
+	}
+	again.KeyMiss, again.Wait, again.Waited = r.KeyMiss, WaitUnfilled, c.monotonic().Sub(began)
 	if again.Key == Fresh && again.Credit != Cold && again.Credit != Stale {
 		again.Wait = WaitFilled
 	}
@@ -834,6 +854,9 @@ func (c *Cache) readCredit(workspace string, f *flight) {
 		return
 	case err != nil:
 		c.readFailures.Add(1)
+		if timedOut(err) {
+			c.readTimeouts.Add(1)
+		}
 		return
 	case len(c.members[workspace]) == 0:
 		return

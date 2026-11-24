@@ -74,16 +74,16 @@ The flow, per request, in this order:
    so a key whose requests reach a node more than about 75 s apart finds
    it stale on every request and passes (`cache.key`); with two nodes
    behind the balancer each sees about half of a key's requests, which
-   widens its gaps. Measured from the nodes' decide lines and a replay of
-   the request times through this cache's rules, that is most of
-   `cache.key`; Python's refusals evicting a workspace's keys
-   (`cold.evicted`) are the rest, first sightings few, and the refresh's
-   own limits (its reads given up, timed out or failed, the size bound)
-   none. The decide line names each miss (`cache_miss`). With the wait
+   widens its gaps. Most misses are this expiry between sparse requests;
+   Python's refusals evicting a workspace's keys (`cold.evicted`) are the
+   next cause. The decide line names each miss (`cache_miss`). With the wait
    set, a miss waits up to it (at most 250 ms, `edge.MaxCacheWait`, out of
    the decide budget) for the strong read it starts anyway
    (`gwstate.Cache.LookupWithin`), and is decided on what that read found;
-   a read slower than the wait passes as before. It adds no read, and
+   a read slower than the wait passes as before, and nothing seen at or
+   past the wait's monotonic deadline is taken, a read done then included.
+   What it returns is judged at the request's instant, never the cache's
+   clock, exactly as a lookup without a wait is. It adds no read, and
    decides on nothing a fresh hit would not: the read began after the
    request arrived or within the 15 s maximum age of it, a revoked key or
    paused workspace reads as such, a lookup hash with no key is a fresh

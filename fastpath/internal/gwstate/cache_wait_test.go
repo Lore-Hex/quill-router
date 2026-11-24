@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,20 +91,131 @@ func TestLookupWithinPassesWhenItsWaitEnds(t *testing.T) {
 		read.Waited < wait || took > wait+2*time.Second {
 		t.Fatalf("a wait that ended first, after %v: %+v", took, read)
 	}
-	// A stale entry whose read is slow: the stale facts are returned, never
-	// usable.
+	// A stale entry whose two reads, the key's and the credit entry's, are
+	// slow: the stale facts are returned, never usable, once the wait ends,
+	// not once the second read gives up at ReadTimeout (2 s).
 	close(gate)
 	cache.settle()
 	gate2 := make(chan struct{})
 	r.set(func(r *fakeReader) { r.gate = gate2 })
+	began = time.Now()
 	read = cache.LookupWithin("lh", c.advance(2*time.Minute), wait)
-	if read.Key != Stale || read.Usable() || read.Wait != WaitTimedOut || read.KeyMiss != MissIdle {
-		t.Fatalf("a stale entry's slow read: %+v", read)
+	took = time.Since(began)
+	if read.Key != Stale || read.Credit != Stale || read.Usable() || read.Wait != WaitTimedOut ||
+		read.KeyMiss != MissIdle || took >= time.Second {
+		t.Fatalf("a stale entry's two slow reads, after %v: %+v", took, read)
 	}
 	close(gate2)
 	cache.settle()
 	if got := cache.Lookup("lh", c.Now()); !got.Usable() {
 		t.Fatalf("filled behind the wait: %+v", got)
+	}
+}
+
+// scriptedClock is LookupWithin's monotonic clock in a test: it reads base
+// until its jump'th reading, and base plus two hours from then on, so a
+// deadline passes at a reading the test chooses whatever the scheduler does.
+type scriptedClock struct {
+	base  time.Time
+	jump  int64
+	reads atomic.Int64
+}
+
+func (s *scriptedClock) now() time.Time {
+	if s.reads.Add(1) >= s.jump {
+		return s.base.Add(2 * time.Hour)
+	}
+	return s.base
+}
+
+// TestLookupWithinTakesNothingPastItsDeadline: a read that answers once the
+// wait's deadline has passed is not taken, though the wait saw it done (a
+// select with the read done and the timer fired may take either): the
+// request gets the first look, timed out, and passes. The deadline is
+// checked once the reads are done and again after the last look; a read
+// done before it is taken. The wait itself is an hour, so its timer never
+// decides.
+func TestLookupWithinTakesNothingPastItsDeadline(t *testing.T) {
+	for name, tc := range map[string]struct {
+		jump int64
+		want string
+	}{
+		// Readings: 1 the wait's start, 2 once the reads are done, 3 after
+		// the last look.
+		"past it once the reads are done": {2, WaitTimedOut},
+		"past it after the last look":     {3, WaitTimedOut},
+		"before it":                       {100, WaitFilled},
+	} {
+		r, c := newFakeReader(), start()
+		r.keys["lh"] = keyContext("lh", "ws", "")
+		r.credits["ws"] = funded
+		cache := newTestCache(t, r, c)
+		clock := &scriptedClock{base: time.Now(), jump: tc.jump}
+		cache.monotonic = clock.now
+		got := cache.LookupWithin("lh", c.Now(), time.Hour)
+		if got.Wait != tc.want || got.Usable() != (tc.want == WaitFilled) || got.KeyMiss != MissNew {
+			t.Fatalf("%s: %+v", name, got)
+		}
+		if tc.want == WaitTimedOut && (got.Key != Cold || got.Waited != 2*time.Hour) {
+			t.Fatalf("%s: not the first look: %+v", name, got)
+		}
+		cache.settle()
+		// The read it did not take filled the entry for the next request.
+		if got := cache.Lookup("lh", c.Now()); !got.Usable() {
+			t.Fatalf("%s: not filled behind the wait: %+v", name, got)
+		}
+	}
+}
+
+// TestLookupWithinJudgesFreshnessAtTheRequestsInstant: what the wait
+// returns is judged at the request's instant, as Lookup judges it, never at
+// the cache's clock. A request whose instant is past the maximum age of
+// every read the cache can make (its instant ahead of the cache's clock)
+// gets a stale entry from LookupWithin exactly as from Lookup, though at
+// the clock's instant the entry would be fresh: for a key held and for one
+// never seen.
+func TestLookupWithinJudgesFreshnessAtTheRequestsInstant(t *testing.T) {
+	setup := func() (*fakeReader, *clock, *Cache) {
+		r, c := newFakeReader(), start()
+		r.keys["held"], r.keys["new"] = keyContext("held", "ws", ""), keyContext("new", "ws2", "")
+		r.credits["ws"], r.credits["ws2"] = funded, funded
+		cache := newTestCache(t, r, c)
+		cache.Lookup("held", c.Now())
+		cache.settle()
+		return r, c, cache
+	}
+	_, c, plain := setup()
+	_, _, within := setup()
+	ahead := c.Now().Add(DefaultMaxAge + time.Second)
+	for _, hash := range []string{"held", "new"} {
+		// Lookup, its read landed: what a request at ahead is given.
+		plain.Lookup(hash, ahead)
+		plain.settle()
+		want := plain.Lookup(hash, ahead)
+		got := within.LookupWithin(hash, ahead, 5*time.Second)
+		if want.Key != Stale || want.Usable() || got.Key != want.Key || got.Credit != want.Credit || got.Usable() ||
+			got.Wait != WaitUnfilled {
+			t.Fatalf("%s at an instant past the reads' maximum age: LookupWithin %+v, Lookup %+v", hash, got, want)
+		}
+		within.settle()
+		// At the cache's own instant both are fresh.
+		if at := within.LookupWithin(hash, c.Now(), 5*time.Second); !at.Usable() {
+			t.Fatalf("%s at the clock's instant: %+v", hash, at)
+		}
+	}
+}
+
+// TestACreditReadTimeoutIsCounted: a credit read failing at its deadline is
+// a read timeout, as a key read's is.
+func TestACreditReadTimeoutIsCounted(t *testing.T) {
+	r, c := newFakeReader(), start()
+	r.keys["lh"], r.credits["ws"] = keyContext("lh", "ws", ""), funded
+	r.creditErr = status.Error(codes.DeadlineExceeded, "deadline")
+	cache := newTestCache(t, r, c)
+	cache.Lookup("lh", c.Now())
+	cache.settle()
+	if got := cache.Counters(); got.ReadFailures != 1 || got.ReadTimeouts != 1 {
+		t.Fatalf("the counters: %+v", got)
 	}
 }
 
@@ -460,8 +572,8 @@ func TestTheReadThroughDecidesTheSparseKeys(t *testing.T) {
 			} else {
 				got = cache.Lookup(q.hash, c.Now())
 			}
-			// A request's read lands before the next request, as it does in
-			// milliseconds in production.
+			// A request's read lands before the next request, as one strong
+			// read does long before a sparse key's next request.
 			cache.settle()
 			if !got.Usable() {
 				passed++
