@@ -15,9 +15,12 @@ import (
 // that still admit, just after the store refused the shard a top-up because
 // the workspace's headroom outside leases is under the floor plus the amount
 // asked (store.RefusedFloor), or because its leases already hold its
-// allowance (store.RefusedAllowance). The money the request needs is then
-// split: part is the free room of a lease too small for the request, part is
-// outside leases, where the synchronous path cannot reach the rest. Python
+// allowance (store.RefusedAllowance), and the headroom that refusal read is
+// under the request's estimate and buffer. An ask is sized for the shard's
+// recent spend, not the request, so a refusal alone does not mean the
+// synchronous path cannot take the request; the headroom does. The money the
+// request needs is then split: part is the free room of a lease too small
+// for the request, part is outside leases, too little for it. Python
 // answers that synchronous hold 503 (fastpath_lease_headroom_503), and a
 // retry meets the same answer until the lease stops admitting: idle for
 // TopUps.IdleAfter, which any admission that still fits restarts, or
@@ -27,9 +30,12 @@ import (
 // Closing such a lease is the transition idleness, age, a pause and a
 // retirement already take (Lease.Close): it admits nothing more, serves
 // every hold it has, and its next checkpoint returns its free room, its
-// allocation less what it consumed, holds and buffers, so nothing a hold
-// can still charge is returned. Its final checkpoint ends it once no hold
-// is open. Only the moment changes.
+// allocation less what it consumed, holds, pending and buffers. A stream's
+// buffer before its first heartbeat, and its ceiling above its hold, are
+// not reserved there, as for any close: an overrun past the returned room
+// is the lease's shortfall, recorded and raised as today, so nothing is
+// lost or charged twice. Its final checkpoint ends it once no hold is
+// open. Only the moment changes.
 type Starved string
 
 const (
@@ -88,8 +94,9 @@ func starvingRefusal(r store.Refusal) bool {
 
 // starved acts on a request for key that the leases in short refused for
 // room (ErrNoRoom), need being its estimate and buffer: if the store's last
-// answer to the shard's ask, within starvedFresh, was a starving refusal,
-// it logs the shard (rate-limited) and, under StarvedClose, closes them.
+// answer to the shard's ask, within starvedFresh, was a starving refusal
+// that read a headroom under need, it logs the shard (rate-limited) and,
+// under StarvedClose, closes them.
 // Nothing is done while the owner stops, retires or hands off: each of
 // those closes its leases itself.
 func (o *Owner) starved(key ShardKey, short []*Lease, need int64) {
@@ -100,42 +107,50 @@ func (o *Owner) starved(key ShardKey, short []*Lease, need int64) {
 	o.mu.Lock()
 	sh := o.shardLocked(key)
 	now := o.cfg.Clock()
-	if o.stopped || o.retiring || o.handoff != nil || sh.refusedAt.IsZero() || now.Sub(sh.refusedAt) > starvedFresh {
+	if o.stopped || o.retiring || o.handoff != nil || sh.refusedAt.IsZero() || now.Sub(sh.refusedAt) > starvedFresh ||
+		sh.refusedHeadroom >= need {
 		o.mu.Unlock()
 		return
 	}
 	sh.starvedN++
-	refused, count := sh.refused, sh.starvedN
+	refused, count, asked, headroom := sh.refused, sh.starvedN, sh.refusedAsk, sh.refusedHeadroom
 	line := sh.starvedAt.IsZero() || now.Sub(sh.starvedAt) >= starvedLogEvery
 	if line {
 		sh.starvedAt, sh.starvedN = now, 0
 	}
 	o.mu.Unlock()
+	if !line && mode != StarvedClose {
+		return
+	}
+	// free is what the leases' next checkpoints would return, read before
+	// any is closed.
 	var free int64
 	for _, l := range short {
-		room, _ := l.roomAndNeeds()
-		free = sat(free, room)
+		if line {
+			free = sat(free, max(l.Books().Free(), 0))
+		}
 		if mode == StarvedClose {
 			l.Close()
 		}
 	}
 	if line {
 		o.logf("fastpath: owner starved shard workspace=%s region=%s shard=%d mode=%s leases=%d free=%d need=%d "+
-			"refused=%q admissions=%d", key.Workspace, key.Region, key.Shard, mode, len(short), free, need,
-			refused, count)
+			"headroom=%d asked=%d refused=%q admissions=%d", key.Workspace, key.Region, key.Shard, mode, len(short),
+			free, need, headroom, asked, refused, count)
 	}
 }
 
-// noteGrant keeps the store's answer to the shard's ask, with o.mu held: a
-// starving refusal is remembered with when it came, any other answer
-// forgets the last. A lost answer changes nothing.
-func (o *Owner) noteGrant(sh *shard, refused store.Refusal, err error) {
+// noteGrant keeps the store's answer to the shard's ask of asked, with o.mu
+// held: a starving refusal is remembered with when it came, the amount
+// asked and the headroom it read; any other answer forgets the last. A lost
+// answer changes nothing.
+func (o *Owner) noteGrant(sh *shard, asked int64, got store.GrantResult, err error) {
 	switch {
 	case err != nil:
-	case starvingRefusal(refused):
-		sh.refusedAt, sh.refused = o.cfg.Clock(), refused
+	case starvingRefusal(got.Refused):
+		sh.refusedAt, sh.refused, sh.refusedAsk, sh.refusedHeadroom = o.cfg.Clock(), got.Refused, asked, got.Headroom
 	default:
-		sh.refusedAt, sh.refused = time.Time{}, ""
+		sh.refusedAt, sh.refused, sh.refusedAsk, sh.refusedHeadroom = time.Time{}, "", 0, 0
 	}
 }
 

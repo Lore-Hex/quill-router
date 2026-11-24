@@ -34,7 +34,7 @@ func (l *lines) all() []string {
 // whose next ask the store refuses for refusal: the request of 5 that
 // follows finds no room and asks, and the store's refusal is in before the
 // function returns. The shard asks only for requests no lease takes.
-func starvedFixture(t *testing.T, mode Starved, refusal store.Refusal) (*fixture, *fakeSpanner, *Lease, Admitted, *lines) {
+func starvedFixture(t *testing.T, mode Starved, refusal store.Refusal, tweaks ...func(*fakeSpanner)) (*fixture, *fakeSpanner, *Lease, Admitted, *lines) {
 	t.Helper()
 	logged := &lines{}
 	f, sp := shardFixture(t, func(c *Config) { c.StarvedLeases, c.Logf = mode, logged.logf })
@@ -45,6 +45,9 @@ func starvedFixture(t *testing.T, mode Starved, refusal store.Refusal) (*fixture
 	f.clock.advance(11 * time.Second) // the first ask's cooldown passes
 	sp.mu.Lock()
 	sp.refuseGrants, sp.grantRefusal = true, refusal
+	for _, tweak := range tweaks {
+		tweak(sp)
+	}
 	sp.mu.Unlock()
 	if _, err := f.owner.Admit(key, Admission{Estimate: 5, Boot: boot}); !errors.Is(err, ErrNoRoom) {
 		t.Fatalf("a request the lease has no room for: %v", err)
@@ -73,7 +76,7 @@ func starvedAgain(t *testing.T, f *fixture) {
 // returns exactly its free room and is not final while its hold is open,
 // the hold settles, and the lease then finishes and leaves the shard.
 func TestAStarvedShardClosesItsLease(t *testing.T) {
-	f, _, a, held, logged := starvedFixture(t, StarvedClose, store.RefusedFloor)
+	f, sp, a, held, logged := starvedFixture(t, StarvedClose, store.RefusedFloor)
 	f.clock.advance(time.Second)
 	starvedAgain(t, f)
 	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
@@ -81,7 +84,7 @@ func TestAStarvedShardClosesItsLease(t *testing.T) {
 	}
 	got := logged.all()
 	if len(got) != 1 || !strings.Contains(got[0], "fastpath: owner starved shard workspace=ws-1 region=us-central1 shard=2 "+
-		"mode=close leases=1 free=2 need=5 refused=\""+string(store.RefusedFloor)+"\" admissions=1") {
+		"mode=close leases=1 free=2 need=5 headroom=0 asked=13 refused=\""+string(store.RefusedFloor)+"\" admissions=1") {
 		t.Fatalf("the starved line: %q", got)
 	}
 	ctx := context.Background()
@@ -102,11 +105,46 @@ func TestAStarvedShardClosesItsLease(t *testing.T) {
 		_, kept := f.owner.Lease(a.id)
 		return !kept
 	})
-	// A closed lease answers ErrClosing, not ErrNoRoom, so it is not
-	// starved again, and nothing more is logged within the minute.
+	// A closed lease answers ErrClosing, not ErrNoRoom, so the shard is not
+	// starved again, though a fresh refusal stands: nothing counted, and
+	// nothing logged past the minute.
+	f.clock.advance(starvedLogEvery)
+	n := len(sp.granted())
+	starvedAgain(t, f) // its ask is refused again
+	waitFor(t, "the ask refused again", func() bool {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return !f.owner.shards[key].asking && len(sp.granted()) == n+1
+	})
 	starvedAgain(t, f)
-	if got := logged.all(); len(got) != 1 {
-		t.Fatalf("logged again: %q", got)
+	f.owner.mu.Lock()
+	counted := f.owner.shards[key].starvedN
+	f.owner.mu.Unlock()
+	if got := logged.all(); len(got) != 1 || counted != 0 {
+		t.Fatalf("starved again: %d counted, logged %q", counted, got)
+	}
+}
+
+// TestARefusalOfALargerAskIsNotStarvation: an ask is sized for the shard's
+// recent spend, so the store may refuse it for the floor though the
+// headroom outside leases still covers the request. The synchronous path
+// takes that request; nothing is closed or logged. A headroom one short of
+// the request's need is starvation.
+func TestARefusalOfALargerAskIsNotStarvation(t *testing.T) {
+	for _, c := range []struct {
+		headroom int64
+		starved  bool
+	}{{5, false}, {1 << 40, false}, {4, true}, {-3, true}} {
+		f, sp, a, _, logged := starvedFixture(t, StarvedClose, store.RefusedFloor, func(sp *fakeSpanner) {
+			sp.grantHeadroom = c.headroom
+		})
+		_ = sp
+		starvedAgain(t, f)
+		_, err := a.Admit(Admission{Estimate: 1, Boot: boot})
+		if closed := errors.Is(err, ErrClosing); closed != c.starved || (len(logged.all()) == 1) != c.starved {
+			t.Fatalf("headroom %d: closed %v (%v), logged %q; want starved %v", c.headroom, closed, err,
+				logged.all(), c.starved)
+		}
 	}
 }
 
@@ -183,33 +221,53 @@ func TestNoStarvationWithoutAFreshStarvingRefusal(t *testing.T) {
 	})
 }
 
-// TestAGrantForgetsTheRefusal: a granted ask clears the shard's refusal, so
-// a request after it is not starved by the refusal before.
+// TestAGrantForgetsTheRefusal: an ask whose answer is lost keeps the
+// shard's refusal, so the next request is still starved; a granted ask
+// forgets it, so the request after is admitted under the new lease and
+// nothing is closed.
 func TestAGrantForgetsTheRefusal(t *testing.T) {
-	f, sp, _, _, logged := starvedFixture(t, StarvedClose, store.RefusedFloor)
-	f.owner.mu.Lock()
-	sh := f.owner.shards[key]
-	f.owner.noteGrant(sh, "", nil)
-	cleared := sh.refusedAt.IsZero() && sh.refused == ""
-	f.owner.noteGrant(sh, store.RefusedFloor, nil)
-	f.owner.noteGrant(sh, "", errors.New("the answer was lost"))
-	kept := !sh.refusedAt.IsZero()
-	f.owner.mu.Unlock()
-	if !cleared || !kept {
-		t.Fatalf("a grant cleared the refusal: %v; a lost answer kept it: %v", cleared, kept)
+	f, sp, a, _, logged := starvedFixture(t, StarvedClose, store.RefusedFloor)
+	refusal := func() (time.Time, store.Refusal, int64) {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		sh := f.owner.shards[key]
+		return sh.refusedAt, sh.refused, sh.refusedAsk
 	}
-	// End to end: the store grants the next ask, a lease of 10 is taken,
-	// and the request after it is admitted, nothing closed or logged.
+	at, why, asked := refusal()
+	if at.IsZero() || why != store.RefusedFloor || asked != 13 {
+		t.Fatalf("the refusal kept: %v %q %d", at, why, asked)
+	}
+	settled := func(n int) {
+		waitFor(t, "the ask answered", func() bool {
+			f.owner.mu.Lock()
+			defer f.owner.mu.Unlock()
+			return !f.owner.shards[key].asking && len(sp.granted()) == n
+		})
+	}
+	// A lost answer: the refusal stands.
 	sp.mu.Lock()
-	sp.refuseGrants = false
+	sp.refuseGrants, sp.lostGrants = false, 1
 	sp.mu.Unlock()
-	f.owner.mu.Lock()
-	f.owner.noteGrant(sh, "", nil)
-	f.owner.mu.Unlock()
 	f.clock.advance(11 * time.Second)
-	starvedAgain(t, f)
+	n := len(sp.granted())
+	_, _ = f.owner.Admit(key, Admission{Estimate: 5, Boot: boot}) // starved: closes a, asks, the answer lost
+	settled(n + 1)
+	if got, _, _ := refusal(); !got.Equal(at) {
+		t.Fatalf("a lost answer moved the refusal from %v to %v", at, got)
+	}
+	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("the starved lease after a lost answer: %v", err)
+	}
+	// The same ask again, granted: the refusal is forgotten.
+	f.clock.advance(11 * time.Second)
+	_, _ = f.owner.Admit(key, Admission{Estimate: 5, Boot: boot})
+	settled(n + 2)
+	if got, why, _ := refusal(); !got.IsZero() || why != "" {
+		t.Fatalf("a granted ask kept the refusal: %v %q", got, why)
+	}
 	b := f.waitLeases(t, 2)[1]
-	if got := admitTo(t, f, 5); got.Lease != b.id || len(logged.all()) != 0 {
+	lines := len(logged.all())
+	if got := admitTo(t, f, 5); got.Lease != b.id || len(logged.all()) != lines {
 		t.Fatalf("admitted under %s, the new lease %s; logged %q", got.Lease, b.id, logged.all())
 	}
 }

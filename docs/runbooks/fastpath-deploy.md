@@ -618,8 +618,10 @@ unit. The attribute is set only with a pinned release that takes
 
 A shard is starved when a request finds no room under any lease that still
 admits, just after the store refused the shard a top-up for the floor or the
-allowance. The money it needs is split between a lease too small for it and
-the headroom outside leases, so the synchronous path answers it the
+allowance, and that refusal read a headroom outside leases under the
+request's estimate and buffer. The money it needs is split between a lease
+too small for it and the headroom outside leases, so the synchronous path
+answers it the
 lease-headroom 503 (`billing.lease_headroom_unavailable`), and every retry
 meets the same answer until the lease stops admitting: idle ten minutes, which
 any admission that still fits restarts, or an hour old
@@ -629,8 +631,11 @@ any admission that still fits restarts, or an hour old
 
 - `log`, the release default: closes nothing, and writes
   `fastpath: owner starved shard workspace=... region=... shard=... mode=log
-  leases=N free=F need=E refused="..." admissions=K` at most once a minute
-  per shard, `admissions` counting the starved requests since its last line.
+  leases=N free=F need=E headroom=H asked=A refused="..." admissions=K` at
+  most once a minute per shard: `free` what the leases would return, `need`
+  the request's estimate and buffer, `headroom` what the refusal read outside
+  leases, `asked` the refused top-up, and `admissions` the starved requests
+  since the shard's last line.
 - `close`: the same line with `mode=close`, and the leases that refused the
   request for room stop admitting (`Lease.Close`, the transition idleness and
   age take). Each keeps serving its holds; its next checkpoint returns its

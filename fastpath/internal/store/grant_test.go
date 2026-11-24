@@ -119,6 +119,17 @@ func TestGrantRefusesWhatTheDesignRefuses(t *testing.T) {
 			t.Errorf("%s: %+v %v, want refused %q", c.name, got, err, c.refused)
 			continue
 		}
+		// The floor's and the allowance's refusals say the headroom they
+		// read, which the owner weighs against the request (owner/starved.go).
+		var headroom int64
+		if c.refused == RefusedFloor || c.refused == RefusedAllowance {
+			for _, credit := range c.credits {
+				headroom += credit
+			}
+		}
+		if got.Headroom != headroom {
+			t.Errorf("%s: headroom %d, want %d", c.name, got.Headroom, headroom)
+		}
 		if after := readRows(t, ws); !slices.Equal(after, before) || leaseCount(t, ws) != 0 {
 			t.Errorf("%s: the refused grant wrote rows %+v, leases %d", c.name, after, leaseCount(t, ws))
 		}

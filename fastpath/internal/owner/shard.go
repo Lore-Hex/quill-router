@@ -61,13 +61,16 @@ type shard struct {
 	retry   *store.GrantRequest
 	charges charges
 	// refusedAt and refused are when, and why, the store last refused the
-	// shard's ask for its floor or its allowance (noteGrant); starvedAt is
-	// when the shard was last logged starved, and starvedN the starved
-	// admissions since (starved.go).
-	refusedAt time.Time
-	refused   store.Refusal
-	starvedAt time.Time
-	starvedN  int64
+	// shard's ask for its floor or its allowance, refusedAsk the amount
+	// asked and refusedHeadroom the headroom outside leases the refusal
+	// read (noteGrant); starvedAt is when the shard was last logged starved,
+	// and starvedN the starved admissions since (starved.go).
+	refusedAt       time.Time
+	refused         store.Refusal
+	refusedAsk      int64
+	refusedHeadroom int64
+	starvedAt       time.Time
+	starvedN        int64
 }
 
 // charges are a shard's charges over the horizon, in sixty buckets of a
@@ -280,7 +283,7 @@ func (o *Owner) grant(sh *shard, req store.GrantRequest) {
 	if err != nil {
 		sh.retry = &req
 	}
-	o.noteGrant(sh, got.Refused, err)
+	o.noteGrant(sh, req.Amount, got, err)
 }
 
 // roomAndNeeds is what a lease adds to its shard's room, while it admits

@@ -91,11 +91,16 @@ modes, rollout.
 
 When a request finds no room under any lease of its shard that still admits,
 and the store's last answer to that shard's top-up, within a minute, was a
-refusal for the floor or the allowance, the owner closes those leases
-(`fastpath/internal/owner/starved.go`). Their next checkpoint (every
-renewal round, 5 s in production) returns their free room, the auditor
-credits it, and the next request is admitted, by a new lease sized for it
-or by the synchronous path.
+refusal for the floor or the allowance whose headroom outside leases was
+under this request's estimate and buffer, the owner closes those leases
+(`fastpath/internal/owner/starved.go`). The headroom condition is the
+lease-headroom 503's own: an ask is sized for the shard's last minute of
+spend plus its open holds, not for the request, so a refusal alone does not
+mean the synchronous path cannot take the request (the store now returns
+the headroom it read with those two refusals, `store.GrantResult.Headroom`).
+The closed leases' next checkpoint (every renewal round, 5 s in production)
+returns their free room, the auditor credits it, and the synchronous path,
+or a later lease, takes the request.
 
 - **Reduction**: the lease-headroom class, ~97% of authorize 503s and
   essentially all customer-visible billing 503s, from minutes per episode to
@@ -104,20 +109,29 @@ or by the synchronous path.
   and a retirement already take; only its moment changes. A closing lease
   admits nothing, serves every hold it has (heartbeats, settles, refunds,
   reaps unchanged), and returns only `Free()`: allocation less consumed,
-  held and buffered. Nothing a hold can still charge is returned, so there is
-  no lost charge; no record kind or field is new, so the auditor, the drain
-  log and the terminal order are untouched, and there is no double charge.
-  In `proofs/LeaseLifecycle.tla` the owner's stop (`OwnerStop`) is already
-  unguarded, enabled at any time, so this trigger adds no behaviour the
-  model lacks; `CreditDebt` models returns. No spec changes.
-- **Failure modes**: (1) churn: a closed lease is followed by a new grant
-  sized for the request, which may later starve and close in turn; bounded by
+  held, pending and buffered. As for every close today, a stream's buffer
+  before its first heartbeat and its ceiling above its hold are not reserved
+  there: an overrun past the returned room is the lease's shortfall,
+  recorded and raised as today. So no charge is lost; no record kind is new
+  and no record field changes, so the auditor, the drain log and the
+  terminal order are untouched, and there is no double charge. Because the
+  trigger fires on workspaces near their floor, such a shortfall can take a
+  workspace a little below its floor or into debt, as a close at MaxLife can
+  today. In `proofs/LeaseLifecycle.tla` the owner's stop (`OwnerStop`) is
+  guarded only by the owner holding a lease it has not stopped, whatever the
+  reason, so this trigger adds no behaviour the model lacks; `CreditDebt`
+  models returns. No spec changes.
+- **Failure modes**: (1) churn: a closed lease may be followed by a new
+  grant once the returned room lands, which may later starve and close in
+  turn; bounded by
   the top-up cooldown (one ask per shard per second) since a close needs a
   fresh refusal, and a closed lease answers `ErrClosing`, not `ErrNoRoom`, so
   it is never counted twice. (2) traffic moves to the synchronous path while
   the returned room settles: that is today's path for every unleased
   workspace. (3) a refusal that no longer stands: bounded to a minute, and
-  any other answer, a grant included, forgets it.
+  any other answer, a grant included, forgets it. (4) a headroom read up to a
+  minute old: holds settled since may have raised it; the line carries the
+  headroom and the amount asked so the shadow week shows how often.
 - **Rollout**: the release default is `log`: the owner writes `fastpath:
   owner starved shard ... mode=log ... admissions=K` at most once a minute
   per shard and closes nothing. Read it beside
@@ -217,6 +231,9 @@ retryable under the hold, and prove the hold covers the 5 s budget). Settle
   `Owner.starved`, `Owner.noteGrant`.
 - `shard.go`: `Admit` collects the leases that answered `ErrNoRoom` and calls
   `starved` before its own top-up ask; `grant` records the store's answer.
+- `fastpath/internal/store/grant.go`: `GrantResult.Headroom`, the signed
+  headroom the floor and allowance refusals read (saturated to int64). The
+  store already computed it; nothing it writes changes.
 - `owner.Config.StarvedLeases` and `Logf`; the zero value is off, so every
   existing test and caller is unchanged.
 - `service.Defaults()`: `StarvedLog`. Node flag `-starved-leases`; startup
@@ -232,9 +249,9 @@ After the release is pinned and each node runs it:
 
 1. Starved lines: `fastpath: owner starved shard` in the nodes' logs.
 2. For each `billing.lease_headroom_unavailable` episode (control plane), a
-   starved line for the same workspace within the minute before. An episode
-   with none means a cause A does not address (for example a hold larger than
-   the owner's largest top-up, $10, which no lease can take).
+   starved line for the same workspace within the minute before, with
+   `headroom` under `need`. An episode with none means a cause A does not
+   address, or a top-up that was granted rather than refused.
 3. Starved lines outside any episode: how often, and how large `free` is.
    Frequent lines with no 503s mean `close` would churn leases for workspaces
    the synchronous path is serving anyway; acceptable, but read it.
@@ -245,10 +262,11 @@ After the release is pinned and each node runs it:
 
 ## 5. Not done here
 
-- Holds above the owner's largest top-up never fit a lease; such a workspace
-  is always on the synchronous path and its leases' room is parked. A could
-  be extended to close when the need exceeds `TopUps.Max`, after its shadow
-  data is read.
+- Holds above the owner's largest top-up ($10) never fit a lease: the ask
+  is clamped to it. Refused, A treats the shard as starved; granted, the
+  shard keeps taking leases the request cannot use, one per cooldown, until
+  a refusal (not new). Sizing asks by the request, or passing such requests
+  over to the synchronous path at once, is a follow-up.
 - The lease-headroom 503's `Retry-After: 1` is optimistic; with A on it is
   about right.
 - B, C, F and G as above.

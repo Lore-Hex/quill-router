@@ -66,6 +66,12 @@ type GrantResult struct {
 	Expiry   time.Time
 	Donors   []Donor
 	CommitTS time.Time
+	// Headroom is, with RefusedAllowance or RefusedFloor, the workspace's
+	// signed headroom outside leases that the refusal read, saturated to
+	// int64: what the synchronous path could still hold. The owner reads
+	// it to tell a starved shard (owner/starved.go) from one whose ask was
+	// only larger than the request.
+	Headroom int64
 }
 
 // Grant grants a lease in one read-write transaction, never on a request's
@@ -138,6 +144,7 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 			out.Refused = RefusedFloor
 		}
 		if out.Refused != "" {
+			out.Headroom = saturated(signed)
 			return nil
 		}
 		// Unmarked, no row is negative, so the signed sum is the positive
@@ -643,4 +650,15 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 		return nil, err
 	}
 	return problems, nil
+}
+
+// saturated is v as an int64, the nearest bound when it does not fit.
+func saturated(v *big.Int) int64 {
+	switch {
+	case v.IsInt64():
+		return v.Int64()
+	case v.Sign() > 0:
+		return math.MaxInt64
+	}
+	return math.MinInt64
 }
