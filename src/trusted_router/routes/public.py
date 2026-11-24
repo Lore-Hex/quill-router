@@ -1407,6 +1407,22 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def who_can_see_your_data() -> str:
         return public_page_html(settings, "who-can-see-your-data")
 
+    @public_html_route("/docs/opencode")
+    def opencode_docs() -> str:
+        return public_page_html(settings, "docs/opencode")
+
+    @public_html_route("/docs/opencode-deepseek")
+    def opencode_deepseek_docs() -> str:
+        return public_page_html(settings, "docs/opencode-deepseek")
+
+    @public_html_route("/docs/cut-llm-api-costs")
+    def cut_llm_api_costs_docs() -> str:
+        return public_page_html(settings, "docs/cut-llm-api-costs")
+
+    @public_html_route("/llm-gateway-pricing")
+    def llm_gateway_pricing() -> str:
+        return public_page_html(settings, "llm-gateway-pricing")
+
     @public_html_route("/docs/simple-start")
     def simple_start_docs() -> str:
         return public_page_html(settings, "docs/simple-start")

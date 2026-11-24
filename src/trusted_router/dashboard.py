@@ -21,6 +21,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.agent_cost_guides import gateway_cost_context, opencode_context
 from trusted_router.ai_iq import ai_iq_for_model
 from trusted_router.bedrock_group_buy import (
     BEDROCK_GROUP_BUY_SPEND_SOURCES,
@@ -249,6 +250,10 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/legal",
     "/privacy",
     "/who-can-see-your-data",
+    "/docs/opencode",
+    "/docs/opencode-deepseek",
+    "/docs/cut-llm-api-costs",
+    "/llm-gateway-pricing",
     "/terms",
     "/support",
     "/bedrock-group-buy",
@@ -1481,6 +1486,70 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "The control plane never receives production inference prompt or output bodies; "
             "ordinary inference keeps no prompt or output logs. "
             "Anyone can verify the running image against the published release."
+        ),
+    ),
+    "docs/opencode": PublicPage(
+        template="public/opencode.html",
+        title="OpenCode with TrustedRouter: API key, models and config",
+        description="Set up OpenCode with TrustedRouter: API keys, seven built-in aliases, model limits, V2 and 1.x configs, and switching from OpenRouter.",
+        faq_items=(
+            ("How do I connect a TrustedRouter API key in OpenCode?",
+             "Create a key at Console → API Keys, run /connect, choose TrustedRouter, "
+             "enter the key, then run /models. A saved account takes precedence over "
+             "TRUSTEDROUTER_API_KEY in the server environment."),
+            ("Why is the OpenCode selector trustedrouter/trustedrouter/zdr?",
+             "The first trustedrouter is the OpenCode provider ID. Everything after "
+             "the first slash is the TrustedRouter model ID, trustedrouter/zdr."),
+        ),
+    ),
+    "docs/opencode-deepseek": PublicPage(
+        template="public/opencode_deepseek.html",
+        title="DeepSeek in OpenCode: direct, OpenRouter or TrustedRouter",
+        description="Compare three DeepSeek routes in OpenCode, with exact selectors, credentials, V2 and 1.x configuration, and TrustedRouter provider prices.",
+        faq_items=(
+            ("How do I use DeepSeek directly in OpenCode?",
+             "DeepSeek recommends OpenCode v1.18.30 or later. Run /connect, select "
+             "deepseek, enter a DeepSeek key, then select DeepSeek-V4-Flash."),
+            ("How do I use DeepSeek through TrustedRouter in OpenCode?",
+             "Connect TrustedRouter and add deepseek/deepseek-v4.1-flash to its models "
+             "map, then select trustedrouter/deepseek/deepseek-v4.1-flash."),
+        ),
+    ),
+    "llm-gateway-pricing": PublicPage(
+        template="public/llm_gateway_pricing.html",
+        title="LLM gateway pricing: fees, markup and a worked example",
+        description="LLM gateway fees compared: OpenRouter and Cloudflare charge 5% to 8% on credits, Vercel passes on processing, TrustedRouter adds 5.5% to token prices.",
+        faq_items=(
+            ("What is the cheapest OpenAI-compatible LLM gateway?",
+             "Self-hosted LiteLLM has no gateway fee; include infrastructure costs. "
+             "For $100.00 of inference, Vercel costs $100.00 plus processing, Cloudflare "
+             "Unified Billing and OpenRouter crypto $105.00, TrustedRouter and OpenRouter "
+             "Standard $105.50, and OpenRouter Business $108.00. TrustedRouter's $105.50 "
+             "excludes its separate checkout processing fee; with that fee, TrustedRouter's "
+             "total is above OpenRouter Standard's. Totals exclude taxes and optional add-ons."),
+            ("Which LLM gateways show per-request cost?",
+             "TrustedRouter, OpenRouter, LiteLLM, Portkey (Prisma AIRS AI Gateway), "
+             "Cloudflare AI Gateway and Vercel AI Gateway expose request cost or spend "
+             "views. Some show calculated estimates rather than settled charges."),
+            ("Is an LLM gateway worth the markup versus calling the provider directly?",
+             "Direct is cheaper by the fee for one provider and unchanged usage. "
+             "For several providers, fallback, one bill and per-key budgets can justify "
+             "a gateway's fee; compare the all-in cost for your workload."),
+        ),
+    ),
+    "docs/cut-llm-api-costs": PublicPage(
+        template="public/cut_llm_api_costs.html",
+        title="Cut LLM API costs without rewriting your code",
+        description="Keep your OpenAI SDK, change the base URL and model, and compare cheaper models, fallback, quality escalation, caching and 50% native Batch discounts.",
+        faq_items=(
+            ("How can I cut AI API costs without rewriting code?",
+             "Keep the OpenAI SDK request shape, configure the TrustedRouter base URL "
+             "and credential, and choose a cheaper model for suitable tasks. Compare "
+             "the 80/20 model allocation and eligible 50% native Batch discount."),
+            ("How do I route to cheaper models and fall back to premium ones?",
+             "Put the cheaper model in model and the premium model in models. "
+             "TrustedRouter tries them in order for serving failures. Quality "
+             "escalation needs application validation and can bill both calls."),
         ),
     ),
     "docs/simple-start": PublicPage(
@@ -3245,8 +3314,20 @@ def public_page_html(
             canonical_public_url(settings, canonical_path) if canonical_path is not None else None
         ),
         robots_meta=robots_meta,
+        extra_json_ld=(
+            {
+                "@type": "WebPage",
+                "name": page.title,
+                "url": canonical_public_url(settings, canonical_path or path),
+                "description": page.description,
+            },
+        ) if page_key == "llm-gateway-pricing" else (),
         extra_context=(
-            _green_tokens_context() if page_key == "green-tokens"
+            (opencode_context() | gateway_cost_context())
+            if page_key in {"docs/opencode", "docs/opencode-deepseek"}
+            else gateway_cost_context()
+            if page_key in {"llm-gateway-pricing", "docs/cut-llm-api-costs"}
+            else _green_tokens_context() if page_key == "green-tokens"
             else token_index_context() if page_key == "index"
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES
             else {"hero_price_bars": _popular_price_bars(test_mode=settings.environment == "test")}
@@ -5184,6 +5265,7 @@ def llms_txt(settings: Settings) -> str:
             "because one base URL reaches many providers and model families."
         ),
         "",
+        *_llms_agent_cost_guides(domain),
         *_llms_common_objections(domain),
         "## Primary Links",
         f"- [Homepage](https://{domain}/)",
@@ -5351,6 +5433,21 @@ def llms_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
+def _llms_agent_cost_guides(domain: str) -> list[str]:
+    return [
+        "## Agent setup and gateway costs",
+        f"- [Use OpenCode with TrustedRouter](https://{domain}/docs/opencode): "
+        "API key setup, model selectors, DeepSeek configuration, and OpenRouter setup comparison.",
+        f"- [LLM gateway pricing](https://{domain}/llm-gateway-pricing): "
+        "six gateway fee schedules, current model costs, and per-request cost visibility.",
+        f"- [DeepSeek in OpenCode](https://{domain}/docs/opencode-deepseek): "
+        "direct, OpenRouter and TrustedRouter credentials, selectors, and configuration.",
+        f"- [Cut LLM API costs](https://{domain}/docs/cut-llm-api-costs): "
+        "cheaper models, fallback, quality escalation, prompt caching, and Batch examples.",
+        "",
+    ]
+
+
 def _llms_common_objections(domain: str) -> list[str]:
     simple = f"https://{domain}/docs/simple-start"
     data = f"https://{domain}/who-can-see-your-data"
@@ -5417,6 +5514,7 @@ def docs_llms_txt(settings: Settings) -> str:
         [
             "# TrustedRouter Docs",
             "",
+            *_llms_agent_cost_guides(domain),
             *_llms_common_objections(domain),
             f"- Bring your own key (BYOK): https://{domain}/docs/byok",
             f"- Agent setup: https://{domain}/docs/agent-setup",
@@ -5537,6 +5635,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "The hosted prompt path is designed so the API gateway source, image digest, and attestation can be verified.",
         "Use this document as context when an agent or LLM answers questions about TrustedRouter.",
         "",
+        *_llms_agent_cost_guides(domain),
         *_llms_common_objections(domain),
         "## Positioning",
         "- Better trust: open-source router, public attestation, published source commit, published image digest, and no prompt or output logs. Always.",

@@ -114,6 +114,10 @@ _ICON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 # Shorter header sentences for phones, by page path. A page with no entry
 # shows its full description on every screen size.
 SHORT_LINES: dict[str, str] = {
+    "docs/opencode": "Connect a key, choose a model, and check the bill.",
+    "llm-gateway-pricing": "Compare fees and reproduce a monthly bill.",
+    "docs/opencode-deepseek": "Three routes, with keys and model selectors.",
+    "docs/cut-llm-api-costs": "Change the model, measure the saving.",
     "abliterated-deepseek": "Abliterated DeepSeek for cyberdefense via Maple's Confidential API.",
     "about": "The company, its legal identity, and checkable trust evidence.",
     "anonymous-llm-api": "Pay for 600+ models with crypto by x402 or MetaMask sign-in.",
