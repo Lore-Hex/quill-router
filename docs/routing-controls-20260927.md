@@ -110,7 +110,8 @@ never bring back a deleted key or its credential. The writer inventory
 constant or variable) or writes a table it cannot resolve, in Python, shell,
 SQL, Terraform, YAML and the fast path's Go, fails on any one not reviewed and
 listed, and holds the writers of the limit columns to the two guarded functions
-and two documented exceptions, each pinned by a test.
+and the documented exceptions, each pinned by a test and by a fingerprint of
+its reviewed source.
 
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the

@@ -6,8 +6,8 @@ limit column, whatever the parser reads; a scope that writes no limit column
 is listed in tests/test_key_limit_writer_inventory.py LIMIT_COLUMN_EXCEPTIONS,
 pinned to a fingerprint of its reviewed source, and proven here by running it:
 every statement it sends, and every mutation it makes, is captured and holds
-no limit column (or, for the reshard, holds them only through the
-chokepoint).
+no limit column (or, for the reshard and the escrow rebalance, holds them
+only through the chokepoint).
 """
 
 from __future__ import annotations
@@ -199,6 +199,68 @@ def test_the_key_reshard_writes_limits_only_through_the_chokepoint(monkeypatch: 
     assert all(inside for _table, inside in limit_writes)
 
 
+# --- storage_gcp_key_escrow --------------------------------------------------
+
+
+def test_the_key_escrow_moves_limits_only_through_the_chokepoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """rebalance_key_limit_headroom, judged with the functions nested in it
+    (read_counters reads limit_micro; txn writes): a capped key's shard
+    limits are written only inside write_key_limit_rows, their sum kept, and
+    a key with any shard's limit unset (a limitless key) gets no write."""
+    import copy
+
+    import trusted_router.storage_gcp_key_escrow as escrow
+    from tests.fakes import spanner as fake
+    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
+
+    inside = [False]
+    writes: list[tuple[str, tuple[str, ...], bool]] = []
+    real_chokepoint = escrow.write_key_limit_rows
+
+    def chokepoint(*args: Any, **kwargs: Any) -> None:
+        inside[0] = True
+        try:
+            real_chokepoint(*args, **kwargs)
+        finally:
+            inside[0] = False
+
+    def recording(method: Any) -> Any:
+        def record(self: Any, *, table: str, columns: Any, values: Any) -> Any:
+            writes.append((table, tuple(columns), inside[0]))
+            return method(self, table=table, columns=columns, values=values)
+        return record
+
+    monkeypatch.setattr(escrow, "write_key_limit_rows", chokepoint)
+    for name in ("insert", "update", "insert_or_update", "replace"):
+        if hasattr(fake._FakeTransaction, name):
+            monkeypatch.setattr(fake._FakeTransaction, name, recording(getattr(fake._FakeTransaction, name)))
+
+    def seeded(limits: list[int | None]) -> fake.FakeSpannerDatabase:
+        database = fake.FakeSpannerDatabase()
+        database.typed[KEY_LIMIT_TABLE] = {
+            ("key", shard): {"key_hash": "key", "shard": shard, "limit_micro": limit, "usage": 0,
+                             "byok_usage": 0, "reserved": 0, "include_byok": True}
+            for shard, limit in enumerate(limits)
+        }
+        return database
+
+    def rebalance(database: fake.FakeSpannerDatabase) -> bool:
+        return escrow.rebalance_key_limit_headroom(database, _ParamTypes, key_hash="key", shard_count=4,
+                                                   estimate=4, preferred_shard=0)
+
+    capped = seeded([5, 3, 4, 4])
+    assert rebalance(capped)
+    limit_writes = [inside for table, columns, inside in writes
+                    if table == KEY_LIMIT_TABLE and set(columns) & LIMIT_COLUMNS]
+    assert limit_writes and all(limit_writes)
+    assert sum(row["limit_micro"] for row in capped.typed[KEY_LIMIT_TABLE].values()) == 16
+    writes.clear()
+    limitless = seeded([None, None, None, None])
+    before = copy.deepcopy(limitless.typed)
+    assert not rebalance(limitless)
+    assert writes == [] and limitless.typed == before
+
+
 # --- storage_gcp_speculation_shadow ------------------------------------------
 
 
@@ -219,7 +281,7 @@ def test_the_speculation_shadow_resolve_only_reads_tr_key_limit() -> None:
                           budget_strict=False, expires_at=None, limit_microdollars=None,
                           limit_daily_microdollars=None, limit_weekly_microdollars=None,
                           limit_monthly_microdollars=None)
-    credits = [[0, 20_000_000, 0, 0, 2, None, [], 0, dt.datetime.fromtimestamp(1900, dt.UTC)]]
+    credits: list[list[Any]] = [[0, 20_000_000, 0, 0, 2, None, [], 0, dt.datetime.fromtimestamp(1900, dt.UTC)]]
     events = [["payment", "stripe", 20_000_000, 0, "succeeded", 0, 0]]
     statements: list[str] = []
 
@@ -277,7 +339,12 @@ def test_the_leased_usage_backfill_reads_key_counters_only(monkeypatch: pytest.M
     import scripts.backfill_leased_key_usage as backfill
 
     seen: list[str] = []
-    monkeypatch.setattr(backfill, "_sql", lambda sql, account: seen.append(sql) or [{"usage": 0}])
+
+    def recording_sql(sql: str, account: str) -> list[dict[str, int]]:
+        seen.append(sql)
+        return [{"usage": 0}]
+
+    monkeypatch.setattr(backfill, "_sql", recording_sql)
     backfill.read_key_counters("kh_1", account="ops")
     _assert_writes_no_limit(seen)
     with pytest.raises(ValueError):

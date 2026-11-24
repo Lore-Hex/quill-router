@@ -28,21 +28,31 @@ table are not findings. A finding is (style, path, qualified name):
   key_limit.sql        DML naming the table
   key_limit.name       the bare table name, or a constant or variable holding it
   key_limit.text       a non-Python file naming the table
+  key_limit.indirect   code reached by a computed name, or an executor passed
+                       on, in a scope that names the table (below)
   mutation.unresolved  a mutation whose table is not a known string
   sql.dynamic          DML whose table is filled in at run time
 
 limit_column_writers() narrows them to the scopes that may write a limit
 column. Two layers decide it.
 
-The backstop (scope_marks) does not depend on parsing. A Python function
-scope (or module statement), or a text file, that holds the key-limit table
-(by name or through the constant holding it), a limit column name and a
-write (a DML word in a string, or a mutation or DML API name such as update,
-insert_or_update, replace, execute_update, batch_update or Mutation...)
-anywhere counts as writing every limit column, whatever the parser reads. A
-scope that writes none is a reviewed exception, listed with a behavioral pin
-test and pinned to a fingerprint of its source (ScanDetail.fingerprints), so
-a later change to it fails the check until it is reviewed again. The
+A scope is an outermost function with every function, lambda, comprehension
+and class body nested in it (_Module.outer), or a module statement or class
+body outside any function, or a text file. getattr(obj, "name") with a
+literal name, through any alias of getattr, and obj.__getattribute__("name")
+are read as obj.name before either layer runs (_Fetches).
+
+The backstop (scope_marks) does not depend on parsing. A scope that holds
+the key-limit table (by name or through the constant holding it), a limit
+column name and a write (a DML word in a string, or a mutation or DML API
+name such as update, insert_or_update, replace, execute_update, batch_update
+or Mutation...) anywhere counts as writing every limit column, whatever the
+parser reads. A scope that writes none is a reviewed exception, listed with
+a behavioral pin test and pinned to a fingerprint of its source
+(ScanDetail.fingerprints: every definition of the scope's qualified name in
+the module, a conditional or repeated def or a class's duplicate method
+included, and every other statement binding that name where it is defined),
+so a later change to it fails the check until it is reviewed again. The
 parser's precision decides only how many exceptions are listed, never
 whether a writer is missed.
 
@@ -57,35 +67,60 @@ writes to the table is understood.
   closed.
 - Python SQL must resolve to literals. ``x += piece`` is modelled as every
   piece in order and each piece alone; .format renders every named
-  alternative. Any call given SQL text naming the table, and any executor
-  (by name or alias, its list or tuple arguments included), runs a
-  statement: it is classified where it is whole, and in a scope that
-  mentions the table a part not resolved to literals (a helper's result, an
-  interpolation, a % or .format argument, a str method's result) fails
-  closed whatever is known around it. The one form that clears is
+  alternative. Any call given SQL text naming the table, any executor (by
+  name, or through a name or attribute bound to one: run = conn.execute,
+  self.run = conn.execute, setattr(obj, "run", conn.execute)), and any of
+  the module's own helpers that runs a statement it is given (derived_sinks:
+  its parameter reaches an executor's statement, through its local names, a
+  nested function or another such helper) runs a statement: it is
+  classified where it is whole, and in a scope that mentions the table a
+  part not resolved to literals (a helper's result, an interpolation, a % or
+  .format argument, a str method's result, a nested function's parameter)
+  fails closed whatever is known around it. A statement given to a helper
+  that may change it (one that builds on the parameter, is decorated, holds
+  exec, eval or compile, or calls by a computed name) fails closed in such a
+  scope or wherever it names the table. The one form that clears is
   f"SET LOCAL statement_timeout = {<int>}", its value provably an int.
+- In a scope that mentions the table, these fail closed (key_limit.indirect,
+  every column): getattr, attrgetter, methodcaller or __getattribute__ given
+  a name that is not a literal, setattr given one, attrgetter or
+  methodcaller naming an executor, a mutation API or such a helper; exec,
+  eval and compile; and an executor, a mutation API, such a helper, or
+  getattr, setattr, exec or eval itself, used other than by calling it or
+  binding it to a name or attribute (passed on, returned, stored in a
+  container, wrapped by functools.partial or a decorator).
 - A Spanner mutation's columns must be written out at the call as a tuple or
   list of string literals (columns from a spread dict count as every
   column). Insert, Update and InsertOrUpdate keep the columns they omit, so
   only a listed limit column is written; Replace nulls what it omits, so it,
   and any other write call, counts as every column.
 - Only a .sql file is read as SQL. In other text (a shell argument or
-  heredoc, YAML, Terraform, Go), shell line continuations are joined, and a
-  DML word followed by the table before a ``;`` within sixty words,
-  whitespace collapsed, counts as every column, as does one where a comment
-  marker could hide the ``;``.
+  heredoc, YAML, Terraform, Go), a DML word followed by the table before a
+  ``;`` within sixty words, whitespace collapsed, counts as every column, as
+  does one where a comment marker could hide the ``;``. Every check reads
+  the text as written and with shell line continuations joined (as is, and
+  with the next line's indentation dropped, as a YAML block scalar drops
+  it): a shell joins them on a command line and in a heredoc whose
+  delimiter is not quoted, and passes them on in one whose is; a finding of
+  any reading counts. A line in a heredoc's body or inside a string left
+  open, after a continuation, or holding another line break is never taken
+  for a comment, and a table from a command substitution or a psql variable
+  is one filled in at run time.
 
 Threat model. The inventory guards against accidental limit writers in
 reviewed code: a new statement, mutation or script that writes
 tr_key_limit's limit columns outside the guarded functions. Any scope that
 names the table, a limit column and a write is a limit writer unless it is a
-listed, behavior-pinned exception, and the parser fails closed on any SQL or
-mutation it cannot resolve within the module that executes it. What remains
-outside its scope is SQL whose limit column or table only arrives from
-another module or from data at run time: a statement built in one module and
-edited by another, where the running scope names neither, or an interpolated
-value carrying SQL. Code review covers that. A cross-module helper whose
-result runs in a scope that mentions the table does fail closed
+listed, behavior-pinned exception, and the parser fails closed, as listed
+above, on SQL or a mutation it cannot resolve within the module that
+executes it. What remains outside its scope is SQL whose limit column or
+table only arrives from another module or from data at run time: a
+statement built in one module and edited by another, where the running scope
+names neither, a helper in another module that changes a statement it is
+given, or an interpolated value carrying SQL; and code that reaches an
+executor in ways not listed above (through a container of methods filled
+elsewhere, say). Code review covers that. A cross-module helper whose result
+runs in a scope that mentions the table does fail closed
 (test_a_cross_module_helpers_statement_fails_closed).
 
 api_key entity writers are out of scope by design: whatever writes an entity,
@@ -116,19 +151,29 @@ _DML = (r"(?:insert\s+or\s+update(?:\s+into)?|insert\s+or\s+ignore(?:\s+into)?|i
         r"update|merge(?:\s+into)?|upsert(?:\s+into)?|replace\s+into|delete\s+from|delete)")
 _HINT = r"(?:@\{[^}]*\}\s*)?"
 _PLACEHOLDER = r"""["'`]?(?:\{[^}]*\}|%s|%\(\w+\)s|\$\{?\w+\}?|\x00)["'`]?"""
-# DML whose table is filled in at run time, shaped as SQL (so a message such
-# as "could not update %s" is not one).
-_DYNAMIC = re.compile(
-    r"\b(?:update\s+" + _HINT + _PLACEHOLDER + r"\s+set\b"
-    r"|insert(?:\s+or\s+\w+)?\s+into\s+" + _HINT + _PLACEHOLDER
-    + r"|insert\s+or\s+update\s+" + _HINT + _PLACEHOLDER
-    + r"|insert\s+" + _HINT + _PLACEHOLDER + r"\s*\("
-    + r"|delete\s+from\s+" + _HINT + _PLACEHOLDER
-    + r"|delete\s+" + _HINT + _PLACEHOLDER + r"\s+where\b"
-    + r"|(?:merge|upsert)\s+(?:into\s+)?" + _HINT + _PLACEHOLDER
-    + r"|replace\s+into\s+" + _HINT + _PLACEHOLDER + r")",
-    re.IGNORECASE,
-)
+
+
+def _dynamic_dml(placeholder: str) -> re.Pattern[str]:
+    """DML whose table is filled in at run time, shaped as SQL (so a message
+    such as "could not update %s" is not one)."""
+    return re.compile(
+        r"\b(?:update\s+" + _HINT + placeholder + r"\s+set\b"
+        r"|insert(?:\s+or\s+\w+)?\s+into\s+" + _HINT + placeholder
+        + r"|insert\s+or\s+update\s+" + _HINT + placeholder
+        + r"|insert\s+" + _HINT + placeholder + r"\s*\("
+        + r"|delete\s+from\s+" + _HINT + placeholder
+        + r"|delete\s+" + _HINT + placeholder + r"\s+where\b"
+        + r"|(?:merge|upsert)\s+(?:into\s+)?" + _HINT + placeholder
+        + r"|replace\s+into\s+" + _HINT + placeholder + r")",
+        re.IGNORECASE,
+    )
+
+
+_DYNAMIC = _dynamic_dml(_PLACEHOLDER)
+#: In a shell, SQL, Terraform, YAML or Go file the table may also come from a
+#: command substitution ($(...), or `...` holding a space or $) or a psql
+#: variable (:name, :'name', :"name").
+_TEXT_DYNAMIC = _dynamic_dml(r"""(?:""" + _PLACEHOLDER + r"""|\$\([^)]*\)|`[^`]*[\s$][^`]*`|:['"]?\w+['"]?)""")
 # A string that is only the head of such DML ("UPDATE ", "DELETE FROM "),
 # its table appended at run time.
 _DYNAMIC_HEAD = re.compile(r"^\s*" + _HINT + _DML + r"""\s+["'`]?$""", re.IGNORECASE)
@@ -500,6 +545,9 @@ class _Index:
 
     def __init__(self, trees: Iterable[ast.Module]) -> None:
         self.globals: dict[str, list[ast.AST]] = {}
+        #: getattr and the names bound to it (_getattr_aliases).
+        self.getattrs: set[str] = {"getattr"}
+        self.attribute_aliases: dict[str, set[str]] = {}
         for tree in trees:
             for node in ast.walk(tree):
                 if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Attribute):
@@ -509,6 +557,13 @@ class _Index:
                     for target in targets:
                         if isinstance(target, ast.Attribute):
                             self.globals.setdefault(target.attr, []).append(node.value)
+                elif (isinstance(node, ast.Call) and _callee(node) == "setattr" and len(node.args) == 3
+                      and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)):
+                    # setattr(obj, "name", value) binds obj.name like an assignment.
+                    self.globals.setdefault(node.args[1].value, []).append(node.args[2])
+                elif isinstance(node, ast.alias) and node.asname and node.asname != node.name.rsplit(".", 1)[-1]:
+                    # import x as y, from m import x as y: y is another name for x.
+                    self.globals.setdefault(node.asname, []).append(ast.Name(id=node.name.rsplit(".", 1)[-1]))
             for node in tree.body:
                 self._module_assign(node)
                 if isinstance(node, ast.ClassDef):
@@ -536,27 +591,50 @@ class _Module:
                 self.parents[id(child)] = node
         self.names: dict[int, str] = {}
         self.functions: dict[int, list[ast.AST]] = {}
-        self._qualify(tree, "", [])
+        #: The outermost function around a node (a nested def, lambda,
+        #: comprehension or class body belongs to it), by qualified name.
+        self.outers: dict[int, str] = {}
+        self.outer_of: dict[str, str] = {}
+        self.outer_nodes: dict[str, ast.AST] = {}
+        self._qualify(tree, "", [], "")
         self._locals: dict[int, dict[str, list[ast.AST]]] = {}
         self._memo: dict[int, list[str] | None] = {}
+        self.callees: dict[int, set[str]] = {}
+        #: The module's helpers that run a statement they are given.
+        self.sinks: dict[str, list[_Sink]] = {}
 
-    def _qualify(self, node: ast.AST, prefix: str, stack: list[ast.AST]) -> None:
+    def _qualify(self, node: ast.AST, prefix: str, stack: list[ast.AST], outer: str) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 inner = f"{prefix}.{child.name}" if prefix else child.name
-                inner_stack = stack + [child] if not isinstance(child, ast.ClassDef) else stack
+                function = not isinstance(child, ast.ClassDef)
+                inner_stack = stack + [child] if function else stack
+                inner_outer = outer or (inner if function else "")
+                self.outer_of.setdefault(inner, inner_outer or inner)
+                if inner_outer == inner:
+                    self.outer_nodes.setdefault(inner, child)
                 for sub in ast.walk(child):
                     self.names[id(sub)] = inner
                     self.functions[id(sub)] = inner_stack
-                self._qualify(child, inner, inner_stack)
+                    self.outers[id(sub)] = inner_outer
+                self._qualify(child, inner, inner_stack, inner_outer)
+            elif isinstance(child, ast.Lambda):
+                # A lambda's parameters are its own; its body is its scope's.
+                inner_stack = stack + [child]
+                for sub in ast.walk(child):
+                    self.functions[id(sub)] = inner_stack
+                self._qualify(child, prefix, inner_stack, outer)
             elif not prefix and isinstance(child, (ast.Assign, ast.AnnAssign)):
                 targets = child.targets if isinstance(child, ast.Assign) else [child.target]
                 label = next((t.id for t in targets if isinstance(t, ast.Name)), "")
+                name = f"<module>.{label}" if label else "<module>"
+                self.outer_of.setdefault(name, name)
                 for sub in ast.walk(child):
-                    self.names[id(sub)] = f"<module>.{label}" if label else "<module>"
+                    self.names[id(sub)] = name
                     self.functions.setdefault(id(sub), [])
+                self._qualify(child, prefix, stack, outer)
             else:
-                self._qualify(child, prefix, stack)
+                self._qualify(child, prefix, stack, outer)
 
     @property
     def relative(self) -> str:
@@ -564,6 +642,12 @@ class _Module:
 
     def where(self, node: ast.AST) -> str:
         return self.names.get(id(node), "<module>")
+
+    def outer(self, node: ast.AST) -> str:
+        """The scope the backstop and the fail-closed rules judge a node by:
+        its outermost enclosing function, or its own module statement or
+        class body when it is in none."""
+        return self.outers.get(id(node)) or self.where(node)
 
     def _scope_locals(self, function: ast.AST) -> dict[str, list[ast.AST]]:
         if id(function) not in self._locals:
@@ -588,7 +672,7 @@ class _Module:
                             found.setdefault(name.id, []).append(ast.Starred(value=node.iter))
                 elif isinstance(node, ast.NamedExpr):
                     found.setdefault(node.target.id, []).append(node.value)
-            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 arguments = function.args
                 for arg in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
                             *([arguments.vararg] if arguments.vararg else []),
@@ -849,13 +933,111 @@ class _Finding:
         self.style, self.node, self.limit = style, node, limit
 
 
-def _mutation_verb(m: _Module, call: ast.Call) -> str:
-    name = _callee(call)
-    if isinstance(call.func, ast.Name):
-        for value in m.bindings(call, name) or []:
+def _callee_names(m: _Module, func: ast.AST, seen: frozenset[int] = frozenset()) -> set[str]:
+    """Every name a callee may be: its own, and through a local name bound
+    to another callee (run = conn.execute, ga = getattr), that one's, or
+    through an attribute bound anywhere (self.run = conn.execute,
+    setattr(obj, "run", conn.execute)), the name it is bound to. A getattr
+    with a literal name and a default (getattr(obj, "name", d)) may be
+    either."""
+    if not seen and id(func) in m.callees:
+        return m.callees[id(func)]
+    if id(func) in seen or len(seen) > 6:
+        return set()
+    inner = seen | {id(func)}
+    names: set[str] = set()
+    if isinstance(func, ast.Call):
+        default = _getattr_default(m, func)
+        if default is not None:
+            names = {str(cast(ast.Constant, func.args[1]).value)} | _callee_names(m, default, inner)
+    elif isinstance(func, ast.Attribute):
+        names = {func.attr} | _attribute_aliases(m, func.attr)
+    elif isinstance(func, ast.Name):
+        names = {func.id}
+        for value in m.bindings(func, func.id) or []:
+            if isinstance(value, (ast.Name, ast.Attribute, ast.Call)):
+                names |= _callee_names(m, value, inner)
+    if not seen:
+        m.callees[id(func)] = names
+    return names
+
+
+def _getattr_default(m: _Module, call: ast.Call) -> ast.expr | None:
+    """The default of getattr(obj, "name", default), else None."""
+    if (_callee(call) in m.index.getattrs and len(call.args) == 3 and _literal_name(call.args[1])
+            and not call.keywords):
+        return call.args[2]
+    return None
+
+
+def _attribute_aliases(m: _Module, attr: str) -> set[str]:
+    """The names an attribute name is bound to anywhere (self.run =
+    conn.execute, setattr(obj, "run", conn.execute), self.run = run_sql),
+    one step, memoized by name."""
+    cache = m.index.attribute_aliases
+    if attr not in cache:
+        found: set[str] = set()
+        for value in m.index.globals.get(attr) or []:
+            if isinstance(value, ast.Call):
+                default = _getattr_default(m, value)
+                if default is None:
+                    continue
+                found.add(str(cast(ast.Constant, value.args[1]).value))
+                value = default
             if isinstance(value, ast.Attribute):
-                name = value.attr
-    return name
+                found.add(value.attr)
+            elif isinstance(value, ast.Name) and value.id != "<parameter>":
+                found.add(value.id)
+        cache[attr] = found - {attr}
+    return cache[attr]
+
+
+#: The modules whose attributes are the builtins below (builtins.exec,
+#: operator.methodcaller).
+_REFLECTION_MODULES = frozenset({"builtins", "operator"})
+
+
+def _builtin(m: _Module, func: ast.AST) -> str | None:
+    """Which builtin that reaches code by a name or text computed at run
+    time a callee is (getattr, setattr, exec, eval, compile, attrgetter,
+    methodcaller), by name or through a name bound to it, or as an
+    attribute of builtins or operator; or any object's __getattribute__."""
+    if isinstance(func, ast.Attribute):
+        if func.attr == "__getattribute__":
+            return func.attr
+        receiver = func.value
+        if isinstance(receiver, ast.Name) and receiver.id in _REFLECTION_MODULES and func.attr in _REFLECTION:
+            return func.attr
+        return None
+    if not isinstance(func, ast.Name):
+        return None
+    names = {func.id}
+    for value in m.bindings(func, func.id) or []:
+        if isinstance(value, ast.Name):
+            names.add(value.id)
+        elif isinstance(value, ast.Attribute):
+            names.add(_builtin(m, value) or "")
+    hits = sorted(names & _REFLECTION)
+    return hits[0] if hits else None
+
+
+def _literal_name(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier()
+
+
+def _verbs(m: _Module, call: ast.Call) -> set[str]:
+    return _callee_names(m, call.func) or {_callee(call)}
+
+
+#: The mutation verb a call is taken as when it may be several, the one
+#: writing the most first (REPLACE nulls what it omits).
+_VERB_ORDER = ("replace", "replace_map", "insert_or_update_map", "insert_map", "update_map", "insert_or_update",
+               "insert", "update", "delete")
+
+
+def _mutation_verb(m: _Module, call: ast.Call) -> str:
+    names = _verbs(m, call)
+    return next((verb for verb in _VERB_ORDER if verb in names), _callee(call))
 
 
 def _mutation_parts(m: _Module, call: ast.Call) -> tuple[ast.AST | None, ast.AST | None, bool] | None:
@@ -959,25 +1141,33 @@ def _writes_limit_columns(m: _Module, columns: ast.AST | None) -> bool:
 #: that writes the table.
 _EXECUTORS = frozenset({"execute", "executemany", "executescript", "execute_sql", "execute_update",
                         "execute_partitioned_dml", "batch_update", "execute_batch_dml"})
+#: Builtins that reach an attribute, or run code, by a name or text computed
+#: at run time.
+_FETCHERS = frozenset({"getattr", "attrgetter", "methodcaller", "__getattribute__"})
+_EVALUATORS = frozenset({"exec", "eval", "compile"})
+_REFLECTION = _FETCHERS | _EVALUATORS | {"setattr"}
 
 
 def _python_findings(m: _Module) -> Iterator[_Finding]:
     found = list(_string_findings(m))
     marks = scope_marks(m)
-    mentions = {where for where, (seen, _anchor) in marks.items() if "table" in seen}
+    mentions = {outer for outer, (seen, _anchor) in marks.items() if "table" in seen}
     found += list(_statement_calls(m, mentions))
+    found += list(_indirect_uses(m, mentions))
     yield from found
     # The backstop, which does not depend on parsing: a scope holding the
-    # table, a limit column and a write anywhere writes every limit column.
+    # table, a limit column and a write anywhere (in the functions, lambdas,
+    # comprehensions and class bodies nested in it too) writes every limit
+    # column.
     by_scope: dict[str, list[_Finding]] = {}
     for finding in found:
         if finding.style.startswith("key_limit."):
-            by_scope.setdefault(m.where(finding.node), []).append(finding)
-    for where, (seen, anchor) in marks.items():
+            by_scope.setdefault(m.outer(finding.node), []).append(finding)
+    for outer, (seen, anchor) in marks.items():
         if seen >= _BACKSTOP:
-            for existing in by_scope.get(where, []):
+            for existing in by_scope.get(outer, []):
                 yield _Finding(existing.style, existing.node, True)
-            if where not in by_scope:
+            if outer not in by_scope:
                 yield _Finding("key_limit.scope", anchor, True)
 
 
@@ -990,17 +1180,25 @@ _BACKSTOP = frozenset({"table", "limit", "write"})
 
 
 def scope_marks(m: _Module) -> dict[str, tuple[set[str], ast.AST]]:
-    """Per scope (innermost function, or module statement): which of the
-    table, a limit column and a write it holds anywhere, and a node in it.
+    """Per scope: which of the table, a limit column and a write it holds
+    anywhere, and a node in it. A scope is an outermost function with every
+    function, lambda, comprehension and class body nested in it, or a module
+    statement or class body outside any function (_Module.outer).
 
     The table: a string piece naming it, or a name or attribute holding it (a
     module constant such as KEY_LIMIT_TABLE). A limit column: a string piece
     naming one, an identifier or attribute spelled as one, or a name holding
-    one. A write: a DML word in a string piece, or an identifier or attribute
-    spelled as a mutation or DML API (or Mutation...). Docstrings aside."""
+    one. A write: a DML word in a string piece, an identifier or attribute
+    spelled as a mutation or DML API (or Mutation...), getattr(obj, "name")
+    read as obj.name (_Fetches). Docstrings aside."""
     marks: dict[str, tuple[set[str], ast.AST]] = {}
+
+    def at(node: ast.AST) -> set[str]:
+        key = m.outer(node)
+        return marks.setdefault(key, (set(), m.outer_nodes.get(key, node)))[0]
+
     for node in ast.walk(m.tree):
-        seen, _anchor = marks.setdefault(m.where(node), (set(), node))
+        seen = at(node)
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             if _is_docstring(node, m.parents):
                 continue
@@ -1029,7 +1227,7 @@ def scope_marks(m: _Module) -> dict[str, tuple[set[str], ast.AST]]:
     for node in _top_level_strings(m):
         if isinstance(node, ast.Constant):
             continue
-        seen, _anchor = marks.setdefault(m.where(node), (set(), node))
+        seen = at(node)
         for text in m.texts(node):
             known = text.replace(UNKNOWN, " ")
             if names_table(known):
@@ -1042,20 +1240,25 @@ def scope_marks(m: _Module) -> dict[str, tuple[set[str], ast.AST]]:
 
 
 def _statement_calls(m: _Module, mentions: set[str]) -> Iterator[_Finding]:
-    """Each call that runs a statement (an executor by name or alias, or any
-    call given SQL text naming the table): its statement is classified
-    where it is whole, and in a scope that mentions the table a part not
-    resolved to literals fails closed, whatever is known around it."""
+    """Each call that runs a statement (an executor by name or alias, a
+    helper that runs a statement it is given, or any call given SQL text
+    naming the table): its statement is classified where it is whole; in a
+    scope that mentions the table a part not resolved to literals fails
+    closed, whatever is known around it; and a statement given to a helper
+    that may change it before it runs fails closed in such a scope, or
+    wherever it names the table."""
     for node in ast.walk(m.tree):
         if not isinstance(node, ast.Call):
             continue
-        for statement in _statements_run(m, node):
+        mentioned = m.outer(node) in mentions
+        for statement, changed in _statements_run(m, node):
             texts = m.texts(statement)
             for text in texts:
                 if classify(text) == "sql":
-                    yield _Finding("key_limit.sql", node, assigns_limit_column(text))
-            if m.where(node) in mentions and any(UNKNOWN in text for text in texts) and not _timeout_setting(
-                    statement):
+                    yield _Finding("key_limit.sql", node, changed or assigns_limit_column(text))
+            if changed and (mentioned or any(names_table(text) for text in texts)):
+                yield _Finding("key_limit.sql", node, True)
+            elif mentioned and any(UNKNOWN in text for text in texts) and not _timeout_setting(statement):
                 yield _Finding("key_limit.sql", node, True)
 
 
@@ -1068,21 +1271,309 @@ def _elements(node: ast.AST) -> list[ast.AST]:
     return [node]
 
 
-def _statements_run(m: _Module, call: ast.Call) -> list[ast.AST]:
-    statements: list[ast.AST] = []
-    if _mutation_verb(m, call) in _EXECUTORS:
+def _statements_run(m: _Module, call: ast.Call) -> list[tuple[ast.AST, bool]]:
+    """The statements a call runs, each with whether it may be changed
+    before it runs: an executor's (by name or alias), a statement-running
+    helper's (_Index.sinks), and any argument that is SQL text naming the
+    table."""
+    statements: list[tuple[ast.AST, bool]] = []
+    verbs = _verbs(m, call)
+    if verbs & _EXECUTORS:
         first = _executed_statement(m, call)
-        statements += _elements(first) if first is not None else [ast.Name(id="<parameter>")]
+        statements += [(statement, False)
+                       for statement in (_elements(first) if first is not None else [ast.Name(id="<parameter>")])]
+    for name in sorted(verbs - _EXECUTORS):
+        for sink in m.sinks.get(name, ()):
+            statements += [(statement, sink.changes) for argument in _sink_arguments(call, sink)
+                           for statement in _elements(argument) if _may_be_text(m, statement)]
+    run = {id(statement) for statement, _changed in statements}
     for argument in [*call.args, *(kw.value for kw in call.keywords)]:
         for element in _elements(argument):
-            if element in statements:
+            if id(element) in run:
                 continue
             texts = m.texts(element)
             if any(names_table(text) and classify(text) != "name" and (
                     classify(text) == "sql" or _READ_WORD.search(text) or _SQL_CLAUSE.search(text))
                    for text in texts):
-                statements.append(element)
+                statements.append((element, False))
     return statements
+
+
+def _indirect_uses(m: _Module, mentions: set[str]) -> Iterator[_Finding]:
+    """In a scope that mentions the table, each use of code by a name or
+    text computed at run time, and each use of what may run a statement or
+    write a mutation other than calling it, fails closed (every column):
+
+    - getattr, attrgetter, methodcaller or __getattribute__ given a name that
+      is not a literal (getattr(obj, "name") is read as obj.name), setattr
+      given one, and attrgetter or methodcaller naming an executor, a
+      mutation API or a statement-running helper;
+    - exec, eval and compile;
+    - an executor, a mutation API, a statement-running helper, or getattr,
+      setattr, exec or eval itself, passed on, stored, returned or wrapped
+      (functools.partial, a decorator applied to it) instead of called or
+      bound to a name or attribute (whose calls are followed)."""
+    targets = _INDIRECT_TARGETS | m.sinks.keys()
+    for node in ast.walk(m.tree):
+        if m.outer(node) not in mentions:
+            continue
+        if isinstance(node, ast.Call):
+            builtin = _builtin(m, node.func)
+            if builtin in _EVALUATORS:
+                yield _Finding("key_limit.indirect", node, True)
+            elif builtin is not None and _computed_name(builtin, node, targets):
+                yield _Finding("key_limit.indirect", node, True)
+        elif (isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load)
+              and _refers_to(m, node, targets) and not _called_or_bound(m, node)):
+            yield _Finding("key_limit.indirect", node, True)
+
+
+#: What may run a statement or write a mutation when called.
+_INDIRECT_TARGETS = _EXECUTORS | _WRITE_APIS | MUTATION_VERBS
+
+
+def _computed_name(builtin: str, call: ast.Call, targets: Iterable[str]) -> bool:
+    """Whether a getattr-like call reaches a name not known (or, for
+    attrgetter and methodcaller, one that runs a statement or writes)."""
+    if builtin in ("getattr", "setattr"):
+        names = call.args[1:2]
+    elif builtin == "__getattribute__":
+        names = call.args[-1:]
+    elif builtin == "methodcaller":
+        names = call.args[:1]
+    elif builtin == "attrgetter":
+        names = call.args
+    else:
+        return False
+    if not names or not all(isinstance(n, ast.Constant) and isinstance(n.value, str) for n in names):
+        return True
+    return builtin in ("attrgetter", "methodcaller") and any(
+        str(cast(ast.Constant, n).value).rsplit(".", 1)[-1] in targets for n in names)
+
+
+def _refers_to(m: _Module, node: ast.Name | ast.Attribute, targets: Iterable[str]) -> bool:
+    """Whether a name or attribute is an executor, a mutation API, a
+    statement-running helper, or getattr, setattr, exec or eval: by its own
+    name (a name only when no variable of that name is bound), or through
+    one it is bound to."""
+    reach = set(targets) | _REFLECTION
+    if isinstance(node, ast.Attribute):
+        return bool(_callee_names(m, node) & reach)
+    aliased = _callee_names(m, node) - {node.id}
+    return bool(aliased & reach) or (node.id in reach and not m.bindings(node, node.id))
+
+
+def _called_or_bound(m: _Module, node: ast.AST) -> bool:
+    parent = m.parents.get(id(node))
+    if isinstance(parent, ast.Call) and parent.func is node:
+        return True
+    if isinstance(parent, ast.Assign) and parent.value is node:
+        return all(isinstance(target, (ast.Name, ast.Attribute)) for target in parent.targets)
+    return (isinstance(parent, ast.AnnAssign) and parent.value is node
+            and isinstance(parent.target, (ast.Name, ast.Attribute)))
+
+
+# -- helpers that run a statement they are given ---------------------------
+
+
+class _Sink(NamedTuple):
+    """A helper that runs a statement it is given: where a caller passes it
+    (a position among the arguments a caller gives, self or cls aside, or
+    -1, and the parameter's name; rest for *args from that position or
+    **kwargs), and whether it may change the statement before it runs."""
+
+    position: int
+    name: str
+    changes: bool
+    rest: bool = False
+
+
+#: Decorators that do not wrap the function they are applied to.
+_PLAIN_DECORATORS = frozenset({"staticmethod", "classmethod", "property", "cached_property", "abstractmethod",
+                               "cache", "lru_cache", "overload", "override", "setter", "getter", "deleter"})
+
+
+def _decorated(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for decorator in function.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+        if name not in _PLAIN_DECORATORS:
+            return True
+    return False
+
+
+def _parameters(m: _Module, function: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, _Sink]:
+    """Each parameter, as the place a caller passes it."""
+    arguments = function.args
+    positional = [a.arg for a in [*arguments.posonlyargs, *arguments.args]]
+    if positional and isinstance(m.parents.get(id(function)), ast.ClassDef) and not any(
+            getattr(d, "id", "") == "staticmethod" for d in function.decorator_list):
+        positional = positional[1:]
+    found = {name: _Sink(index, name, False) for index, name in enumerate(positional)}
+    for argument in arguments.kwonlyargs:
+        found[argument.arg] = _Sink(-1, argument.arg, False)
+    if arguments.vararg:
+        found[arguments.vararg.arg] = _Sink(len(positional), arguments.vararg.arg, False, rest=True)
+    if arguments.kwarg:
+        found[arguments.kwarg.arg] = _Sink(-1, arguments.kwarg.arg, False, rest=True)
+    return found
+
+
+def _sink_arguments(call: ast.Call, sink: _Sink) -> list[ast.AST]:
+    """The arguments a call gives a helper where it takes its statement."""
+    if sink.rest:
+        if sink.position >= 0:
+            return list(call.args[sink.position:])
+        return [kw.value for kw in call.keywords]
+    for keyword in call.keywords:
+        if keyword.arg == sink.name:
+            return [keyword.value]
+    if 0 <= sink.position < len(call.args) and not any(
+            isinstance(a, ast.Starred) for a in call.args[:sink.position + 1]):
+        return [call.args[sink.position]]
+    if any(isinstance(a, ast.Starred) for a in call.args) or any(kw.arg is None for kw in call.keywords):
+        return [ast.Name(id="<parameter>")]  # given through a spread: not known
+    return []
+
+
+class _Calls(NamedTuple):
+    function: ast.FunctionDef | ast.AsyncFunctionDef
+    module: _Module
+    calls: list[tuple[ast.Call, set[str], bool]]
+
+
+def _computed_call(m: _Module, call: ast.Call) -> list[ast.AST] | None:
+    """The arguments of a call whose callee is reached by a name not known
+    (getattr(obj, name)(...), methodcaller(name, ...)(obj)), else None."""
+    func = call.func
+    if isinstance(func, ast.Call):
+        builtin = _builtin(m, func.func)
+        if builtin == "methodcaller":
+            return [*func.args[1:], *(kw.value for kw in func.keywords)]
+        if builtin in _FETCHERS:
+            return [*call.args, *(kw.value for kw in call.keywords)]
+    return None
+
+
+def derived_sinks(m: _Module) -> dict[str, list[_Sink]]:
+    """The module's helpers that run a statement they are given, by name (a
+    function or method of the module, a dunder aside), for its own calls:
+    one whose parameter reaches, through the names it uses, the statement
+    an executor or another such helper runs, or an argument of a call by a
+    computed name, directly or in a function nested in it. It may change
+    the statement when the statement is not the parameter itself, it is
+    decorated, the helper it gives it to may, or the call is by a computed
+    name; one that holds exec, eval or compile may run any parameter,
+    changed. (A helper in another module is outside the threat model.)"""
+    functions: list[_Calls] = []
+    for node in ast.walk(m.tree):
+        if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("__")
+                and _parameters(m, node)):
+            calls = [(call, _verbs(m, call),
+                      _builtin(m, call.func) in _EVALUATORS or _computed_call(m, call) is not None)
+                     for call in ast.walk(node) if isinstance(call, ast.Call)]
+            if calls:
+                functions.append(_Calls(node, m, calls))
+    sinks: dict[str, list[_Sink]] = {}
+    for _round in range(8):
+        reach = sinks.keys() | _EXECUTORS
+        changed = False
+        for entry in functions:
+            if not any(special or verbs & reach for _call, verbs, special in entry.calls):
+                continue
+            found = _sink_entries(entry, sinks)
+            known = set(sinks.get(entry.function.name, ()))
+            if not found <= known:
+                sinks[entry.function.name] = sorted(known | found)
+                changed = True
+        if not changed:
+            break
+    return sinks
+
+
+def _sink_entries(entry: _Calls, sinks: dict[str, list[_Sink]]) -> set[_Sink]:
+    m, function = entry.module, entry.function
+    parameters = _parameters(m, function)
+    decorated = _decorated(function)
+    found: set[_Sink] = set()
+    for call, verbs, special in entry.calls:
+        if special and _builtin(m, call.func) in _EVALUATORS:
+            found |= {sink._replace(changes=True) for sink in parameters.values()}
+            continue
+        run: list[tuple[ast.AST, bool]] = []
+        if verbs & _EXECUTORS:
+            first = _executed_statement(m, call)
+            run += [(statement, False) for statement in (_elements(first) if first is not None else [])]
+        for name in sorted(verbs - _EXECUTORS):
+            for sink in sinks.get(name, ()):
+                run += [(statement, sink.changes) for argument in _sink_arguments(call, sink)
+                        for statement in _elements(argument)]
+        if special:
+            run += [(argument, True) for argument in _computed_call(m, call) or []]
+        for statement, changes in run:
+            for name in _parameters_reached(m, statement, parameters):
+                direct = isinstance(statement, ast.Name) and statement.id == name and all(
+                    _is_parameter(value) for value in m.bindings(statement, name) or [])
+                found.add(parameters[name]._replace(changes=changes or decorated or not direct))
+    return found
+
+
+def _is_parameter(value: ast.AST) -> bool:
+    return isinstance(value, ast.Name) and value.id == "<parameter>"
+
+
+def _parameters_reached(m: _Module, expression: ast.AST, parameters: dict[str, _Sink]) -> set[str]:
+    """The parameters a statement's text is built from: the statement
+    itself, a piece of a concatenation, f-string, % or .format, a string
+    method's receiver or argument, a branch of a conditional, an argument
+    of a call that builds it, through the names it uses and what they are
+    bound to (not a condition, a comparison or an attribute's object)."""
+    reached: set[str] = set()
+    visited: set[int] = set()
+    queue = [expression]
+    while queue and len(visited) < 256:
+        node = queue.pop()
+        if id(node) in visited:
+            continue
+        visited.add(id(node))
+        if isinstance(node, ast.Name):
+            bound = m.bindings(node, node.id) or []
+            if node.id in parameters and any(_is_parameter(value) for value in bound):
+                reached.add(node.id)
+            queue += [value for value in bound if not _is_parameter(value)]
+        elif isinstance(node, ast.JoinedStr):
+            queue += [part.value for part in node.values if isinstance(part, ast.FormattedValue)]
+        elif isinstance(node, ast.BinOp):
+            queue += [node.left, node.right]
+        elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            queue += node.elts
+        elif isinstance(node, ast.Dict):
+            queue += node.values
+        elif isinstance(node, ast.IfExp):
+            queue += [node.body, node.orelse]
+        elif isinstance(node, ast.BoolOp):
+            queue += node.values
+        elif isinstance(node, (ast.Starred, ast.FormattedValue)):
+            queue.append(node.value)
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr in _STRING_METHODS:
+                queue.append(node.func.value)
+            queue += [*node.args, *(keyword.value for keyword in node.keywords)]
+    return reached
+
+
+def _may_be_text(m: _Module, node: ast.AST, depth: int = 0) -> bool:
+    """Whether an argument may carry statement text: anything but a
+    non-string literal, a comparison or a negation (or a name bound only to
+    those)."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, (str, bytes))
+    if isinstance(node, (ast.Compare, ast.UnaryOp)):
+        return False
+    if isinstance(node, ast.Name) and depth < 4:
+        bound = m.bindings(node, node.id)
+        return not bound or any(_is_parameter(value) or _may_be_text(m, value, depth + 1) for value in bound)
+    return True
 
 
 _TIMEOUT_SETTING = re.compile(r"\s*set\s+local\s+statement_timeout\s*=\s*", re.IGNORECASE)
@@ -1190,9 +1681,64 @@ def _string_findings(m: _Module) -> Iterator[_Finding]:
                     yield _Finding("key_limit.name", node, limit)
 
 
+#: Line breaks other than a line feed: a reader that ends a line at one sees
+#: what follows it as a line of its own.
+_LINE_BREAKS = "\r\v\f\x1c\x1d\x1e\x85  "
+_HEREDOC = re.compile(r"""(?<!<)<<(?!<)-?\s*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z_]\w*))""")
+
+
 def _strip_comments(path: Path, text: str) -> str:
+    """Drop comment lines, but none that may not be one: in a shell, YAML or
+    Terraform file a line in a heredoc's body (data, whatever it starts
+    with, the delimiter quoted or not: psql reads "# 0; UPDATE ..." as an
+    operator and a statement) or inside a string a line before left open,
+    a line after one ending in a backslash (the shell continues that line),
+    and a line holding another line break (a reader that ends the line there
+    sees text after it)."""
     markers = {".go": ("//",), ".sql": ("--",), ".tf": ("#", "//")}.get(path.suffix, ("#",))
-    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(markers))
+    shell = path.suffix not in (".sql", ".go")
+    kept = []
+    delimiters: list[str] = []
+    quote: str | None = None
+    continued = False
+    for line in text.split("\n"):
+        body = line.removesuffix("\r")
+        if delimiters:
+            if body.strip() == delimiters[0]:
+                delimiters.pop(0)
+            kept.append(line)
+        elif quote or continued or not body.lstrip().startswith(markers) or any(c in body for c in _LINE_BREAKS):
+            kept.append(line)
+            if shell:
+                if quote is None:
+                    delimiters += [next(group for group in match.groups() if group)
+                                   for match in _HEREDOC.finditer(body)]
+                quote = _open_quote(body, quote)
+        continued = body.endswith("\\")
+    return "\n".join(kept)
+
+
+def _open_quote(line: str, quote: str | None) -> str | None:
+    """The quote a shell line leaves open, from the one it starts in (a
+    comment ends the line; a backslash escapes outside single quotes)."""
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote == "'":
+            quote = None if char == "'" else quote
+        elif quote == '"':
+            if char == "\\":
+                index += 1
+            elif char == '"':
+                quote = None
+        elif char == "\\":
+            index += 1
+        elif char == "#" and (index == 0 or line[index - 1] in " \t;|&("):
+            break
+        elif char in "'\"":
+            quote = char
+        index += 1
+    return quote
 
 
 def _dml_near_table(text: str) -> bool:
@@ -1200,7 +1746,7 @@ def _dml_near_table(text: str) -> bool:
     sixty words, whitespace collapsed (so blank lines, padding and
     indentation in a heredoc or a multiline string do not separate them); a
     lock's FOR UPDATE aside."""
-    collapsed = " ".join(_LOCK.sub(" ", text.replace("\\\n", "")).split())
+    collapsed = " ".join(_LOCK.sub(" ", text).split())
     for match in _DML_WORD.finditer(collapsed):
         region = " ".join(collapsed[match.end():].split(" ")[:61])
         if names_table(region.split(";", 1)[0]):
@@ -1211,8 +1757,23 @@ def _dml_near_table(text: str) -> bool:
     return False
 
 
-def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
+def _readings(path: Path) -> list[str]:
+    """A text file's comments stripped, read as written and with every
+    shell line continuation joined (as is, and with the next line's
+    indentation dropped, as a YAML block scalar drops it before the shell
+    sees the script): a shell joins them on a command line and in a heredoc
+    whose delimiter is not quoted, and passes them on in one whose delimiter
+    is. A finding of any reading is one."""
     text = _strip_comments(path, path.read_text(encoding="utf-8", errors="replace"))
+    return list(dict.fromkeys([text, re.sub(r"\\\r?\n", "", text), re.sub(r"\\\r?\n[ \t]*", "", text)]))
+
+
+def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
+    for text in _readings(path):
+        yield from _reading_findings(path, text)
+
+
+def _reading_findings(path: Path, text: str) -> Iterator[tuple[str, bool]]:
     if names_table(text):
         if path.suffix == ".sql":
             columns = written_columns(text)
@@ -1225,10 +1786,10 @@ def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
         if path.suffix == ".go" and _GO_MUTATION.search(text):
             limit = limit or any(re.search(rf'"{column}"', text) for column in LIMIT_COLUMNS)
         # The backstop, per file: the table, a limit column and a write.
-        if _LIMIT_WORD.search(text) and _DML_WORD.search(_LOCK.sub(" ", text.replace("\\\n", ""))):
+        if _LIMIT_WORD.search(text) and _DML_WORD.search(_LOCK.sub(" ", text)):
             limit = True
         yield "key_limit.text", limit
-    if _DYNAMIC.search(text):
+    if _TEXT_DYNAMIC.search(text):
         yield "sql.dynamic", True
     if path.suffix == ".go":
         for match in _GO_MUTATION.finditer(text):
@@ -1251,19 +1812,122 @@ def _fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+_DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Assign, ast.AnnAssign)
+
+
 def _scope_fingerprint(m: _Module, where: str) -> str:
-    """The scope's code, positions aside (the SQL manifest's fingerprint,
-    stable across Python versions): its function or module statement, or
-    the whole module."""
+    """The source of the scope a finding is judged by (its outermost
+    function, or its module statement or class body), positions aside (the
+    SQL manifest's fingerprint, stable across Python versions): every
+    definition of that qualified name in the module (a conditional or
+    repeated def, or a class's duplicate method, included) and every other
+    statement binding its name where it is defined (an assignment, import,
+    loop target or del, or a function declaring it global), in source order.
+    A module statement outside any definition: the whole module."""
     from tests.conformance.spanner_sql_inventory import fingerprint
 
+    outer = m.outer_of.get(where, where)
+    if outer == "<module>":
+        return fingerprint(m.tree)
+    statements: dict[int, ast.AST] = {
+        id(node): node for node in ast.walk(m.tree)
+        if isinstance(node, _DEFINITIONS) and m.names.get(id(node)) == outer
+        and m.names.get(id(m.parents.get(id(node)))) != outer}
+    if not statements:
+        return fingerprint(m.tree)
+    for node in _rebindings(m, outer):
+        statements.setdefault(id(node), node)
+    ordered = sorted(statements.values(), key=lambda node: (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)))
+    return _fingerprint("\n".join(fingerprint(node) for node in ordered))
+
+
+def _rebindings(m: _Module, outer: str) -> list[ast.AST]:
+    """Each statement binding a definition's name in the module or class body
+    it is defined in."""
+    if outer.startswith("<module>."):
+        namespace, bare = "", outer.split(".", 1)[1]
+    else:
+        namespace, _, bare = outer.rpartition(".")
+    found = []
     for node in ast.walk(m.tree):
-        if m.names.get(id(node)) == where and isinstance(
-                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Assign, ast.AnnAssign)):
-            parent = m.parents.get(id(node))
-            if parent is None or m.names.get(id(parent)) != where:
-                return fingerprint(node)
-    return fingerprint(m.tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            binds = node.id == bare
+        elif isinstance(node, ast.alias):
+            binds = (node.asname or node.name.split(".", 1)[0]) == bare
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            binds = node.name == bare
+        else:
+            binds = False
+        if binds and _namespace(m, node, bare) == namespace:
+            statement: ast.AST = node
+            while not isinstance(statement, ast.stmt) and id(statement) in m.parents:
+                statement = m.parents[id(statement)]
+            found.append(statement)
+    return found
+
+
+def _namespace(m: _Module, node: ast.AST, bare: str) -> str | None:
+    """The module ("") or class body (its qualified name) a binding is in,
+    or None for a function's local."""
+    parent = m.parents.get(id(node))
+    while parent is not None:
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            declared = any(isinstance(sub, ast.Global) and bare in sub.names for sub in ast.walk(parent))
+            return "" if declared else None
+        if isinstance(parent, ast.ClassDef):
+            return m.names.get(id(parent), "")
+        parent = m.parents.get(id(parent))
+    return ""
+
+
+def _getattr_aliases(trees: list[ast.Module]) -> set[str]:
+    """getattr and every name bound to it, in any module (ga = getattr,
+    from builtins import getattr as ga)."""
+    edges: list[tuple[str, str]] = []
+    for tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, (ast.Name, ast.Attribute)):
+                source = node.value.id if isinstance(node.value, ast.Name) else node.value.attr
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                edges += [(target.id, source) for target in targets if isinstance(target, ast.Name)]
+            elif isinstance(node, ast.alias) and node.asname:
+                edges.append((node.asname, node.name.rsplit(".", 1)[-1]))
+    aliases = {"getattr"}
+    grown = True
+    while grown:
+        grown = False
+        for alias, source in edges:
+            if source in aliases and alias not in aliases:
+                aliases.add(alias)
+                grown = True
+    return aliases
+
+
+class _Fetches(ast.NodeTransformer):
+    """Reads getattr(obj, "name") (through any alias of getattr) and
+    obj.__getattribute__("name") as obj.name before any rule runs, so every
+    rule treats them exactly as the attribute."""
+
+    def __init__(self, aliases: set[str]) -> None:
+        self.aliases = aliases
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+        target: ast.expr | None = None
+        attribute: ast.expr | None = None
+        if name in self.aliases and len(node.args) == 2 and not node.keywords:
+            target, attribute = node.args
+        elif name == "__getattribute__" and isinstance(func, ast.Attribute) and not node.keywords:
+            if len(node.args) == 1:
+                target, attribute = func.value, node.args[0]
+            elif len(node.args) == 2:
+                target, attribute = node.args
+        if target is not None and attribute is not None and _literal_name(attribute):
+            fetched = ast.Attribute(value=target, attr=str(cast(ast.Constant, attribute).value), ctx=ast.Load())
+            return ast.copy_location(fetched, node)
+        return node
 
 
 def scan_paths_detail(python: Iterable[Path], text: Iterable[Path]) -> ScanDetail:
@@ -1271,17 +1935,25 @@ def scan_paths_detail(python: Iterable[Path], text: Iterable[Path]) -> ScanDetai
     python = list(python)
     sources = [p.read_text(encoding="utf-8") for p in python]
     trees = [ast.parse(source) for source in sources]
+    getattrs = _getattr_aliases(trees)
+    fetches = _Fetches(getattrs)
+    trees = [cast(ast.Module, fetches.visit(tree)) for tree in trees]
     index = _Index(trees)
+    index.getattrs = getattrs
+    modules = [_Module(path, tree, index) for path, tree in zip(python, trees, strict=True)]
+    for m in modules:
+        m.sinks = derived_sinks(m)
     found = ScanDetail()
     found.fingerprints = {}
-    for path, tree in zip(python, trees, strict=True):
-        m = _Module(path, tree, index)
+    for m, source in zip(modules, sources, strict=True):
+        written: _Module | None = None  # the module as written, for fingerprints
         for finding in _python_findings(m):
             where = m.where(finding.node)
             key = (finding.style, m.relative, where)
             found[key] = found.get(key, False) or finding.limit
             if (m.relative, where) not in found.fingerprints:
-                found.fingerprints[(m.relative, where)] = _scope_fingerprint(m, where)
+                written = written or _Module(m.path, ast.parse(source), index)
+                found.fingerprints[(m.relative, where)] = _scope_fingerprint(written, where)
     for path in text:
         relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.name
         raw = path.read_text(encoding="utf-8", errors="replace")

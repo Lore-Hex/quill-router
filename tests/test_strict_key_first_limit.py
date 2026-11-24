@@ -786,6 +786,44 @@ def test_shard_expansion_refuses_a_strict_key() -> None:
         make_plan(workspace, {"workspace_id": "ws"}, key, [], [], {}, {}, 2, allow_window_caps=True)
 
 
+@pytest.mark.parametrize("window", [None, "day_limit_micro", "week_limit_micro", "month_limit_micro"])
+def test_shard_expansion_mutations_insert_new_shards_with_the_caps_they_already_hold(window: str | None) -> None:
+    """scripts/expand_billing_shards.mutations, run on a plan make_plan
+    accepts: every tr_key_limit mutation it builds is an insert (Spanner
+    refuses an insert over an existing row, so none is overwritten) of a new
+    shard (never shard 0, the row the strict reserve and the edge read),
+    with no lifetime limit column; the window limits it writes are the ones
+    every existing row of the key already holds (make_plan refuses a
+    difference), so a limitless key's new rows hold no limit."""
+    from scripts import expand_billing_shards as expand
+    from tests.key_limit_writers import LIMIT_COLUMNS
+
+    field = expand.WINDOW_CAP_FIELDS.get(window or "")
+    key = {"hash": "kh", "workspace_id": "ws", "usage_shard_count": 1, "include_byok_in_limit": True,
+           **({field: 1000000} if field else {})}
+    credit = {"workspace_id": "ws", "shard_count": 1}
+    credit_rows: list[dict[str, Any]] = [{"workspace_id": "ws", "shard": 0, "total_credits": 1000000, "total_usage": 100, "reserved": 0,
+                    **dict.fromkeys(expand.CREDIT_BALANCE_TRUST_COLUMNS), "billing_pause_causes": []}]
+    key_row = {"key_hash": "kh", "shard": 0, "include_byok": True, "usage": 0, "byok_usage": 0, "reserved": 0,
+               "day_usage": 0, "week_usage": 0, "month_usage": 0, **({window: 1000000} if window else {})}
+    plan = expand.make_plan({"id": "ws", "owner_user_id": "owner"}, credit, key, credit_rows, [key_row],
+                            {"id": "owner", "owner_workspace_count": 1}, {"ws": credit}, 4, allow_window_caps=True)
+    on_table = [(verb, body) for change in expand.mutations(plan) for verb, body in change.items()
+                if body["table"] == "tr_key_limit"]
+    assert on_table, "the expansion adds the key's new shard rows"
+    for verb, body in on_table:
+        assert verb == "insert", verb
+        assert "limit_micro" not in body["columns"]
+        for row in body["values"]:
+            fields = dict(zip(body["columns"], row, strict=True))
+            assert int(fields["shard"]) >= 1
+            for column in LIMIT_COLUMNS & fields.keys():
+                held = key_row.get(column)
+                assert fields[column] == (None if held is None else str(held)), column
+            if window is None:
+                assert all(fields[column] is None for column in LIMIT_COLUMNS & fields.keys())
+
+
 def test_the_leased_usage_backfill_assigns_no_limit_column() -> None:
     import datetime as dt
 
