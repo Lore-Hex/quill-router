@@ -343,7 +343,7 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
             # Composed by the edge for the shadow alone: Python's leased
             # answer recorded beside it (streams section 8.4).
             assert expect["shadow"]["status"] == 200, case["name"]
-        assert ("shadow" in expect) <= (expect["reason"] == "body.stream"), case["name"]
+        assert ("shadow" in expect) <= (expect["reason"] in {"body.stream", "key.budget_strict"}), case["name"]
     # Each cause of body.unparseable and each tags.merged_invalid has a case.
     names = {case["name"] for case in passes}
     for name in ("body.unparseable:bom", "body.unparseable:depth_129", "body.unparseable:int_4001_digits",
@@ -356,6 +356,38 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
     leased = {case["expect"]["reason"] for case in passes if case["expect"]["python"]["leased"]}
     assert {"body.float", "body.tags", "body.dict_key_strip", "candidates.estimated_usage",
             "workspace.broadcast", "header.settlement_async", "body.unparseable"} <= leased
+
+
+def test_the_strict_key_cases_record_pythons_strict_path() -> None:
+    """docs/design/fast-admission-e2-strict-keys.md section 7: Python's route
+    answers a limitless strict key on its strict path, unleased, its 200
+    recorded for the edge to match byte for byte under
+    fastpath_pilot_strict_keys (Stage D disabled, the estimate held on the
+    key), with the key's tr_key_limit row as Python's world held it; and
+    402s the same key when that row is missing or mirrors a limit."""
+    cases = {case["name"]: case for case in _cases("pass")}
+    limitless = cases["pass:key.budget_strict"]
+    expect = limitless["expect"]
+    assert expect["python"] == {"leased": False, "reservation_microdollars": expect["shadow"]["reservation_microdollars"],
+                                "status": 200, "type": None}
+    shadow = expect["shadow"]
+    data = json.loads(shadow["response"])["data"]
+    assert data["stage_d"]["reason"] == "stage_d_disabled"
+    assert shadow["reservation_row"]["key_reserved_micro"] == shadow["estimate_microdollars"] > 0
+    assert limitless["key_limit_row"] == dict.fromkeys(
+        ("day_limit_micro", "limit_micro", "month_limit_micro", "week_limit_micro"))
+    no_row, mirrored = cases["pass:key.budget_strict:no_row"], cases["pass:key.budget_strict:mirror_limit"]
+    assert no_row["key_limit_row"] is None
+    assert mirrored["key_limit_row"]["limit_micro"] == 1
+    for case in (no_row, mirrored):
+        assert case["expect"]["reason"] == "key.budget_strict"
+        assert case["expect"]["python"] == {"leased": False, "status": 402, "type": "key_limit_exceeded"}
+        assert "shadow" not in case["expect"]
+    capped = cases["pass:key.key_cap:strict"]
+    assert capped["expect"]["reason"] == "key.key_cap" and capped["key_limit_row"]["limit_micro"] == 10_000_000
+    # Only strict keys carry the row.
+    assert all(("key_limit_row" in case) == json.loads(case["key"]["key_body"])["budget_strict"]
+               for case in _cases("pass") + _cases("answer") if case["key"]["key_body"] is not None)
 
 
 def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:

@@ -74,6 +74,14 @@ type EdgePolicy struct {
 	// member out rather than write "off", and parse_edge_policy refuses "off"
 	// as this does.
 	FastpathPilotKeyWindows *string `json:"fastpath_pilot_key_windows,omitempty"`
+	// FastpathPilotStrictKeys is optional: settings.fastpath_pilot_strict_keys,
+	// whether the edge decides a budget_strict key with no lifetime limit
+	// and no spend window (StrictKeysMode;
+	// docs/design/fast-admission-e2-strict-keys.md section 5): "shadow"
+	// (composed and compared, never answered) or "enforce". Absent is off,
+	// the only form of it: the publisher leaves the member out rather than
+	// write "off", and parse_edge_policy refuses "off" as this does.
+	FastpathPilotStrictKeys *string `json:"fastpath_pilot_strict_keys,omitempty"`
 	// FastpathEdgeStreams is optional: true when the control plane's
 	// fastpath_edge_streams, fastpath_pilot_streams and
 	// reap_snapshot_booking_enabled are all on, the edge's own switch for
@@ -172,6 +180,26 @@ func (p *EdgePolicy) KeyWindowsMode() string {
 		return KeyWindowsOff
 	}
 	return *p.FastpathPilotKeyWindows
+}
+
+// The modes of fastpath_pilot_strict_keys (StrictKeysMode): off, the member
+// absent, decides no budget_strict key; shadow composes a limitless strict
+// key's answer for the shadow to compare and passes it; enforce decides it
+// as an uncapped key. A strict key with any limit is never decided. Only
+// shadow and enforce are written.
+const (
+	StrictKeysOff     = "off"
+	StrictKeysShadow  = "shadow"
+	StrictKeysEnforce = "enforce"
+)
+
+// StrictKeysMode is the policy's fastpath_pilot_strict_keys, StrictKeysOff
+// when the publisher does not carry it.
+func (p *EdgePolicy) StrictKeysMode() string {
+	if p.FastpathPilotStrictKeys == nil {
+		return StrictKeysOff
+	}
+	return *p.FastpathPilotStrictKeys
 }
 
 // AsyncSettle is the policy's async_settle object, four booleans the
@@ -480,6 +508,9 @@ func (p *EdgePolicy) validate() error {
 	}
 	if m := p.FastpathPilotKeyWindows; m != nil && *m != KeyWindowsAlert && *m != KeyWindowsEnforce {
 		return errors.New("fastpath_pilot_key_windows")
+	}
+	if m := p.FastpathPilotStrictKeys; m != nil && *m != StrictKeysShadow && *m != StrictKeysEnforce {
+		return errors.New("fastpath_pilot_strict_keys")
 	}
 	if s := p.FastpathEdgeHostedDecide; s != nil && !*s {
 		return errors.New("fastpath_edge_hosted_decide is absent when off, never false")

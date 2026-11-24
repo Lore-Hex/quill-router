@@ -135,6 +135,17 @@ type i2 struct {
 	// DistinctKeys and DistinctKeysExcludedLines: above.
 	DistinctKeys              int64 `json:"distinct_keys"`
 	DistinctKeysExcludedLines int64 `json:"distinct_keys_excluded_lines"`
+	// The gate of fastpath_pilot_strict_keys
+	// (docs/design/fast-admission-e2-strict-keys.md section 6), from the
+	// shadow's strict map, the classes of the limitless strict keys'
+	// decisions: StrictCompared their comparable requests (agree_full and
+	// differ), StrictAgreeFull those that agreed, StrictWouldAdmit Python's
+	// refusals of one Go would admit (the gate's zero) and StrictPythonBusy
+	// Python's strict-budget-busy 503s to them (neither).
+	StrictCompared   int64 `json:"strict_compared"`
+	StrictAgreeFull  int64 `json:"strict_agree_full"`
+	StrictWouldAdmit int64 `json:"strict_would_admit_python_refused"`
+	StrictPythonBusy int64 `json:"strict_python_busy"`
 }
 
 // i3 are the I3 gate's figures (docs/design/fast-admission-e2-g15-async.md
@@ -283,6 +294,19 @@ func (r *edgeReport) gates() {
 	g.SettlementHeaderPassShare = ratio(g.SettlementHeaderPasses, g.Followed)
 	g.WindowReads = sh.ByName["windows"]["read.made"]
 	g.WindowRaceRatio = ratio(g.WindowRace, g.WindowReads)
+	for class, n := range sh.ByName["strict"] {
+		switch {
+		case class == edge.ClassAgreeFull:
+			g.StrictAgreeFull += n
+			g.StrictCompared += n
+		case class == edge.ClassDifferAny:
+			g.StrictCompared += n
+		case class == edge.ClassStrictPythonBusy:
+			g.StrictPythonBusy += n
+		case strings.HasPrefix(class, edge.ClassWouldAdmit+"."):
+			g.StrictWouldAdmit += n
+		}
+	}
 	r.I2 = g
 	r.I3 = r.asyncGates(g.Followed)
 }

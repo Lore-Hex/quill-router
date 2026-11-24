@@ -718,6 +718,30 @@ moves in `rollout.sh`, a Python deploy, `off` straight to `enforce`; the
 `alert` stage is skipped, and the decide rows are untouched. `edge_decide_window_unread` (`fastpath-alerts.md`) watches the
 reads once it is on.
 
+## 7. Strict keys with no limit
+
+A `budget_strict` key with no lifetime limit and no window is gated by the
+setting `fastpath_pilot_strict_keys`, which the edge policy carries
+(`docs/design/fast-admission-e2-strict-keys.md` §5). Absent, which is off,
+every strict key passes `key.budget_strict` as before. `shadow` composes a
+limitless strict key for the shadow and still passes it `key.budget_strict`;
+`enforce` decides it as an uncapped key, with no key hold. A strict key with
+any limit passes under every setting, as before. Under `enforce` a limitless
+strict key whose `tr_key_limit` shard 0 the key's read found missing,
+mirroring a limit, or not read passes `key.budget_strict_row.missing`,
+`.limited` or `.unread`, and Python answers it.
+
+The shadow line's `strict` map counts the classes of these keys' decisions.
+`fastpathwatch edge` gives `strict_compared`, `strict_agree_full`,
+`strict_would_admit_python_refused` and `strict_python_busy`. Python's
+strict-budget-busy 503 is `strict.python_busy`, never a page; any refusal of
+what Go would admit is the critical `would_admit_python_refused`.
+
+Before the setting moves from `shadow` to `enforce` (§6 of the design): 20,000
+`strict_compared` with zero `strict_would_admit_python_refused`. It moves in
+`rollout.sh`, a Python deploy, only once the edge release that reads the
+member is pinned on both nodes.
+
 ## The way back, fastest first
 
 As §9 and decision 17 give it. Each step leaves the ones after it
@@ -737,6 +761,9 @@ untouched, and what the edge admitted settles through Python as before.
    back to `off` in `scripts/deploy/rollout.sh`, a Python deploy; the edge
    passes every windowed key `key.key_window` from its first policy without
    the member, within the policy's 60 s life (§6).
+   **Strict keys only**, every workspace: `fastpath_pilot_strict_keys` back
+   to `off` in `scripts/deploy/rollout.sh`, a Python deploy; the edge passes
+   every strict key `key.budget_strict` within the policy's 60 s life (§7).
    Under the wildcard, `decide off WORKSPACE` writes an own off row,
    which wins over it; `decide status WORKSPACE` exits 0 with `via` `own`.
    Never `decide delete` an off row to undo a step under an on wildcard:

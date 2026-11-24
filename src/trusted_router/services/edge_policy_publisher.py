@@ -292,6 +292,10 @@ def settings_facts(
         # byte-identical, so a Go node that predates the member is unaffected.
         **({} if settings.fastpath_pilot_key_windows == "off"
            else {"fastpath_pilot_key_windows": settings.fastpath_pilot_key_windows}),
+        # Optional, published only when not off (docs/design/
+        # fast-admission-e2-strict-keys.md section 5), for the same reason.
+        **({} if settings.fastpath_pilot_strict_keys == "off"
+           else {"fastpath_pilot_strict_keys": settings.fastpath_pilot_strict_keys}),
         # Optional, published only when the edge may decide streams
         # (docs/design/fast-admission-streams.md section 5.4): its own switch,
         # the pilot's, and snapshot booking, which the lease always does, all

@@ -438,7 +438,10 @@ evaluator's exclusions, with every key cap, window, `budget_strict`,
 `app_id`, federated key or workspace and the monitor key out.
 [`fast-admission-e2-key-windows.md`](fast-admission-e2-key-windows.md)
 (design) proposes bringing windowed keys without a lifetime cap or
-`budget_strict` into the cohort.
+`budget_strict` into the cohort, and
+[`fast-admission-e2-strict-keys.md`](fast-admission-e2-strict-keys.md) a
+`budget_strict` key with no limit at all, behind
+`fastpath_pilot_strict_keys`.
 
 ## 4. Edge policy publication
 
