@@ -280,12 +280,18 @@ jobs:
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_receipt_key_versions.sh
       - name: Backfill legacy receipt attestation version projections
+        # Normally one empty page in seconds. On 2026-11-24 a run's first page
+        # read never returned and this step held the deploy lease for hours.
+        # The command now bounds each page read (30 s) and itself (600 s, then
+        # exit 3 with the resume cursor); the step timeout is the backstop.
+        # Each page commits on its own, so a rerun resumes where this stopped.
+        timeout-minutes: 15
         env:
           TR_STORAGE_BACKEND: spanner-clickhouse
           TR_GCP_PROJECT_ID: quill-cloud-proxy
           TR_SPANNER_INSTANCE_ID: trusted-router-nam6
           TR_SPANNER_DATABASE_ID: trusted-router
-        run: uv run python -m trusted_router.receipt_key_backfill_cli
+        run: uv run python -m trusted_router.receipt_key_backfill_cli --deadline-seconds 600
       - name: Apply bounded generation-record schema
         run: scripts/deploy/migrate_generation_records.sh --apply
       - name: Apply provider analytics outbox schema
