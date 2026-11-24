@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-11-23T23:28:10Z",
-  "model_count": 54,
+  "generated_at": "2026-11-24T04:28:09Z",
+  "model_count": 55,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -1460,6 +1460,34 @@
       ],
       "status": 1,
       "limits_source": "placeholder"
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-1017-fast",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017-fast",
+      "display_name": "DeepSeek V4.1 Flash 1017 fast",
+      "title": "deepseek/deepseek-v4.1-flash-1017-fast",
+      "created": 1795231319,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "limits_source": "placeholder",
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
     }
   ]
 }

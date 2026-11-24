@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-23T00:21:51.721Z",
+  "generated_at": "2026-11-24T00:23:53.341Z",
   "routes": [
     {
       "input_bucket": 1,
@@ -8,7 +8,16 @@
       "throughput_samples": 28,
       "tps_milli": 172261,
       "ttft_ms": 1288,
-      "ttft_samples": 28
+      "ttft_samples": 29
+    },
+    {
+      "input_bucket": 2,
+      "model": "abliteration/abliterated-model-large-flash",
+      "provider": "abliteration",
+      "throughput_samples": 62,
+      "tps_milli": 148371,
+      "ttft_ms": 1618,
+      "ttft_samples": 62
     },
     {
       "input_bucket": 0,
@@ -26,13 +35,13 @@
       "throughput_samples": 37,
       "tps_milli": 92794,
       "ttft_ms": 3057,
-      "ttft_samples": 38
+      "ttft_samples": 39
     },
     {
       "input_bucket": 0,
       "model": "cerebras/gpt-oss-120b",
       "provider": "cerebras",
-      "throughput_samples": 119,
+      "throughput_samples": 116,
       "tps_milli": 126613,
       "ttft_ms": 518,
       "ttft_samples": 659
@@ -41,154 +50,136 @@
       "input_bucket": 0,
       "model": "dealignai/deepseek-v4.1-flash-1017-uncensored",
       "provider": "maple",
-      "throughput_samples": 37,
-      "tps_milli": 87989,
+      "throughput_samples": 52,
+      "tps_milli": 108879,
       "ttft_ms": 1282,
-      "ttft_samples": 84
+      "ttft_samples": 105
     },
     {
       "input_bucket": 1,
       "model": "dealignai/deepseek-v4.1-flash-1017-uncensored",
       "provider": "maple",
-      "throughput_samples": 191,
+      "throughput_samples": 182,
       "tps_milli": 132364,
       "ttft_ms": 1803,
-      "ttft_samples": 206
+      "ttft_samples": 197
     },
     {
       "input_bucket": 2,
       "model": "dealignai/deepseek-v4.1-flash-1017-uncensored",
       "provider": "maple",
-      "throughput_samples": 671,
+      "throughput_samples": 656,
       "tps_milli": 97812,
       "ttft_ms": 1508,
-      "ttft_samples": 674
+      "ttft_samples": 659
     },
     {
       "input_bucket": 3,
       "model": "dealignai/deepseek-v4.1-flash-1017-uncensored",
       "provider": "maple",
-      "throughput_samples": 1360,
+      "throughput_samples": 1495,
       "tps_milli": 71239,
       "ttft_ms": 2242,
-      "ttft_samples": 1367
-    },
-    {
-      "input_bucket": 1,
-      "model": "deepseek/deepseek-v4-1-flash-1017",
-      "provider": "venice",
-      "throughput_samples": 334,
-      "tps_milli": 156585,
-      "ttft_ms": 822,
-      "ttft_samples": 343
-    },
-    {
-      "input_bucket": 2,
-      "model": "deepseek/deepseek-v4-1-flash-1017",
-      "provider": "venice",
-      "throughput_samples": 935,
-      "tps_milli": 171798,
-      "ttft_ms": 1407,
-      "ttft_samples": 935
+      "ttft_samples": 1505
     },
     {
       "input_bucket": 3,
       "model": "deepseek/deepseek-v4-1-flash-1017",
       "provider": "venice",
-      "throughput_samples": 569,
-      "tps_milli": 59845,
-      "ttft_ms": 3352,
-      "ttft_samples": 574
+      "throughput_samples": 391,
+      "tps_milli": 41743,
+      "ttft_ms": 4738,
+      "ttft_samples": 396
     },
     {
       "input_bucket": 0,
       "model": "deepseek/deepseek-v4-1-flash-1017-uncensored",
       "provider": "venice",
-      "throughput_samples": 304,
+      "throughput_samples": 277,
       "tps_milli": 91934,
       "ttft_ms": 810,
-      "ttft_samples": 374
+      "ttft_samples": 331
     },
     {
       "input_bucket": 1,
       "model": "deepseek/deepseek-v4-1-flash-1017-uncensored",
       "provider": "venice",
-      "throughput_samples": 1164,
+      "throughput_samples": 1086,
       "tps_milli": 117101,
       "ttft_ms": 1041,
-      "ttft_samples": 1211
+      "ttft_samples": 1129
     },
     {
       "input_bucket": 2,
       "model": "deepseek/deepseek-v4-1-flash-1017-uncensored",
       "provider": "venice",
-      "throughput_samples": 6536,
+      "throughput_samples": 5537,
       "tps_milli": 112721,
       "ttft_ms": 1592,
-      "ttft_samples": 6750
+      "ttft_samples": 5738
     },
     {
       "input_bucket": 3,
       "model": "deepseek/deepseek-v4-1-flash-1017-uncensored",
       "provider": "venice",
-      "throughput_samples": 10959,
+      "throughput_samples": 9420,
       "tps_milli": 80390,
       "ttft_ms": 2270,
-      "ttft_samples": 11202
+      "ttft_samples": 9640
     },
     {
       "input_bucket": 0,
       "model": "deepseek/deepseek-v4-1-flash-uncensored",
       "provider": "venice",
-      "throughput_samples": 165,
+      "throughput_samples": 191,
       "tps_milli": 158410,
       "ttft_ms": 765,
-      "ttft_samples": 364
+      "ttft_samples": 405
     },
     {
       "input_bucket": 1,
       "model": "deepseek/deepseek-v4-1-flash-uncensored",
       "provider": "venice",
-      "throughput_samples": 2305,
+      "throughput_samples": 2419,
       "tps_milli": 155873,
       "ttft_ms": 1059,
-      "ttft_samples": 2354
+      "ttft_samples": 2466
     },
     {
       "input_bucket": 2,
       "model": "deepseek/deepseek-v4-1-flash-uncensored",
       "provider": "venice",
-      "throughput_samples": 23958,
+      "throughput_samples": 25779,
       "tps_milli": 172288,
       "ttft_ms": 1395,
-      "ttft_samples": 24172
+      "ttft_samples": 26150
     },
     {
       "input_bucket": 3,
       "model": "deepseek/deepseek-v4-1-flash-uncensored",
       "provider": "venice",
-      "throughput_samples": 40833,
+      "throughput_samples": 50541,
       "tps_milli": 87575,
       "ttft_ms": 2139,
-      "ttft_samples": 41786
+      "ttft_samples": 52047
     },
     {
       "input_bucket": 1,
       "model": "deepseek/deepseek-v4-flash-vision-exp",
       "provider": "deepinfra",
-      "throughput_samples": 31,
+      "throughput_samples": 27,
       "tps_milli": 86902,
       "ttft_ms": 1298,
-      "ttft_samples": 31
+      "ttft_samples": 27
     },
     {
       "input_bucket": 2,
       "model": "deepseek/deepseek-v4-flash-vision-exp",
       "provider": "deepinfra",
-      "throughput_samples": 96,
+      "throughput_samples": 91,
       "tps_milli": 95939,
       "ttft_ms": 1321,
-      "ttft_samples": 96
+      "ttft_samples": 91
     },
     {
       "input_bucket": 1,
@@ -248,28 +239,28 @@
       "input_bucket": 3,
       "model": "deepseek/deepseek-v4.1-flash",
       "provider": "coralbricks",
-      "throughput_samples": 219,
+      "throughput_samples": 250,
       "tps_milli": 31337,
       "ttft_ms": 2487,
-      "ttft_samples": 320
+      "ttft_samples": 348
     },
     {
       "input_bucket": 0,
       "model": "deepseek/deepseek-v4.1-flash",
       "provider": "telnyx",
-      "throughput_samples": 55,
-      "tps_milli": 217823,
+      "throughput_samples": 54,
+      "tps_milli": 282558,
       "ttft_ms": 815,
-      "ttft_samples": 69
+      "ttft_samples": 64
     },
     {
       "input_bucket": 1,
       "model": "deepseek/deepseek-v4.1-flash",
       "provider": "telnyx",
-      "throughput_samples": 19,
+      "throughput_samples": 21,
       "tps_milli": null,
       "ttft_ms": 1140,
-      "ttft_samples": 25
+      "ttft_samples": 27
     },
     {
       "input_bucket": 2,
@@ -284,37 +275,37 @@
       "input_bucket": 1,
       "model": "deepseek/deepseek-v4.1-flash",
       "provider": "tinfoil",
-      "throughput_samples": 393,
+      "throughput_samples": 374,
       "tps_milli": 143415,
       "ttft_ms": 1118,
-      "ttft_samples": 462
+      "ttft_samples": 452
     },
     {
       "input_bucket": 2,
       "model": "deepseek/deepseek-v4.1-flash",
       "provider": "tinfoil",
-      "throughput_samples": 109,
-      "tps_milli": 123380,
+      "throughput_samples": 91,
+      "tps_milli": 94966,
       "ttft_ms": 1646,
-      "ttft_samples": 124
+      "ttft_samples": 104
     },
     {
       "input_bucket": 2,
       "model": "deepseek/deepseek-v4.1-flash",
       "provider": "together",
-      "throughput_samples": 346,
+      "throughput_samples": 334,
       "tps_milli": 246662,
       "ttft_ms": 776,
-      "ttft_samples": 507
+      "ttft_samples": 524
     },
     {
       "input_bucket": 3,
       "model": "deepseek/deepseek-v4.1-flash",
       "provider": "together",
-      "throughput_samples": 46,
-      "tps_milli": 314842,
+      "throughput_samples": 104,
+      "tps_milli": 218371,
       "ttft_ms": 852,
-      "ttft_samples": 46
+      "ttft_samples": 130
     },
     {
       "input_bucket": 2,
@@ -340,116 +331,116 @@
       "provider": "nebius",
       "throughput_samples": 20,
       "tps_milli": null,
-      "ttft_ms": 2368,
-      "ttft_samples": 90
+      "ttft_ms": 3761,
+      "ttft_samples": 96
     },
     {
       "input_bucket": 0,
       "model": "deepseek/deepseek-v4.1-flash-1017",
       "provider": "tinfoil",
-      "throughput_samples": 87,
+      "throughput_samples": 65,
       "tps_milli": 135124,
       "ttft_ms": 991,
-      "ttft_samples": 113
+      "ttft_samples": 85
     },
     {
       "input_bucket": 1,
       "model": "deepseek/deepseek-v4.1-flash-1017",
       "provider": "tinfoil",
-      "throughput_samples": 251,
+      "throughput_samples": 211,
       "tps_milli": 157159,
       "ttft_ms": 1034,
-      "ttft_samples": 269
+      "ttft_samples": 226
     },
     {
       "input_bucket": 2,
       "model": "deepseek/deepseek-v4.1-flash-1017",
       "provider": "tinfoil",
-      "throughput_samples": 375,
+      "throughput_samples": 436,
       "tps_milli": 141716,
       "ttft_ms": 1789,
-      "ttft_samples": 376
+      "ttft_samples": 454
     },
     {
       "input_bucket": 3,
       "model": "deepseek/deepseek-v4.1-flash-1017",
       "provider": "tinfoil",
-      "throughput_samples": 28,
+      "throughput_samples": 40,
       "tps_milli": 88807,
       "ttft_ms": 2212,
-      "ttft_samples": 28
+      "ttft_samples": 40
     },
     {
       "input_bucket": 1,
       "model": "deepseek/deepseek-v4.1-flash-1017",
       "provider": "wafer",
-      "throughput_samples": 160,
+      "throughput_samples": 165,
       "tps_milli": 178258,
       "ttft_ms": 932,
-      "ttft_samples": 169
+      "ttft_samples": 176
     },
     {
       "input_bucket": 2,
       "model": "deepseek/deepseek-v4.1-flash-1017",
       "provider": "wafer",
-      "throughput_samples": 855,
-      "tps_milli": 124427,
+      "throughput_samples": 666,
+      "tps_milli": 151419,
       "ttft_ms": 1447,
-      "ttft_samples": 1282
+      "ttft_samples": 1074
     },
     {
       "input_bucket": 3,
       "model": "deepseek/deepseek-v4.1-flash-1017",
       "provider": "wafer",
-      "throughput_samples": 346,
-      "tps_milli": 110098,
-      "ttft_ms": 1752,
-      "ttft_samples": 365
+      "throughput_samples": 113,
+      "tps_milli": 151121,
+      "ttft_ms": 775,
+      "ttft_samples": 144
     },
     {
       "input_bucket": 0,
       "model": "fortanix/glm-5.3-flash",
       "provider": "fortanix",
-      "throughput_samples": 27123,
-      "tps_milli": 25541,
+      "throughput_samples": 27351,
+      "tps_milli": 40147,
       "ttft_ms": 903,
-      "ttft_samples": 27161
+      "ttft_samples": 27367
     },
     {
       "input_bucket": 1,
       "model": "fortanix/glm-5.3-flash",
       "provider": "fortanix",
-      "throughput_samples": 674,
+      "throughput_samples": 923,
       "tps_milli": 55752,
       "ttft_ms": 1015,
-      "ttft_samples": 782
+      "ttft_samples": 1000
     },
     {
       "input_bucket": 2,
       "model": "fortanix/glm-5.3-flash",
       "provider": "fortanix",
-      "throughput_samples": 1367,
+      "throughput_samples": 1369,
       "tps_milli": 37928,
       "ttft_ms": 2165,
-      "ttft_samples": 1644
+      "ttft_samples": 1584
     },
     {
       "input_bucket": 3,
       "model": "fortanix/glm-5.3-flash",
       "provider": "fortanix",
-      "throughput_samples": 346,
+      "throughput_samples": 392,
       "tps_milli": 18429,
       "ttft_ms": 4736,
-      "ttft_samples": 443
+      "ttft_samples": 490
     },
     {
       "input_bucket": 0,
       "model": "google/gemini-3.8-flash",
       "provider": "google-ai-studio",
-      "throughput_samples": 30,
+      "throughput_samples": 26,
       "tps_milli": 82334,
       "ttft_ms": 2044,
-      "ttft_samples": 40
+      "ttft_samples": 36
     },
     {
       "input_bucket": 0,
@@ -464,19 +455,19 @@
       "input_bucket": 0,
       "model": "google/gemma-4-31b-it",
       "provider": "tinfoil",
-      "throughput_samples": 34,
+      "throughput_samples": 42,
       "tps_milli": 78753,
       "ttft_ms": 765,
-      "ttft_samples": 233
+      "ttft_samples": 267
     },
     {
       "input_bucket": 1,
       "model": "google/gemma-4-31b-it",
       "provider": "tinfoil",
-      "throughput_samples": 4,
+      "throughput_samples": 3,
       "tps_milli": null,
       "ttft_ms": 567,
-      "ttft_samples": 38
+      "ttft_samples": 37
     },
     {
       "input_bucket": 1,
@@ -494,7 +485,7 @@
       "throughput_samples": 34,
       "tps_milli": 124793,
       "ttft_ms": 774,
-      "ttft_samples": 34
+      "ttft_samples": 35
     },
     {
       "input_bucket": 3,
@@ -517,119 +508,128 @@
     {
       "input_bucket": 3,
       "model": "moonshotai/kimi-k3",
+      "provider": "telnyx",
+      "throughput_samples": 55,
+      "tps_milli": 27727,
+      "ttft_ms": 4382,
+      "ttft_samples": 55
+    },
+    {
+      "input_bucket": 3,
+      "model": "moonshotai/kimi-k3",
       "provider": "together",
-      "throughput_samples": 73,
+      "throughput_samples": 65,
       "tps_milli": 51667,
       "ttft_ms": 2714,
-      "ttft_samples": 76
+      "ttft_samples": 66
     },
     {
       "input_bucket": 2,
       "model": "moonshotai/kimi-k3",
       "provider": "wafer",
-      "throughput_samples": 99,
+      "throughput_samples": 70,
       "tps_milli": 82014,
       "ttft_ms": 1334,
-      "ttft_samples": 105
+      "ttft_samples": 73
     },
     {
       "input_bucket": 3,
       "model": "moonshotai/kimi-k3",
       "provider": "wafer",
-      "throughput_samples": 148,
+      "throughput_samples": 168,
       "tps_milli": 68958,
       "ttft_ms": 1647,
-      "ttft_samples": 151
+      "ttft_samples": 172
     },
     {
       "input_bucket": 0,
       "model": "openai/gpt-6-luna",
       "provider": "openai",
-      "throughput_samples": 11776,
+      "throughput_samples": 11937,
       "tps_milli": 149960,
       "ttft_ms": 980,
-      "ttft_samples": 11801
+      "ttft_samples": 11963
     },
     {
       "input_bucket": 1,
       "model": "openai/gpt-6-luna",
       "provider": "openai",
-      "throughput_samples": 14429,
+      "throughput_samples": 15199,
       "tps_milli": 100719,
       "ttft_ms": 1243,
-      "ttft_samples": 14983
+      "ttft_samples": 15893
     },
     {
       "input_bucket": 2,
       "model": "openai/gpt-6-luna",
       "provider": "openai",
-      "throughput_samples": 10213,
+      "throughput_samples": 12257,
       "tps_milli": 114862,
       "ttft_ms": 1344,
-      "ttft_samples": 10213
+      "ttft_samples": 12257
     },
     {
       "input_bucket": 3,
       "model": "openai/gpt-6-luna",
       "provider": "openai",
-      "throughput_samples": 143,
+      "throughput_samples": 284,
       "tps_milli": 134440,
       "ttft_ms": 2348,
-      "ttft_samples": 145
+      "ttft_samples": 292
     },
     {
       "input_bucket": 1,
       "model": "openai/gpt-6-sol",
       "provider": "openai",
-      "throughput_samples": 23,
+      "throughput_samples": 16,
       "tps_milli": null,
       "ttft_ms": 1844,
-      "ttft_samples": 110
+      "ttft_samples": 83
     },
     {
       "input_bucket": 0,
       "model": "openai/gpt-6.1-sol",
       "provider": "openai",
-      "throughput_samples": 1064,
+      "throughput_samples": 1096,
       "tps_milli": 48711,
       "ttft_ms": 2044,
-      "ttft_samples": 1166
+      "ttft_samples": 1201
     },
     {
       "input_bucket": 1,
       "model": "openai/gpt-6.1-sol",
       "provider": "openai",
-      "throughput_samples": 1432,
+      "throughput_samples": 1460,
       "tps_milli": 53965,
       "ttft_ms": 3568,
-      "ttft_samples": 1508
+      "ttft_samples": 1537
     },
     {
       "input_bucket": 1,
       "model": "openai/gpt-6.2-sol",
       "provider": "openai",
-      "throughput_samples": 29,
+      "throughput_samples": 36,
       "tps_milli": 37190,
       "ttft_ms": 2251,
-      "ttft_samples": 37
+      "ttft_samples": 45
     },
     {
       "input_bucket": 2,
       "model": "openai/gpt-6.2-sol",
       "provider": "openai",
-      "throughput_samples": 21,
-      "tps_milli": null,
+      "throughput_samples": 28,
+      "tps_milli": 53929,
       "ttft_ms": 1745,
-      "ttft_samples": 30
+      "ttft_samples": 37
     },
     {
       "input_bucket": 1,
       "model": "openai/gpt-oss-120b",
       "provider": "tinfoil",
-      "throughput_samples": 99,
+      "throughput_samples": 109,
       "tps_milli": 69391,
       "ttft_ms": 894,
-      "ttft_samples": 553
+      "ttft_samples": 719
     },
     {
       "input_bucket": 1,
@@ -647,97 +647,79 @@
       "throughput_samples": 34,
       "tps_milli": 130613,
       "ttft_ms": 865,
-      "ttft_samples": 52
+      "ttft_samples": 54
     },
     {
       "input_bucket": 1,
       "model": "z-ai/glm-5-3-flash-uncensored",
       "provider": "venice",
-      "throughput_samples": 439,
+      "throughput_samples": 453,
       "tps_milli": 111662,
       "ttft_ms": 1317,
-      "ttft_samples": 490
+      "ttft_samples": 506
     },
     {
       "input_bucket": 2,
       "model": "z-ai/glm-5-3-flash-uncensored",
       "provider": "venice",
-      "throughput_samples": 1601,
+      "throughput_samples": 1960,
       "tps_milli": 74950,
       "ttft_ms": 1726,
-      "ttft_samples": 1779
+      "ttft_samples": 2193
     },
     {
       "input_bucket": 3,
       "model": "z-ai/glm-5-3-flash-uncensored",
       "provider": "venice",
-      "throughput_samples": 866,
+      "throughput_samples": 969,
       "tps_milli": 49291,
       "ttft_ms": 3364,
-      "ttft_samples": 1031
+      "ttft_samples": 1153
     },
     {
       "input_bucket": 1,
       "model": "z-ai/glm-5.2",
       "provider": "parasail",
-      "throughput_samples": 49,
+      "throughput_samples": 47,
       "tps_milli": 146697,
       "ttft_ms": 1298,
-      "ttft_samples": 49
+      "ttft_samples": 47
     },
     {
       "input_bucket": 1,
       "model": "z-ai/glm-5.3",
       "provider": "nebius",
-      "throughput_samples": 27,
-      "tps_milli": 82231,
+      "throughput_samples": 24,
+      "tps_milli": null,
       "ttft_ms": 1483,
-      "ttft_samples": 42
+      "ttft_samples": 37
     },
     {
       "input_bucket": 1,
       "model": "z-ai/glm-5.3",
       "provider": "tinfoil",
-      "throughput_samples": 38,
-      "tps_milli": 103364,
+      "throughput_samples": 21,
+      "tps_milli": null,
       "ttft_ms": 1499,
-      "ttft_samples": 56
+      "ttft_samples": 28
     },
     {
       "input_bucket": 2,
       "model": "z-ai/glm-5.3",
       "provider": "tinfoil",
-      "throughput_samples": 187,
-      "tps_milli": 85633,
+      "throughput_samples": 24,
+      "tps_milli": null,
       "ttft_ms": 1473,
-      "ttft_samples": 295
-    },
-    {
-      "input_bucket": 3,
-      "model": "z-ai/glm-5.3",
-      "provider": "tinfoil",
-      "throughput_samples": 41,
-      "tps_milli": 37883,
-      "ttft_ms": 2303,
-      "ttft_samples": 55
-    },
-    {
-      "input_bucket": 2,
-      "model": "z-ai/glm-5.3-flash",
-      "provider": "greenference",
-      "throughput_samples": 62,
-      "tps_milli": 63147,
-      "ttft_ms": 1825,
-      "ttft_samples": 76
+      "ttft_samples": 26
     },
     {
       "input_bucket": 3,
       "model": "z-ai/glm-5.3-flash",
       "provider": "greenference",
-      "throughput_samples": 345,
+      "throughput_samples": 249,
       "tps_milli": 25049,
       "ttft_ms": 6101,
-      "ttft_samples": 397
+      "ttft_samples": 277
     },
     {
       "input_bucket": 3,
@@ -779,55 +761,55 @@
       "input_bucket": 2,
       "model": "z-ai/glm-5.3-flash",
       "provider": "privatemode",
-      "throughput_samples": 47,
+      "throughput_samples": 27,
       "tps_milli": 80822,
       "ttft_ms": 1737,
-      "ttft_samples": 47
+      "ttft_samples": 27
     },
     {
       "input_bucket": 3,
       "model": "z-ai/glm-5.3-flash",
       "provider": "privatemode",
-      "throughput_samples": 48,
+      "throughput_samples": 41,
       "tps_milli": 64822,
       "ttft_ms": 1476,
-      "ttft_samples": 48
+      "ttft_samples": 41
     },
     {
       "input_bucket": 3,
       "model": "z-ai/glm-5.3-flash",
       "provider": "telnyx",
-      "throughput_samples": 284,
-      "tps_milli": 31515,
+      "throughput_samples": 165,
+      "tps_milli": 41119,
       "ttft_ms": 4919,
-      "ttft_samples": 370
+      "ttft_samples": 224
     },
     {
       "input_bucket": 1,
       "model": "z-ai/glm-5.3-flash",
       "provider": "together",
-      "throughput_samples": 554,
+      "throughput_samples": 673,
       "tps_milli": 137292,
       "ttft_ms": 1041,
-      "ttft_samples": 649
+      "ttft_samples": 768
     },
     {
       "input_bucket": 2,
       "model": "z-ai/glm-5.3-flash",
       "provider": "together",
-      "throughput_samples": 753,
+      "throughput_samples": 748,
       "tps_milli": 138663,
       "ttft_ms": 1177,
-      "ttft_samples": 899
+      "ttft_samples": 883
     },
     {
       "input_bucket": 3,
       "model": "z-ai/glm-5.3-flash",
       "provider": "together",
-      "throughput_samples": 2196,
+      "throughput_samples": 1908,
       "tps_milli": 78656,
       "ttft_ms": 1995,
-      "ttft_samples": 2554
+      "ttft_samples": 2229
     },
     {
       "input_bucket": 3,

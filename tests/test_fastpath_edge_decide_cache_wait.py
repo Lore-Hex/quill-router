@@ -90,7 +90,7 @@ def test_the_flag_waits_for_the_attribute_and_a_release_that_takes_it() -> None:
     tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
     local = re.findall(r'^\s*fastpath_edge_decide_cache_wait\s*=\s*"([^"]*)"$', tf, re.M)
     assert len(local) == 1, local
-    assert "local.fastpath_edge_decide_cache_wait_metadata)" in tf
+    assert "local.fastpath_edge_decide_cache_wait_metadata," in tf
     if local[0]:
         assert re.fullmatch(r"0|[1-9]ms|[1-9][0-9]ms|1[0-9][0-9]ms|2[0-4][0-9]ms|250ms", local[0]), local[0]
         pinned = re.search(r'fastpath_release\s*=\s*"([0-9a-f]{40})"', tf)

@@ -111,6 +111,25 @@ if [ -n "$settle_hedge" ]; then
   fi
   hedge_flags="-settle-hedge $settle_hedge"
 fi
+# What an owner does with a starved shard's leases (-starved-leases;
+# docs/design/billing-503-reduction-2026-11.md, option A): off, log or
+# close. Absent, the node runs the release's default (log: each starved
+# shard logged, nothing closed). "close" stops a lease too small for a
+# request admitting once the store refused the shard a top-up for the floor
+# or the allowance, so its next checkpoint returns its free room
+# (local.fastpath_starved_leases; docs/runbooks/fastpath-deploy.md,
+# "Starved leases"). The pinned release must take -starved-leases before the
+# attribute is set; a value the release would refuse stops the script.
+starved_leases="$(attribute fastpath-starved-leases)" || exit 1
+starved_flags=""
+if [ -n "$starved_leases" ]; then
+  # The whole value, newlines included, as for the hedge.
+  if ! [[ "$starved_leases" =~ ^(off|log|close)$ ]]; then
+    echo "fastpath: fastpath-starved-leases is off, log, close, or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  starved_flags="-starved-leases $starved_leases"
+fi
 # The money settings (docs/design/fast-admission-widening.md, (b)): the
 # trust tier a lease needs, a workspace's allowance and the floor a grant
 # leaves, in microdollars, from fastpath-required-tier, fastpath-allowance
@@ -390,7 +409,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags $fleet_flags $cache_wait_flags $hedge_flags
+  -subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags $fleet_flags $starved_flags $cache_wait_flags $hedge_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30

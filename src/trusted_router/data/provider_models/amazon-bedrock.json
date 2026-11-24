@@ -1712,7 +1712,7 @@
   ],
   "source": "https://bedrock-mantle.us-east-1.api.aws/v1/models",
   "pricing_source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/us-east-1/index.json",
-  "generated_at": "2026-11-23T23:28:10Z",
+  "generated_at": "2026-11-24T04:28:09Z",
   "price_scale": "microdollars_per_million",
   "model_count": 65
 }

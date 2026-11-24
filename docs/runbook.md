@@ -340,10 +340,31 @@ carries it. The dispatch therefore comes at the first refresh run that reaches
 its last step after those four hours. (From `65ceb7c`, 2026-05-13,
 until this rule, every snapshot push dispatched a rollout of its own.)
 
+**Protective snapshots skip the four hours.** When the route history
+(`src/trusted_router/data/model_changes.jsonl`) gained, beyond the delivered
+release, a net removal of an endpoint or model (how a `routable: false` hold
+of any reason, or a dropped endpoint, shows up) or a retirement whose
+effective time has passed, the check dispatches on the first refresh run that
+reaches its last step, usually the run that published the hold. A snapshot
+that mixes a hold with price changes or new routes counts as protective;
+price-only snapshots, additions and re-admissions keep the four-hour rule, as
+does a range the check cannot classify (the compare omitted the history's
+patch). The fast path dispatches only when no deploy run of main's head
+exists (one dispatch per head still holds), no `deploy.yml` run on main is in
+flight (later protective snapshots coalesce into the next rollout instead of
+queueing a storm), and main's head has a green `ci.yml` run, the one
+`gate-on-ci` reads. The deploy's own CI gate, mutex, FIFO leases and bake
+rules are unchanged. Expected hold-to-live: about one rollout (1 to 1.5 h)
+after the hold reaches main, or one more rollout when another deploy is
+already in flight, instead of 3 to 7 h. Its `wait` lines say which condition
+held it (`coalesces into the next rollout`, `already had its one automatic
+deploy`, `no dispatch before CI is green`).
+
 If the deployed catalog stays stale for longer than that:
 1. Read that step's log in the latest `refresh-prices.yml` run. It prints the
    decision and the reason. `wait` names what the snapshot waits for: it is
-   younger than the limit, or a deploy run that has not completed carries it.
+   younger than the limit and not protective, or a deploy run that has not
+   completed carries it, or (protective) one of the fast path's conditions.
    `dispatch` is followed by the `dispatched deploy.yml for a waiting
    snapshot` log line.
 2. A failed step whose log says `stuck` means the snapshot is past the limit,

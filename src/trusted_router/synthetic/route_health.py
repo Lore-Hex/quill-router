@@ -940,7 +940,10 @@ _HOLD_SUPERSEDES_KINDS = frozenset({"availability", "structural"})
 # (4h) for a rollout to carry the snapshot, plus the rollout itself. Shorter
 # would page on every hold that is merely waiting for its deploy (Sentry
 # QUILL-ROUTER-HV re-fired hourly for two hours after its hold was committed);
-# it must stay well under the 24h hold. A test pins both sides.
+# it must stay well under the 24h hold. A test pins both sides. A protective
+# snapshot (one that holds a route) usually skips the 4h wait, but the bound
+# keeps it: a hold still waits the full 4h when main's head already had its
+# one automatic deploy or the check cannot classify the snapshot.
 ROUTE_HOLD_APPLY_DEADLINE = dt.timedelta(hours=8)
 
 

@@ -87,6 +87,10 @@ func run() error {
 	flag.DurationVar(&cfg.Owner.StreamReap.AfterHeartbeat, "stream-reap-after-heartbeat",
 		cfg.Owner.StreamReap.AfterHeartbeat,
 		"a stream's hold is reaped no sooner than its last accepted heartbeat plus this (the control plane's renewal)")
+	flag.Var(&cfg.Owner.StarvedLeases, "starved-leases",
+		"what an owner does with a shard's leases when a request none has room for meets a top-up the store refused "+
+			"for the floor or the allowance (docs/design/billing-503-reduction-2026-11.md): off, log (the default, "+
+			"shadow), or close, which stops them admitting so their next checkpoint returns their free room")
 	flag.DurationVar(&cfg.HandOff, "hand-off", cfg.HandOff,
 		"how long a stopping node's owner has to hand its leases off; 0 hands none off")
 	flag.DurationVar(&cfg.ClockOffset, "clock-offset", cfg.ClockOffset,
