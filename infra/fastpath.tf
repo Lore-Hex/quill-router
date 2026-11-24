@@ -461,6 +461,30 @@ locals {
   fastpath_settle_hedge_metadata = {
     for name, value in { fastpath-settle-hedge = local.fastpath_settle_hedge } : name => value if value != ""
   }
+  # What an owner does with a starved shard's leases (-starved-leases;
+  # docs/design/billing-503-reduction-2026-11.md, option A): "" leaves the
+  # attribute off, and a node runs its release's default (log: logged,
+  # nothing closed); "close" turns it on, "off" silences it. Set only with
+  # a pinned release that takes the flag, and only a node created from the
+  # script that reads the attribute takes it, by the unit rewrite in
+  # docs/runbooks/fastpath-deploy.md, "Starved leases".
+  fastpath_starved_leases = ""
+  fastpath_starved_leases_metadata = {
+    for name, value in { fastpath-starved-leases = local.fastpath_starved_leases } : name => value if value != ""
+  }
+  # The decide path's read-through (-edge-decide-cache-wait,
+  # docs/design/fast-admission-e2-decide.md decision 2): "" leaves the
+  # attribute off, and a node runs its release's default, no wait; "100ms"
+  # has a request whose cached key or credit entry is cold or stale wait up
+  # to that for the strong read that fills it, rather than pass as
+  # cache.key. Set only with a pinned release that takes the flag, and only
+  # a node created from the script that reads the attribute takes it, by the
+  # unit rewrite in docs/runbooks/fastpath-deploy.md, "The decide cache's
+  # wait". "0", or "" again, is the off switch.
+  fastpath_edge_decide_cache_wait = ""
+  fastpath_edge_decide_cache_wait_metadata = {
+    for name, value in { fastpath-edge-decide-cache-wait = local.fastpath_edge_decide_cache_wait } : name => value if value != ""
+  }
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -783,7 +807,7 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-floor               = local.fastpath_floor
     fastpath-allowance-tier2     = local.fastpath_allowance_tier2
     fastpath-allowance-tier1     = local.fastpath_allowance_tier1
-  }, local.fastpath_edge_snapshot, local.fastpath_settle_hedge_metadata)
+  }, local.fastpath_edge_snapshot, local.fastpath_starved_leases_metadata, local.fastpath_edge_decide_cache_wait_metadata, local.fastpath_settle_hedge_metadata)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
     release_bucket = google_storage_bucket.fastpath_releases.name

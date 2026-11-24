@@ -146,7 +146,7 @@ from trusted_router.services.edge_policy_publisher import (  # noqa: E402
 from trusted_router.spend_windows import enforced_window_limits, key_window_limits  # noqa: E402
 from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS  # noqa: E402
 from trusted_router.storage import configure_store, typed_billing_store  # noqa: E402
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE  # noqa: E402
+from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE  # noqa: E402
 from trusted_router.storage_models import CreditAccount, GatewayBoot, Workspace  # noqa: E402
 
 CASES_OUTPUT = "fastpath/testdata/authorize_cases_v1.json"
@@ -609,7 +609,20 @@ def build_world(world: dict[str, Any], policy: dict[str, Any]) -> tuple[Any, Any
     # The stored key as the case gives it, created at a fixed instant.
     store._write_entity("api_key", created.hash, dataclasses.replace(
         created, disabled=key["disabled"], federated_home=key["federated_home"], created_at="2026-10-01T00:00:00Z",
+        # A shard count the store would refuse to create (a strict key with
+        # two shards, which a reshard that failed after its commit could
+        # leave), written behind its back.
+        **({"usage_shard_count": key["usage_shard_count"]} if "usage_shard_count" in key else {}),
     ))
+    # A strict key's counter row as the case gives it: "missing" removes
+    # shard 0 (Python's strict reserve then answers KEY_MISSING), a mapping
+    # changes its mirrored limits behind the entity's back
+    # (docs/design/fast-admission-e2-strict-keys.md section 7).
+    row_change = world.get("key_limit_row")
+    if row_change == "missing":
+        del database.typed[KEY_LIMIT_TABLE][(created.hash, 0)]
+    elif row_change is not None:
+        database.typed[KEY_LIMIT_TABLE][(created.hash, 0)].update(row_change)
     boot = world["boot"]
     if boot is not None:
         store._write_entity(GATEWAY_BOOT_KIND, boot["kid"], GatewayBoot(
@@ -654,7 +667,19 @@ def stored(database: Any, world: dict[str, Any]) -> dict[str, Any]:
     spec = world["workspace"]
     causes = sorted(set(spec["billing_pause_causes"]).union(*(row["billing_pause_causes"] for row in credit_rows)))
     key_body, workspace_body = body("api_key", key["hash"]), body("workspace", workspace_id)
+    # A strict key's tr_key_limit shard 0 as Python's strict reserve reads
+    # it, and as the edge's key-context read reads it with the key
+    # (store.StrictKeyLimit): its four mirrored limits, null when the row is
+    # missing. Recorded for strict keys alone, the only keys it is read for.
+    strict_row: dict[str, Any] = {}
+    if key["budget_strict"]:
+        row = database.typed.get(KEY_LIMIT_TABLE, {}).get((key["hash"], 0))
+        strict_row = {"key_limit_row": None if row is None else {
+            column: row.get(column) for column in ("limit_micro", "day_limit_micro", "week_limit_micro",
+                                                   "month_limit_micro")
+        }}
     return {
+        **strict_row,
         "key": {"lookup_body": body("api_key_lookup", lookup_hash(key["hash"])), "key_body": key_body},
         "workspace": {"body": workspace_body, "credit_rows": credit_rows},
         "byok_entity_ids": byok,
@@ -1068,6 +1093,13 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
             # (docs/design/fast-admission-streams.md section 8.4): the
             # answer and rows the shadow compares Go's with, leased (the
             # pilot's) or not (python.leased says).
+            expect["shadow"] = answered()
+        if reason == "key.budget_strict" and response.status_code == 200 and not leased:
+            # A strict key Python answered on its strict path, which the edge
+            # composes under fastpath_pilot_strict_keys shadow or enforce when
+            # the key has no limit (docs/design/fast-admission-e2-strict-keys.md
+            # section 7): Python's 200, byte for byte Go's, and its rows,
+            # today's path's (its key hold), not the edge's.
             expect["shadow"] = answered()
         return {**world_rows, "_models": models, "_response": body, "expect": expect}
     if case["insert"] == "failed_precondition" and response.status_code != 503:
@@ -1631,6 +1663,22 @@ def cases() -> list[dict[str, Any]]:
     add("pass:key.key_window_alert", "key.key_window_alert",
         world={"key": {"limit_daily_microdollars": 1_000, "budget_alert_only": True}})
     add("pass:key.budget_strict", "key.budget_strict", world={"key": {"budget_strict": True}})
+    # A strict key with no limit whose counter row Python's strict reserve
+    # would not match as limitless: no shard 0 (KEY_MISSING, a 402), or a
+    # mirrored limit the entity does not carry (KEY_INSUFFICIENT, a 402).
+    # The edge passes both under every fastpath_pilot_strict_keys mode.
+    add("pass:key.budget_strict:no_row", "key.budget_strict",
+        world={"key": {"budget_strict": True}, "key_limit_row": "missing"})
+    add("pass:key.budget_strict:mirror_limit", "key.budget_strict",
+        world={"key": {"budget_strict": True}, "key_limit_row": {"limit_micro": 1}})
+    # A strict key with no limit and two usage shards: Python's authorize
+    # answers it 500 (key_usage_shard_count), and the edge passes it under
+    # every mode.
+    add("pass:key.budget_strict:two_shards", "key.budget_strict",
+        world={"key": {"budget_strict": True, "usage_shard_count": 2}})
+    # A strict key with a lifetime limit: key.key_cap, whatever the mode.
+    add("pass:key.key_cap:strict", "key.key_cap",
+        world={"key": {"budget_strict": True, "limit_microdollars": 10_000_000}})
     add("pass:workspace.paused", "workspace.paused", world={"workspace": {"billing_pause_causes": ["abuse"]}})
     add("pass:workspace.deleted", "workspace.deleted", world={"workspace": {"deleted": True}})
     add("pass:workspace.federated", "workspace.federated",

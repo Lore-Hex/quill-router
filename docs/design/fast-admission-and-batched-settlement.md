@@ -1505,7 +1505,10 @@ it is put in. These stay on today's Python path:
   native batch, video and image jobs, and hosted tools with
   `additional_cost_reservation_microdollars`;
 - x402 and federated (deferred-settlement) keys;
-- keys with lifetime caps or window limits, and `budget_strict` keys (§4.6);
+- keys with lifetime caps or window limits, and `budget_strict` keys (§4.6).
+  A `budget_strict` key with no limit, which can never gain one, is the
+  exception the edge decides behind a switch, with no key hold
+  ([`fast-admission-e2-strict-keys.md`](fast-admission-e2-strict-keys.md));
 - OAuth-app keys with a markup, and synthetic-probe workspaces;
 - workspaces that are paused, in debt, below the minimum balance, or below the
   trust tier that allows leases. That tier is 3 at first (`trust_tiers.py`).

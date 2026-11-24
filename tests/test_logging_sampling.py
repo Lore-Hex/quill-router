@@ -258,6 +258,37 @@ def lb(status: int | None, latency: str, details: str = "response_sent_by_backen
     }
 
 
+STATIC_SITE = "sample_static_site_request_noise"
+EXCHANGE = "token-exchange-static"
+PUBLIC = "trusted-router-public-backend"
+# Cloud Armor's record on the public site's requests (cloud_armor.tf, public_edge),
+# as the balancer logs it: ACCEPT on every request the policy passes to the
+# backend, DENY from the host rule or from the per-source throttle.
+ARMOR_ACCEPT = {
+    "name": "trusted-router-public-edge", "priority": 1200, "configuredAction": "THROTTLE", "outcome": "ACCEPT",
+    "rateLimitAction": {"key": "192.0.2.10", "outcome": "RATE_LIMIT_THRESHOLD_CONFORM"},
+}
+ARMOR_THROTTLED = {**ARMOR_ACCEPT, "outcome": "DENY",
+                   "rateLimitAction": {"key": "192.0.2.10", "outcome": "RATE_LIMIT_THRESHOLD_EXCEED"}}
+ARMOR_HOST_DENY = {"name": "trusted-router-public-edge", "priority": 900, "configuredAction": "DENY", "outcome": "DENY"}
+ARMOR_PREVIEW = {"name": "trusted-router-public-edge", "priority": 1000, "configuredAction": "DENY", "outcome": "DENY"}
+
+
+def site(status: int | None, latency: str, details: str = "response_sent_by_backend",
+         backend: str = EXCHANGE, **payload: Any) -> dict[str, Any]:
+    """A request to the public site or an exchange site, as the balancer logs it.
+
+    A GET with a Cloud CDN lookup; INFO below 400 and when there is no status,
+    WARNING for every status of 400 or more, 5xx included.
+    """
+    entry = lb(status, latency, details, backend, cacheId="IAD", **payload)
+    entry["httpRequest"].update(requestMethod="GET", cacheLookup=True)
+    if details.startswith("response_from_cache"):
+        entry["httpRequest"]["cacheHit"] = True
+    entry["severity"] = "WARNING" if status is not None and status >= 400 else "INFO"
+    return entry
+
+
 def integrity(event: str, severity: str = "NOTICE", **body: Any) -> dict[str, Any]:
     return {
         "logName": PROJECT_LOGS + "compute.googleapis.com%2Fshielded_vm_integrity",
@@ -343,6 +374,21 @@ SAMPLED = {
         run_line(f"{GW}gateway.authorize_affinity affinity=warm_same region=us-central1"),
         run_line(KEY_SOURCE),
         run_line(f"{GW}fastpath pilot passed over reason=key_cap workspace_id=ws_x"),
+    ],
+    STATIC_SITE: [
+        site(200, "0.002s", "response_from_cache"),
+        site(200, "0.130s"),
+        site(200, "0.120s", "response_from_cache_validated"),
+        site(304, "0.004s", "response_from_cache"),
+        # A directory brute force's guess, logged at WARNING like every 4xx.
+        site(404, "0.140s"),
+        # The public site: a cache miss carries Cloud Armor's ACCEPT, a cache hit no Armor record.
+        site(200, "0.042s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(200, "0.005s", "response_from_cache", PUBLIC),
+        site(304, "0.003s", "response_from_cache", PUBLIC),
+        site(308, "0.010s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(404, "0.020s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(404, "0.999s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
     ],
 }
 
@@ -434,6 +480,42 @@ KEPT = {
         launcher("enclave.stage_d_cap_reached streams=64"),
         launcher("settle_outbox.sweep dead=1 quarantined=0"),
     ],
+    "public site and exchange site failures, slow calls and Armor matches": [
+        site(403, "0.002s", "denied_by_security_policy", PUBLIC, enforcedSecurityPolicy=ARMOR_HOST_DENY),
+        site(403, "0.030s"),
+        site(429, "0.100s", "denied_by_security_policy", PUBLIC, enforcedSecurityPolicy=ARMOR_THROTTLED),
+        site(429, "0.050s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(400, "0.020s"),
+        site(405, "0.010s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(500, "0.200s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(503, "0.050s"),
+        # The balancer's own failures.
+        site(503, "0.010s", "failed_to_connect_to_backend", PUBLIC),
+        site(502, "0.005s", "failed_to_pick_backend", PUBLIC),
+        site(None, "0s", "internal_error"),
+        # Cloud CDN's revalidation sub-entry: no status, which compares as 0.
+        site(None, "0s", "response_from_cache_validated"),
+        site(None, "0.050s", "client_disconnected_before_any_response", PUBLIC),
+        site(200, "0.300s", "client_disconnected_after_partial_response"),
+        site(404, "0.100s", "client_disconnected_after_partial_response"),
+        site(200, "1.250s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(200, "1.5s", "response_from_cache"),
+        site(404, "1.0s"),
+        site(200, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT, previewSecurityPolicy=ARMOR_PREVIEW),
+        site(404, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT, previewSecurityPolicy=ARMOR_PREVIEW),
+        site(404, "0.040s", previewSecurityPolicy=ARMOR_PREVIEW),
+        # Armor's denials also carry a 4xx and denied_by_security_policy; an
+        # outcome other than ACCEPT on a served form is kept on its own too.
+        site(200, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_HOST_DENY),
+        site(404, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_THROTTLED),
+        {**site(200, "0.050s"), "severity": "ERROR"},
+        {**site(404, "0.050s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT), "severity": "ERROR"},
+        {**site(404, "0.050s"), "severity": "CRITICAL"},
+        {**site(200, "0.050s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT), "severity": "WARNING"},
+        # Another backend's 404 is not part of a static site's scan.
+        site(404, "0.020s", backend="trusted-router-control-backend"),
+        site(404, "0.020s", backend="tr-fastpath-edge-backend"),
+    ],
 }
 
 KEPT_ENTRIES = [pytest.param(e, id=f"{group}-{i}") for group, entries in KEPT.items() for i, e in enumerate(entries)]
@@ -463,6 +545,14 @@ HIGH_SEVERITY = [
     for name in NEW_EXCLUSIONS
     for i, entry in enumerate(SAMPLED[name])
     for severity in ("WARNING", "ERROR", "CRITICAL")
+] + [
+    # The balancer logs every 4xx at WARNING, so the static-site exclusion
+    # samples a 404 at WARNING by design; every other entry it samples is held
+    # to the same rule as above, and a 404 at ERROR or above is kept.
+    pytest.param({**entry, "severity": severity}, id=f"{STATIC_SITE}-{i}-{severity}")
+    for i, entry in enumerate(SAMPLED[STATIC_SITE])
+    for severity in ("WARNING", "ERROR", "CRITICAL")
+    if severity != "WARNING" or entry["httpRequest"]["status"] != 404
 ]
 
 
@@ -474,7 +564,7 @@ def test_no_exclusion_matches_an_otherwise_sampled_entry_at_warning_or_above(ent
 
 def test_the_new_exclusions_still_match_default_info_and_notice() -> None:
     for name in ("sample_edge_lb_request_successes", "sample_control_plane_access_successes",
-                 "sample_control_plane_routine_lines"):
+                 "sample_control_plane_routine_lines", STATIC_SITE):
         entry = SAMPLED[name][0]
         for severity in (None, "DEFAULT", "INFO", "NOTICE"):
             assert matches(_filter(name), {**entry, "severity": severity}), (name, severity)
@@ -522,6 +612,91 @@ def test_the_check_fails_a_filter_that_would_sample_failures() -> None:
     assert matches(loose, {**run_line(SETTLE), "severity": "WARNING"})
     loose = _filter("sample_control_plane_access_successes").replace("[23][0-9][0-9]", "[0-9]+")
     assert matches(loose, access("503 Service Unavailable"))
+
+
+def _loosened(filter_text: str, pattern: str, replacement: str = "") -> str:
+    loose, count = re.subn(pattern, replacement, filter_text)
+    assert count == 1, (pattern, count)
+    return loose
+
+
+# Each guard of the static-site exclusion, and entries that guard alone
+# keeps: with the guard taken out, each would be sampled.
+STATIC_SITE_GUARDS = [
+    # LB logs put every status of 400 or more at WARNING, which the 404
+    # branch admits, so its status is what keeps the other 4xx and the 5xx.
+    pytest.param(r"httpRequest\.status=404 AND ", [
+        site(500, "0.200s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(503, "0.050s"),
+        site(403, "0.030s"),
+        site(429, "0.050s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+    ], id="status-404"),
+    # Cloud Logging compares a missing status as 0, so without the lower
+    # bound status<400 would sample Cloud CDN's revalidation sub-entry, which
+    # has none and a statusDetails the exclusion otherwise admits.
+    pytest.param(r"httpRequest\.status>=200 AND ", [
+        site(None, "0s", "response_from_cache_validated"),
+        {**site(None, "0.020s", "response_from_cache_validated", PUBLIC), "severity": "DEFAULT"},
+    ], id="status-lower-bound"),
+    # At INFO, so only the upper bound stands between them and the sample.
+    pytest.param(r" AND httpRequest\.status<400", [
+        {**site(503, "0.050s"), "severity": "INFO"},
+        {**site(403, "0.030s"), "severity": "INFO"},
+    ], id="status-upper-bound"),
+    pytest.param(r"\n\s*AND httpRequest\.latency<[^\n]+", [
+        site(200, "1.250s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(200, "1.5s", "response_from_cache"),
+        site(404, "1.0s"),
+    ], id="latency"),
+    pytest.param(r"\n\s*AND resource\.labels\.backend_service_name=[^\n]+", [
+        site(404, "0.020s", backend="trusted-router-control-backend"),
+        site(404, "0.020s", backend="tr-fastpath-edge-backend"),
+    ], id="backend"),
+    pytest.param(r"\n\s*AND jsonPayload\.statusDetails=[^\n]+", [
+        site(404, "0.100s", "client_disconnected_after_partial_response"),
+        site(200, "0.300s", "client_disconnected_after_partial_response"),
+    ], id="status-details"),
+    pytest.param(r"\n\s*AND NOT jsonPayload\.previewSecurityPolicy:\*", [
+        site(404, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT, previewSecurityPolicy=ARMOR_PREVIEW),
+        site(404, "0.040s", previewSecurityPolicy=ARMOR_PREVIEW),
+    ], id="armor-preview"),
+    pytest.param(r"\n\s*AND \(NOT jsonPayload\.enforcedSecurityPolicy:\*[^\n]+", [
+        site(200, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_HOST_DENY),
+        site(404, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_THROTTLED),
+    ], id="armor-enforced"),
+    pytest.param(r" AND severity<ERROR", [
+        {**site(404, "0.050s"), "severity": "ERROR"},
+        {**site(404, "0.050s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT), "severity": "CRITICAL"},
+    ], id="severity-404"),
+    pytest.param(r" AND severity<WARNING", [
+        {**site(200, "0.050s"), "severity": "ERROR"},
+        {**site(200, "0.050s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT), "severity": "WARNING"},
+    ], id="severity-2xx-3xx"),
+]
+
+
+@pytest.mark.parametrize("pattern,entries", STATIC_SITE_GUARDS)
+def test_each_static_site_guard_keeps_what_it_guards(pattern: str, entries: list[dict[str, Any]]) -> None:
+    f = _filter(STATIC_SITE)
+    loose = _loosened(f, pattern)
+    for entry in entries:
+        assert not matches_either_way(f, entry), entry
+        assert matches_either_way(loose, entry), entry
+
+
+def test_static_site_armor_guard_names_the_outcome_not_the_field() -> None:
+    # The public site's policy logs enforcedSecurityPolicy, outcome ACCEPT, on
+    # every request it passes to the backend; a guard on the field's presence
+    # would sample no cache miss and none of a scan's 404s.
+    f = _filter(STATIC_SITE)
+    presence = _loosened(f, r"\(NOT jsonPayload\.enforcedSecurityPolicy:\* OR [^)\n]+\)",
+                         "NOT jsonPayload.enforcedSecurityPolicy:*")
+    for entry in SAMPLED[STATIC_SITE]:
+        assert matches(f, entry), entry
+    accepted = [e for e in SAMPLED[STATIC_SITE] if "enforcedSecurityPolicy" in e["jsonPayload"]]
+    assert accepted
+    for entry in accepted:
+        assert not matches(presence, entry), entry
 
 
 # --- The evaluator follows Cloud Logging's rules -------------------------------
@@ -677,6 +852,23 @@ def test_edge_balancer_sampling_is_scoped_to_the_edge_and_keeps_failures() -> No
     backend = (ROOT / "infra/fastpath_edge_backend.tf").read_text()
     block = backend[backend.index('resource "google_compute_backend_service" "fastpath_edge"'):]
     assert "sample_rate" not in block
+
+
+def test_static_site_sampling_is_scoped_to_the_two_site_backends() -> None:
+    f = _filter(STATIC_SITE)
+    assert 'logName="projects/quill-cloud-proxy/logs/requests"' in f
+    assert 'resource.type="http_load_balancer"' in f
+    backends = re.search(r"resource\.labels\.backend_service_name=\(([^)]*)\)", f)
+    assert backends and set(re.findall(r'"([^"]+)"', backends.group(1))) == {EXCHANGE, PUBLIC}
+    # Answered by the backend or by Cloud CDN; client disconnects, byte range
+    # forms and the balancer's own failures stay whole.
+    details = re.search(r"jsonPayload\.statusDetails=\(([^)]*)\)", f)
+    assert details and set(re.findall(r'"([^"]+)"', details.group(1))) == {
+        "response_sent_by_backend", "response_from_cache", "response_from_cache_validated",
+    }
+    # 1 s, the edge exclusion's bound.
+    assert 'httpRequest.latency<"1s"' in f
+    assert "sample(insertId, 0.9)" in f
 
 
 def test_tdx_quote_sampling_keeps_every_boot_report() -> None:

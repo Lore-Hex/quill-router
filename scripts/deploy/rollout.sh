@@ -783,6 +783,12 @@ ENV_VARS=(
   # section 8.3's gate passes for the mode. A literal, so no revision
   # inherits it; off is the way back.
   "TR_FASTPATH_PILOT_KEY_WINDOWS=off"
+  # Whether the Go edge decides a budget_strict key with no limit
+  # (docs/design/fast-admission-e2-strict-keys.md section 5): off, shadow,
+  # enforce. Off until the edge release that reads the member is pinned on
+  # both nodes; shadow until section 6's gate passes. A literal, so no
+  # revision inherits it; off is the way back.
+  "TR_FASTPATH_PILOT_STRICT_KEYS=off"
   # Streams on the lease (docs/design/fast-admission-streams.md section
   # 5.4): the pilot's switch, which moves only once increment 2b is pinned on
   # every owner and front door (docs/runbooks/fastpath-streams.md), and the

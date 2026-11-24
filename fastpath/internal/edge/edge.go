@@ -293,6 +293,12 @@ func New(cfg Config) (*Edge, error) {
 		if d.Cache == nil || d.Decides == nil || d.Rows == nil {
 			return nil, errors.New("edge: the decide path needs its cache, the decide table and the rows")
 		}
+		if d.CacheWait < 0 || d.CacheWait > MaxCacheWait {
+			return nil, fmt.Errorf("edge: the decide path's cache wait is 0 to %v, not %v", MaxCacheWait, d.CacheWait)
+		}
+		if _, ok := d.Cache.(KeyCacheWaiter); d.CacheWait > 0 && !ok {
+			return nil, errors.New("edge: the decide path's cache wait needs a cache that can wait for a read")
+		}
 		e.decider = newDecider(*d, cfg.Logf, cfg.Clock, cfg.ShadowEvery)
 		e.decider.ticketGrace = cfg.AsyncTicketGrace
 		u := *cfg.Upstream

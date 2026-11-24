@@ -617,8 +617,9 @@ only (widening §8.1): a node up since before the step carries keys from
 before it, so while every line is excluded `distinct_keys` is 0 and the
 bar cannot be read until a node's shadow restarts after the step's start
 (the next node cycle, or a deploy).
-The decide line ends with its pass mix, counted beside `passed`, each pass
-once, and changing nothing the edge answers or passes. `float_at={...}`
+The decide line carries its pass mix, counted beside `passed`, each pass
+once, and after it the key cache's counts; neither changes anything the
+edge answers or passes. `float_at={...}`
 counts the `body.float` passes by where the first float is
 (`gwauth/float_at.go`): `provider.max_price` (only a float inside a limit's
 list or object: a limit itself is no `body.float`, the evaluator reads it
@@ -655,6 +656,20 @@ the edge cannot tell apart, so while the switch cannot be read
 `passed_enabled` falls to 0 without `passed_unknown` rising.
 `fastpathwatch edge` sums the three maps under `decide.by_name`, and
 `enabled_unknown` and `mix_dropped` under `decide.counts`.
+After the pass mix come the key cache's counts: `cache_miss={...}`, the
+lookups that found the key's cache entry cold or stale, by why (`cold.new`
+the key's first sighting on the node since its process started,
+`cold.evicted` dropped by Python's refusal of the key or of a key of its
+workspace, `cold.displaced` the size bound, `cold.negative` a lookup hash
+with no key past its 5 s, `cold.read_failed` and `cold.read_timeout` a
+first read that failed, `stale.idle` unused for more than a minute so not
+refreshed, `stale.unrefreshed` in use but no refresh reached it,
+`stale.read_failed` and `stale.read_timeout` its last read failed); with no
+wait each is a `cache.key` pass, so the map says why those passed.
+`cache_wait={...}` counts the read-through's waits (`-edge-decide-cache-wait`,
+`fastpath-deploy.md`, "The decide cache's wait") by what they came to
+(`filled`, `unfilled`, `timed_out`), and `cache_wait_ms_sum` and
+`cache_wait_ms_max` their time; all are empty with the wait off.
 A row is per cloud and region: another region's row waits on `rollout.sh`
 rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves
@@ -718,6 +733,31 @@ moves in `rollout.sh`, a Python deploy, `off` straight to `enforce`; the
 `alert` stage is skipped, and the decide rows are untouched. `edge_decide_window_unread` (`fastpath-alerts.md`) watches the
 reads once it is on.
 
+## 7. Strict keys with no limit
+
+A `budget_strict` key with no lifetime limit and no window is gated by the
+setting `fastpath_pilot_strict_keys`, which the edge policy carries
+(`docs/design/fast-admission-e2-strict-keys.md` §5). Absent, which is off,
+every strict key passes `key.budget_strict` as before. `shadow` composes a
+limitless strict key for the shadow and still passes it `key.budget_strict`;
+`enforce` decides it as an uncapped key, with no key hold. A strict key with
+any limit passes under every setting, as before. Under `enforce` a limitless
+strict key whose `tr_key_limit` shard 0 the key's read found missing,
+mirroring a limit, or not read passes `key.budget_strict_row.missing`,
+`.limited` or `.unread`, one whose `usage_shard_count` is not 1 passes
+`key.budget_strict_shards`, and Python answers it.
+
+The shadow line's `strict` map counts the classes of these keys' decisions.
+`fastpathwatch edge` gives `strict_compared`, `strict_agree_full`,
+`strict_would_admit_python_refused` and `strict_python_busy`. Python's
+strict-budget-busy 503 is `strict.python_busy`, never a page; any refusal of
+what Go would admit is the critical `would_admit_python_refused`.
+
+Before the setting moves from `shadow` to `enforce` (§6 of the design): 20,000
+`strict_compared` with zero `strict_would_admit_python_refused`. It moves in
+`rollout.sh`, a Python deploy, only once the edge release that reads the
+member is pinned on both nodes.
+
 ## The way back, fastest first
 
 As §9 and decision 17 give it. Each step leaves the ones after it
@@ -737,6 +777,9 @@ untouched, and what the edge admitted settles through Python as before.
    back to `off` in `scripts/deploy/rollout.sh`, a Python deploy; the edge
    passes every windowed key `key.key_window` from its first policy without
    the member, within the policy's 60 s life (§6).
+   **Strict keys only**, every workspace: `fastpath_pilot_strict_keys` back
+   to `off` in `scripts/deploy/rollout.sh`, a Python deploy; the edge passes
+   every strict key `key.budget_strict` within the policy's 60 s life (§7).
    Under the wildcard, `decide off WORKSPACE` writes an own off row,
    which wins over it; `decide status WORKSPACE` exits 0 with `via` `own`.
    Never `decide delete` an off row to undo a step under an on wildcard:

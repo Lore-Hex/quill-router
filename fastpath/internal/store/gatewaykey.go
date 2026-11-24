@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"cloud.google.com/go/spanner"
@@ -21,6 +22,9 @@ import (
 // (storage_gcp_broadcast.py) says whether the workspace has a broadcast
 // destination, without reading a destination. The boot is not folded in:
 // the edge reads boots by their key ids (ReadBoot) and caches them apart.
+// Nor is a strict key's counter row: the key's id (its hash) is selected so
+// that, for a body that says budget_strict, a point read of its tr_key_limit
+// shard 0 follows (readStrictKeyLimit), and no other key reads that table.
 //
 // A workspace id may contain '#' (an imported one can), so the range of
 // "ws" holds the entities of a workspace "ws#x" too. The BYOK ids are
@@ -28,7 +32,7 @@ import (
 // broadcast EXISTS answers true for such a neighbour's pointer, which is
 // the cautious answer (a workspace with a destination is passed to Python).
 const keyContextSQL = `/* fastpath_key_context */
-SELECT key_record.body, JSON_VALUE(key_record.body, '$.workspace_id') AS range_workspace_id,
+SELECT key_record.id, key_record.body, JSON_VALUE(key_record.body, '$.workspace_id') AS range_workspace_id,
   workspace_record.body,
   ARRAY(
     SELECT byok_record.id
@@ -76,6 +80,72 @@ type KeyContext struct {
 	// BroadcastDestination is whether any broadcast_destination_by_workspace
 	// pointer lies in the workspace's range.
 	BroadcastDestination bool
+	// StrictLimit is the key's tr_key_limit shard-0 row, read only when the
+	// key's body says budget_strict true (StrictLimit.Read).
+	StrictLimit StrictKeyLimit
+}
+
+// StrictKeyLimit is what Python's strict reserve reads of a budget_strict
+// key's counter row (storage_gcp_strict_budget.reserve_strict_key): whether
+// shard 0 exists (Row; without it the reserve is KEY_MISSING, a 402) and
+// whether its mirrored lifetime and window limits, limit_micro and
+// <w>_limit_micro, are all NULL (Limitless; then the reserve's UPDATE
+// matches the row whatever it holds, so it never refuses the key for its
+// budget). Read is false, and the rest with it, for a key whose body does
+// not say budget_strict true: no read was made
+// (docs/design/fast-admission-e2-strict-keys.md section 4.2).
+type StrictKeyLimit struct {
+	Read, Row, Limitless bool
+}
+
+// strictLimitColumns are the mirrored limits Python's strict reserve
+// checks, read as nullable.
+var strictLimitColumns = []string{"limit_micro", "day_limit_micro", "week_limit_micro", "month_limit_micro"}
+
+// bodySaysStrict is whether a key body's budget_strict is the JSON literal
+// true, its last occurrence as Python's json.loads keeps it. Anything else
+// (absent, false, another type, a body that does not decode) reads no
+// row; gwstate decides on the body itself, and passes a key whose strict
+// row was not read.
+func bodySaysStrict(body string) bool {
+	var key struct {
+		BudgetStrict json.RawMessage `json:"budget_strict"`
+	}
+	return json.Unmarshal([]byte(body), &key) == nil && string(key.BudgetStrict) == "true"
+}
+
+// readStrictKeyLimit reads a strict key's tr_key_limit shard-0 row by its
+// complete primary key (key_hash, shard), strongly and alone: a point read
+// of one row, only for a key whose body says budget_strict, so no other
+// key's context read touches the counter table.
+func (s *Store) readStrictKeyLimit(ctx context.Context, keyHash string) (StrictKeyLimit, error) {
+	ro := s.client.Single()
+	defer ro.Close()
+	row, err := ro.ReadRowWithOptions(ctx, "tr_key_limit", spanner.Key{keyHash, int64(0)},
+		strictLimitColumns, &spanner.ReadOptions{RequestTag: tag("read-strict-key-limit")})
+	// Only the row's absence is a missing row: another NotFound (no such
+	// table) is a failed read, which leaves the row unread.
+	if errors.Is(err, spanner.ErrRowNotFound) {
+		return StrictKeyLimit{Read: true}, nil
+	}
+	if err != nil {
+		return StrictKeyLimit{}, err
+	}
+	limits := make([]spanner.NullInt64, len(strictLimitColumns))
+	ptrs := make([]any, len(limits))
+	for i := range limits {
+		ptrs[i] = &limits[i]
+	}
+	if err := row.Columns(ptrs...); err != nil {
+		return StrictKeyLimit{}, err
+	}
+	out := StrictKeyLimit{Read: true, Row: true, Limitless: true}
+	for _, l := range limits {
+		if l.Valid {
+			out.Limitless = false
+		}
+	}
+	return out, nil
 }
 
 // ReadKeyContext reads the key a lookup hash names, with its workspace,
@@ -94,11 +164,12 @@ func (s *Store) ReadKeyContext(ctx context.Context, lookupHash string) (KeyConte
 	}, spanner.QueryOptions{RequestTag: tag("read-key-context")})
 	defer iter.Stop()
 	var out KeyContext
+	var keyID string
 	rows := 0
 	err := iter.Do(func(row *spanner.Row) error {
 		rows++
 		var rangeWorkspace, workspace spanner.NullString
-		if err := row.Columns(&out.KeyBody, &rangeWorkspace, &workspace, &out.BYOKIDs,
+		if err := row.Columns(&keyID, &out.KeyBody, &rangeWorkspace, &workspace, &out.BYOKIDs,
 			&out.BroadcastDestination); err != nil {
 			return err
 		}
@@ -113,6 +184,21 @@ func (s *Store) ReadKeyContext(ctx context.Context, lookupHash string) (KeyConte
 	case 0:
 		return KeyContext{}, false, nil
 	case 1:
+		if bodySaysStrict(out.KeyBody) {
+			// A second strong read, after the first, not in its snapshot:
+			// a strict key's limits never go from none to some
+			// (storage_key_patch.StrictKeyFirstLimit), its row mirrors them
+			// in the same commit, and the row is never deleted while the
+			// key exists. So a body read limitless meets a row as limitless
+			// later, and a row present then is present after; a row found
+			// missing that a backfill writes meanwhile only passes. A read
+			// that fails leaves StrictLimit unread, which passes the key
+			// (key.budget_strict_row.unread) until the next refresh, rather
+			// than failing the key's other facts with it.
+			if limit, err := s.readStrictKeyLimit(ctx, keyID); err == nil {
+				out.StrictLimit = limit
+			}
+		}
 		return out, true, nil
 	}
 	// Every join is on a complete primary key: more than one row is not a

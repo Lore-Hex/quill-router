@@ -131,7 +131,7 @@ func TestTheShadowCountsStreamsByTheirStageDReason(t *testing.T) {
 		t.Fatalf("the stream counts: %v", got)
 	}
 	sh.flush()
-	if len(lines) != 1 || !strings.HasSuffix(lines[0], " streams=%s") {
+	if len(lines) != 1 || !strings.Contains(lines[0], " streams=%s ") {
 		t.Fatalf("the period's line: %q", lines)
 	}
 }

@@ -195,7 +195,12 @@ func Defaults() Config {
 			// (docs/design/fast-admission-streams.md section 12.4; pinned
 			// as RecordReapFloor was). No gateway sends a ceiling until
 			// PR 4, so no hold has one until then.
-			RecordCeiling: true},
+			RecordCeiling: true,
+			// Shadow mode for closing a starved shard's leases
+			// (docs/design/billing-503-reduction-2026-11.md, option A):
+			// each starved shard is logged, nothing is closed. -starved-leases
+			// close turns it on once the lines are read.
+			StarvedLeases: owner.StarvedLog},
 		// The control plane gives a call to a front door 1.5 s
 		// (fastpath_front_door_timeout_seconds), the connection's 0.25 s
 		// included, so the front door answers within 1.2 s, in which a
@@ -277,6 +282,11 @@ type EdgeConfig struct {
 	// inserts their rows and answers them. It needs SnapshotURL and
 	// PolicyURL. Off (the default), the edge answers nothing.
 	Decide bool
+	// DecideCacheWait is the decide path's read-through
+	// (edge.DecideConfig.CacheWait): how long a request whose cached key or
+	// credit entry is cold or stale waits for the read that fills it, 0 to
+	// edge.MaxCacheWait. 0, the default, waits for none. It needs Decide.
+	DecideCacheWait time.Duration
 }
 
 func (c Config) valid() error {
@@ -298,6 +308,10 @@ func (c Config) valid() error {
 	case (c.Edge.DecideShadow || c.Edge.Decide) && (c.Edge.SnapshotURL == "" || c.Edge.PolicyURL == ""):
 		return errors.New("service: the edge's decide shadow and decide path decide from the routing snapshot and " +
 			"the edge policy, which need their URLs")
+	case c.Edge.DecideCacheWait < 0 || c.Edge.DecideCacheWait > edge.MaxCacheWait:
+		return fmt.Errorf("service: the edge's decide cache wait is 0 to %v", edge.MaxCacheWait)
+	case c.Edge.DecideCacheWait > 0 && !c.Edge.Decide:
+		return errors.New("service: the edge's decide cache wait is the decide path's, which needs -edge-decide")
 	case c.Edge.Address != "" && !c.Admission:
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
@@ -573,6 +587,7 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 	}
 	if cfg.Edge.Decide {
 		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}
+		decide.CacheWait = cfg.Edge.DecideCacheWait
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
 		Clock: cfg.edgeClock, Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy,

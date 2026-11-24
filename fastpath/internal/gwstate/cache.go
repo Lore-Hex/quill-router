@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
@@ -71,7 +74,8 @@ type Status uint8
 
 const (
 	// Cold: nothing is held, or what was is past use. The request passes
-	// (cache.key, cache.workspace) and a read fills the entry behind it.
+	// (cache.key, cache.workspace) and a read fills the entry behind it;
+	// under LookupWithin it first waits a bounded time for that read.
 	Cold Status = iota
 	// Fresh: read within MaxAge (a negative entry within NegativeFor).
 	Fresh
@@ -98,6 +102,52 @@ func (s Status) String() string {
 	return "unknown"
 }
 
+// Why a lookup found its key entry cold or stale (Read.KeyMiss), so that the
+// requests it passes (cache.key) can be counted by cause (the decide line's
+// cache_miss). Nothing is decided on it.
+const (
+	// MissNew: no entry, and the cache remembers dropping none for the
+	// lookup hash: its first lookup since the process started, or since the
+	// cache forgot dropping it (it remembers the last Size it dropped).
+	MissNew = "cold.new"
+	// MissEvicted: dropped by Evict or EvictWorkspace, Python's refusal of
+	// the key, or of a key of its workspace.
+	MissEvicted = "cold.evicted"
+	// MissDisplaced: dropped by the size bound.
+	MissDisplaced = "cold.displaced"
+	// MissNegative: a negative entry (no key) past NegativeFor.
+	MissNegative = "cold.negative"
+	// MissReadFailed and MissReadTimeout: never filled, the last read of the
+	// lookup hash having failed (MissReadTimeout: at ReadTimeout).
+	MissReadFailed  = "cold.read_failed"
+	MissReadTimeout = "cold.read_timeout"
+	// MissIdle: stale, unused for more than UsedWithin before this lookup,
+	// so no refresh read it: a key whose requests come further apart than
+	// that on this node.
+	MissIdle = "stale.idle"
+	// MissUnrefreshed: stale while in use, no refresh having read it since
+	// MaxAge (a pass given up, Counters.Unrefreshed).
+	MissUnrefreshed = "stale.unrefreshed"
+	// MissRefreshFailed and MissRefreshTimeout: stale, its last read having
+	// failed (MissRefreshTimeout: at ReadTimeout).
+	MissRefreshFailed  = "stale.read_failed"
+	MissRefreshTimeout = "stale.read_timeout"
+)
+
+// What LookupWithin's wait came to (Read.Wait).
+const (
+	// WaitFilled: the read answered within the wait, and the key's entry,
+	// and its credit entry when its facts need one, are fresh.
+	WaitFilled = "filled"
+	// WaitUnfilled: the read answered within the wait, and left an entry
+	// cold or stale (it failed, an eviction discarded it, or the credit
+	// read it needed found every read busy).
+	WaitUnfilled = "unfilled"
+	// WaitTimedOut: the wait ended first; the read goes on, and fills the
+	// entry for a later request.
+	WaitTimedOut = "timed_out"
+)
+
 // Read is what the cache holds for a lookup hash at a request's instant.
 // The facts' slices are shared with the cache and with other requests:
 // they are read, never changed.
@@ -118,17 +168,27 @@ type Read struct {
 	CreditRows   bool
 	CreditState  store.CreditState
 	CreditReadAt time.Time
+	// KeyMiss is why the key's entry was cold or stale when the request
+	// looked it up (a Miss* name), "" when it was fresh; under LookupWithin,
+	// the first look's, whatever the wait made of it.
+	KeyMiss string
+	// Wait is what LookupWithin's wait came to (a Wait* name), "" when it
+	// waited for nothing; Waited is how long it waited.
+	Wait   string
+	Waited time.Duration
 }
 
 // Usable is whether the cache lets the request be decided: the key fresh
 // and found, its facts and its workspace's eligible, and its workspace's
-// credit entry fresh with complete rows. It is necessary, not sufficient:
-// the key's expiry at the request's instant (KeyFacts.At) and what the
-// credit rows say (CreditState's pause, latch, debt, tier and refusal) are
-// the gate's to read.
+// credit entry fresh with complete rows, and no LookupWithin wait that
+// timed out (what it holds was seen at or past the wait's deadline, or not
+// at all). It is necessary, not sufficient: the key's expiry at the
+// request's instant (KeyFacts.At) and what the credit rows say
+// (CreditState's pause, latch, debt, tier and refusal) are the gate's to
+// read.
 func (r Read) Usable() bool {
-	return r.Key == Fresh && r.Found && r.Facts.Key.Eligible && r.Facts.Workspace.Eligible &&
-		r.Credit == Fresh && r.CreditRows
+	return r.Wait != WaitTimedOut && r.Key == Fresh && r.Found && r.Facts.Key.Eligible &&
+		r.Facts.Workspace.Eligible && r.Credit == Fresh && r.CreditRows
 }
 
 // Counters are a cache's counts since it was made.
@@ -138,10 +198,11 @@ type Counters struct {
 	KeyHits, KeyCold, KeyStale, KeyMissing int64
 	CreditHits, CreditCold, CreditStale    int64
 	// Reads made, ReadFailures those that failed (an entry refreshed or
-	// filled by a failed read keeps what it held, and ages), Dropped the
-	// misses not filled for every read being busy, Voided the reads whose
-	// answer an eviction made while they ran discarded.
-	Reads, ReadFailures, Dropped, Voided int64
+	// filled by a failed read keeps what it held, and ages), ReadTimeouts
+	// those of them that failed at ReadTimeout, Dropped the misses not
+	// filled for every read being busy, Voided the reads whose answer an
+	// eviction made while they ran discarded.
+	Reads, ReadFailures, ReadTimeouts, Dropped, Voided int64
 	// Evictions by Evict and EvictWorkspace; Displaced the keys the size
 	// bound dropped; Unrefreshed the reads a refresh pass gave up when its
 	// context ended.
@@ -151,10 +212,13 @@ type Counters struct {
 // Cache holds the facts of the keys the edge has seen, by lookup hash, and
 // the credit state of their workspaces, for the decide path to gate on
 // without a read of its own (E2, docs/design/fast-admission-e2-decide.md
-// §1 step 3). A lookup never waits for a read: what it misses passes to
+// §1 step 3). Lookup never waits for a read: what it misses passes to
 // Python and is filled in the background, one read per lookup hash or
 // workspace at a time, and Run reads again every entry in use, strongly, so
-// what a request sees is at most MaxAge old or it passes.
+// what a request sees is at most MaxAge old or it passes. LookupWithin, the
+// decide path's read-through (decision 2), waits a bounded time for that
+// same read instead, and what it returns is held to the same rule: an entry
+// is usable only if read within MaxAge of the request's instant.
 //
 // Python's 401, 402 or 403 for a key, or its pause 503, says the facts held
 // may be behind the store's: the edge calls Evict, or EvictWorkspace, and a
@@ -164,9 +228,12 @@ type Cache struct {
 	cfg CacheConfig
 	// reads are every read's turn; refreshes the refresh's share of them.
 	reads, refreshes chan struct{}
-	ctx              context.Context
-	stop             context.CancelFunc
-	wg               sync.WaitGroup
+	// monotonic is LookupWithin's clock, time.Now (its monotonic reading);
+	// a test moves it.
+	monotonic func() time.Time
+	ctx       context.Context
+	stop      context.CancelFunc
+	wg        sync.WaitGroup
 
 	mu sync.Mutex
 	// keys are held by lookup hash; order their uses, the most recent at
@@ -183,12 +250,18 @@ type Cache struct {
 	// or workspace; a refresh registers a read when it begins it.
 	keyReads    map[string]*flight
 	creditReads map[string]*flight
+	// gone remembers the lookup hashes the cache dropped or never filled,
+	// and why (a Miss* name), so that a later miss of one is told from a key
+	// never seen (Read.KeyMiss); at most Size of them, the oldest forgotten
+	// first. Nothing is decided on it.
+	gone      map[string]*list.Element
+	goneOrder *list.List
 
 	keyHits, keyCold, keyStale, keyMissing atomic.Int64
 	creditHits, creditCold, creditStale    atomic.Int64
 	readCount, readFailures, dropped       atomic.Int64
 	voided, evictions, displaced           atomic.Int64
-	unrefreshed                            atomic.Int64
+	unrefreshed, readTimeouts              atomic.Int64
 }
 
 type keyEntry struct {
@@ -197,7 +270,16 @@ type keyEntry struct {
 	facts          Facts
 	readAt, usedAt time.Time
 	elem           *list.Element
+	// failed is why the entry's last read failed (MissRefreshFailed or
+	// MissRefreshTimeout), "" when it answered. stale is why the first
+	// lookup to find it stale found it so, kept until a read answers or
+	// fails, so that the lookups of a burst after it are named alike: the
+	// first's use makes the next look in use.
+	failed, stale string
 }
+
+// goneEntry is a lookup hash the cache dropped or never filled, and why.
+type goneEntry struct{ lookupHash, why string }
 
 // workspace is the workspace the key's facts name, "" for none.
 func (e *keyEntry) workspace() string {
@@ -227,11 +309,16 @@ type creditEntry struct {
 // answer; refresh is a read of an entry held, whose answer is dropped if the
 // entry has gone meanwhile. Evicted are the workspaces evicted while a key's
 // read ran: its answer is discarded if it names one of them, as it may have
-// read before the change Python saw.
+// read before the change Python saw. Done is closed once the read has
+// answered and what it found is held or discarded (a key's first read, once
+// the credit read it begins after it has too), for LookupWithin to wait on.
 type flight struct {
 	void, refresh bool
 	evicted       []string
+	done          chan struct{}
 }
+
+func newFlight(refresh bool) *flight { return &flight{refresh: refresh, done: make(chan struct{})} }
 
 // NewCache makes a cache; Run refreshes it, and Close stops its reads.
 func NewCache(cfg CacheConfig) (*Cache, error) {
@@ -267,10 +354,10 @@ func NewCache(cfg CacheConfig) (*Cache, error) {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	return &Cache{cfg: cfg, reads: make(chan struct{}, cfg.Reads),
-		refreshes: make(chan struct{}, max(1, cfg.Reads-cfg.Reads/4)), ctx: ctx, stop: stop,
+		refreshes: make(chan struct{}, max(1, cfg.Reads-cfg.Reads/4)), monotonic: time.Now, ctx: ctx, stop: stop,
 		keys: map[string]*keyEntry{}, order: list.New(), credits: map[string]*creditEntry{},
 		members: map[string]map[string]struct{}{}, keyReads: map[string]*flight{},
-		creditReads: map[string]*flight{}}, nil
+		creditReads: map[string]*flight{}, gone: map[string]*list.Element{}, goneOrder: list.New()}, nil
 }
 
 // Close stops the cache's reads and waits for those running to end; it is
@@ -284,18 +371,109 @@ func (c *Cache) Close() {
 // one clock reading (decision 15). It never waits: a cold or stale entry is
 // returned as such, and a read of it starts unless one is running.
 func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
+	r, _ := c.lookup(lookupHash, now, true)
+	return r
+}
+
+// LookupWithin is Lookup, and then, when the key's entry or the credit
+// entry its facts need was cold or stale and a read of it is running (the
+// lookup's own, or one already running), a wait of at most wait for that
+// read to answer, after which what the cache holds then is returned, judged
+// at now as Lookup judges it. It is the decide path's read-through
+// (docs/design/fast-admission-e2-decide.md decision 2): a request whose
+// entry was cold or stale is decided on the facts that read found, when it
+// answers in time, rather than passed. Nothing is usable that Lookup at now
+// would not call usable once the read is held: an entry read within MaxAge
+// of now, which an eviction while the read ran leaves cold (the read is
+// discarded), a revoked key's facts ineligible, a lookup hash with no key
+// a fresh negative entry. A wait that ends first returns the first look
+// (WaitTimedOut), and the read goes on in the background, as Lookup's does.
+// A miss that finds every read busy, or a fresh entry, waits for nothing.
+//
+// The wait ends at a deadline, wait after the call, and nothing seen at or
+// past it is taken, on every path: a first look that ends at or past it
+// (the lookup kept waiting for the cache's lock while a read landed, say),
+// a read that answers then (a select with the read done and the timer
+// fired may take either) and a last look that ends then each return the
+// first look, timed out, which is never usable (Read.Usable). A first look
+// that ends before the deadline and finds every entry fresh, or no read it
+// can wait for, is returned as Lookup's, with no wait.
+//
+// The wait holds no lock and no read: other lookups go on, and a lookup of
+// the same key waits on the same read. Its time is the process's monotonic
+// clock (monotonic), not the cache's Clock, as it bounds the request's own
+// time.
+func (c *Cache) LookupWithin(lookupHash string, now time.Time, wait time.Duration) Read {
+	began := c.monotonic()
+	r, flights := c.lookup(lookupHash, now, true)
+	if wait <= 0 {
+		return r
+	}
+	deadline := began.Add(wait)
+	late := func() Read {
+		r.Wait, r.Waited = WaitTimedOut, c.monotonic().Sub(began)
+		return r
+	}
+	if !c.monotonic().Before(deadline) {
+		return late()
+	}
+	if len(flights) == 0 {
+		return r
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	for _, f := range flights {
+		select {
+		case <-f.done:
+		case <-timer.C:
+			return late()
+		}
+	}
+	if !c.monotonic().Before(deadline) {
+		return late()
+	}
+	again, _ := c.lookup(lookupHash, now, false)
+	if !c.monotonic().Before(deadline) {
+		return late()
+	}
+	again.KeyMiss, again.Wait, again.Waited = r.KeyMiss, WaitUnfilled, c.monotonic().Sub(began)
+	if again.Key == Fresh && again.Credit != Cold && again.Credit != Stale {
+		again.Wait = WaitFilled
+	}
+	return again
+}
+
+// lookup is Lookup's look; c.mu is taken. first is a request's look: it is
+// counted, and a cold or stale entry's read is started unless one is
+// running, the reads to wait for returned (none when every read was busy).
+// A look that is not first (LookupWithin's after its wait) counts and
+// starts nothing.
+func (c *Cache) lookup(lookupHash string, now time.Time, first bool) (Read, []*flight) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var flights []*flight
+	wait := func(f *flight) {
+		if f != nil {
+			flights = append(flights, f)
+		}
+	}
 	e := c.keys[lookupHash]
+	miss := ""
 	if e != nil && !e.found && now.Sub(e.readAt) > c.cfg.NegativeFor {
-		c.remove(e)
-		e = nil
+		c.remove(e, MissNegative)
+		e, miss = nil, MissNegative
 	}
 	if e == nil {
-		c.keyCold.Add(1)
-		c.startKey(lookupHash)
-		return Read{}
+		if miss == "" {
+			miss = c.recall(lookupHash)
+		}
+		if first {
+			c.keyCold.Add(1)
+			wait(c.startKey(lookupHash))
+		}
+		return Read{KeyMiss: miss}, flights
 	}
+	idle := now.Sub(e.usedAt)
 	if now.After(e.usedAt) {
 		e.usedAt = now
 	}
@@ -303,9 +481,15 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 	r := Read{Key: Fresh, Found: e.found, Facts: e.facts, KeyReadAt: e.readAt, Credit: Unneeded}
 	switch {
 	case now.Sub(e.readAt) > c.cfg.MaxAge:
-		r.Key = Stale
-		c.keyStale.Add(1)
-		c.startKey(lookupHash)
+		if e.stale == "" {
+			e.stale = c.staleWhy(e, idle)
+		}
+		r.Key, r.KeyMiss = Stale, e.stale
+		if first {
+			c.keyStale.Add(1)
+			wait(c.startKey(lookupHash))
+		}
+	case !first:
 	case !e.found:
 		c.keyMissing.Add(1)
 		c.keyHits.Add(1)
@@ -314,7 +498,7 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 	}
 	ws := e.credit()
 	if ws == "" {
-		return r
+		return r, flights
 	}
 	ce := c.credits[ws]
 	if ce != nil && !ce.rows && now.Sub(ce.readAt) > c.cfg.NegativeFor {
@@ -323,9 +507,11 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 	}
 	if ce == nil {
 		r.Credit = Cold
-		c.creditCold.Add(1)
-		c.startCredit(ws)
-		return r
+		if first {
+			c.creditCold.Add(1)
+			wait(c.startCredit(ws))
+		}
+		return r, flights
 	}
 	// Whether the entry is fresh is judged here, at now, and only here:
 	// startCredit reads it unless a read is running, whatever the cache's
@@ -334,14 +520,64 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 		ce.usedAt = now
 	}
 	r.Credit, r.CreditRows, r.CreditState, r.CreditReadAt = Fresh, ce.rows, ce.state, ce.readAt
-	if now.Sub(ce.readAt) > c.cfg.MaxAge {
+	switch {
+	case now.Sub(ce.readAt) > c.cfg.MaxAge:
 		r.Credit = Stale
-		c.creditStale.Add(1)
-		c.startCredit(ws)
-	} else {
+		if first {
+			c.creditStale.Add(1)
+			wait(c.startCredit(ws))
+		}
+	case first:
 		c.creditHits.Add(1)
 	}
-	return r
+	return r, flights
+}
+
+// staleWhy is why a key entry is stale, unused for idle before the lookup
+// that found it so; c.mu is held. A failed last read is named first: the
+// entry was read and the read failed, however long it had gone unused.
+func (c *Cache) staleWhy(e *keyEntry, idle time.Duration) string {
+	switch {
+	case e.failed != "":
+		return e.failed
+	case idle > c.cfg.UsedWithin:
+		return MissIdle
+	}
+	return MissUnrefreshed
+}
+
+// remember records that the cache dropped a lookup hash, or never filled
+// it, and why; c.mu is held. The oldest is forgotten past Size.
+func (c *Cache) remember(lookupHash, why string) {
+	if el := c.gone[lookupHash]; el != nil {
+		el.Value.(*goneEntry).why = why
+		c.goneOrder.MoveToFront(el)
+		return
+	}
+	if len(c.gone) >= c.cfg.Size {
+		back := c.goneOrder.Back()
+		delete(c.gone, back.Value.(*goneEntry).lookupHash)
+		c.goneOrder.Remove(back)
+	}
+	c.gone[lookupHash] = c.goneOrder.PushFront(&goneEntry{lookupHash: lookupHash, why: why})
+}
+
+// recall is why a lookup hash the cache holds no entry for is cold: what
+// remember last recorded of it, or MissNew; c.mu is held.
+func (c *Cache) recall(lookupHash string) string {
+	if el := c.gone[lookupHash]; el != nil {
+		return el.Value.(*goneEntry).why
+	}
+	return MissNew
+}
+
+// forget drops what remember recorded of a lookup hash, now filled; c.mu is
+// held.
+func (c *Cache) forget(lookupHash string) {
+	if el := c.gone[lookupHash]; el != nil {
+		delete(c.gone, lookupHash)
+		c.goneOrder.Remove(el)
+	}
 }
 
 // Peek is the workspace the key held for a lookup hash names ("" when the
@@ -370,12 +606,15 @@ func (c *Cache) Evict(lookupHash string) {
 	defer c.mu.Unlock()
 	c.evictions.Add(1)
 	c.voidKey(lookupHash)
+	// Remembered held or not: a read of it running is discarded, so its
+	// next lookup is cold for the eviction.
+	c.remember(lookupHash, MissEvicted)
 	e := c.keys[lookupHash]
 	if e == nil {
 		return
 	}
 	ws := e.facts.Key.WorkspaceID
-	c.remove(e)
+	c.remove(e, MissEvicted)
 	if ws != "" {
 		c.evictWorkspace(ws)
 	}
@@ -399,7 +638,7 @@ func (c *Cache) evictWorkspace(workspace string) {
 		delete(c.creditReads, workspace)
 	}
 	for hash := range c.members[workspace] {
-		c.remove(c.keys[hash])
+		c.remove(c.keys[hash], MissEvicted)
 	}
 	for _, f := range c.keyReads {
 		f.evicted = append(f.evicted, workspace)
@@ -414,11 +653,12 @@ func (c *Cache) voidKey(lookupHash string) {
 }
 
 // remove drops a key entry, and its workspace's credit entry when no other
-// key held needs it.
-func (c *Cache) remove(e *keyEntry) {
+// key held needs it, remembering why (a Miss* name).
+func (c *Cache) remove(e *keyEntry, why string) {
 	delete(c.keys, e.lookupHash)
 	c.order.Remove(e.elem)
 	c.unmember(e.lookupHash, e.workspace())
+	c.remember(e.lookupHash, why)
 }
 
 func (c *Cache) unmember(lookupHash, workspace string) {
@@ -446,44 +686,57 @@ func (c *Cache) member(lookupHash, workspace string) {
 }
 
 // startKey starts a read of a key unless one is running or every read is
-// busy; c.mu is held. The key's first read reads its workspace's credit
-// rows after it, with the same turn of the reads.
-func (c *Cache) startKey(lookupHash string) {
-	if c.keyReads[lookupHash] != nil || !c.takeRead() {
-		return
+// busy; c.mu is held. It returns the read running, the one it started or
+// the one it found, nil when every read was busy. The key's first read
+// reads its workspace's credit rows after it, with the same turn of the
+// reads, and is done once both have answered.
+func (c *Cache) startKey(lookupHash string) *flight {
+	if f := c.keyReads[lookupHash]; f != nil {
+		return f
 	}
-	f := &flight{}
+	if !c.takeRead() {
+		return nil
+	}
+	f := newFlight(false)
 	c.keyReads[lookupHash] = f
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		defer c.releaseRead()
+		defer close(f.done)
 		if ws, at := c.readKey(lookupHash, f); ws != "" {
 			c.mu.Lock()
 			cf := c.beginCredit(ws, at)
 			c.mu.Unlock()
 			if cf != nil {
 				c.readCredit(ws, cf)
+				close(cf.done)
 			}
 		}
 	}()
+	return f
 }
 
 // startCredit starts a read of a workspace's credit rows, which a lookup
 // found cold or stale, unless one is running or every read is busy; c.mu is
-// held.
-func (c *Cache) startCredit(workspace string) {
-	if c.creditReads[workspace] != nil || !c.takeRead() {
-		return
+// held. It returns the read running, nil when every read was busy.
+func (c *Cache) startCredit(workspace string) *flight {
+	if f := c.creditReads[workspace]; f != nil {
+		return f
 	}
-	f := &flight{}
+	if !c.takeRead() {
+		return nil
+	}
+	f := newFlight(false)
 	c.creditReads[workspace] = f
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		defer c.releaseRead()
+		defer close(f.done)
 		c.readCredit(workspace, f)
 	}()
+	return f
 }
 
 // beginCredit registers a read of a workspace's credit rows, after its
@@ -499,7 +752,7 @@ func (c *Cache) beginCredit(workspace string, at time.Time) *flight {
 			return nil
 		}
 	}
-	f := &flight{}
+	f := newFlight(false)
 	c.creditReads[workspace] = f
 	return f
 }
@@ -542,6 +795,22 @@ func (c *Cache) readKey(lookupHash string, f *flight) (string, time.Time) {
 		return "", at
 	case err != nil:
 		c.readFailures.Add(1)
+		timeout := timedOut(err)
+		if timeout {
+			c.readTimeouts.Add(1)
+		}
+		if e := c.keys[lookupHash]; e != nil {
+			e.failed, e.stale = MissRefreshFailed, ""
+			if timeout {
+				e.failed = MissRefreshTimeout
+			}
+		} else if !f.refresh {
+			why := MissReadFailed
+			if timeout {
+				why = MissReadTimeout
+			}
+			c.remember(lookupHash, why)
+		}
 		return "", at
 	}
 	e := c.keys[lookupHash]
@@ -550,20 +819,27 @@ func (c *Cache) readKey(lookupHash string, f *flight) (string, time.Time) {
 			return "", at
 		}
 		if len(c.keys) >= c.cfg.Size {
-			c.remove(c.order.Back().Value.(*keyEntry))
+			c.remove(c.order.Back().Value.(*keyEntry), MissDisplaced)
 			c.displaced.Add(1)
 		}
 		e = &keyEntry{lookupHash: lookupHash, usedAt: at}
 		e.elem = c.order.PushFront(e)
 		c.keys[lookupHash] = e
+		c.forget(lookupHash)
 	}
 	was := e.workspace()
-	e.found, e.facts, e.readAt = found, facts, at
+	e.found, e.facts, e.readAt, e.failed, e.stale = found, facts, at, "", ""
 	if ws := e.workspace(); ws != was {
 		c.unmember(lookupHash, was)
 		c.member(lookupHash, ws)
 	}
 	return e.credit(), at
+}
+
+// timedOut is whether a read failed at its deadline (ReadTimeout), as a
+// context's error or Spanner's DeadlineExceeded.
+func timedOut(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded
 }
 
 // readCredit reads a workspace's credit rows and holds what they say,
@@ -589,6 +865,9 @@ func (c *Cache) readCredit(workspace string, f *flight) {
 		return
 	case err != nil:
 		c.readFailures.Add(1)
+		if timedOut(err) {
+			c.readTimeouts.Add(1)
+		}
 		return
 	case len(c.members[workspace]) == 0:
 		return
@@ -670,7 +949,7 @@ func (c *Cache) Refresh(ctx context.Context) {
 			return
 		}
 		c.mu.Lock()
-		f := &flight{refresh: true}
+		f := newFlight(true)
 		switch {
 		case j.key != "" && c.keyReads[j.key] == nil && c.keys[j.key] != nil:
 			c.keyReads[j.key] = f
@@ -691,6 +970,7 @@ func (c *Cache) Refresh(ctx context.Context) {
 			defer c.wg.Done()
 			defer pass.Done()
 			defer c.releaseRefresh()
+			defer close(f.done)
 			if j.key != "" {
 				c.readKey(j.key, f)
 			} else {
@@ -734,8 +1014,8 @@ func (c *Cache) Counters() Counters {
 		KeyHits: c.keyHits.Load(), KeyCold: c.keyCold.Load(), KeyStale: c.keyStale.Load(),
 		KeyMissing: c.keyMissing.Load(), CreditHits: c.creditHits.Load(), CreditCold: c.creditCold.Load(),
 		CreditStale: c.creditStale.Load(), Reads: c.readCount.Load(), ReadFailures: c.readFailures.Load(),
-		Dropped: c.dropped.Load(), Voided: c.voided.Load(), Evictions: c.evictions.Load(),
-		Displaced: c.displaced.Load(), Unrefreshed: c.unrefreshed.Load(),
+		ReadTimeouts: c.readTimeouts.Load(), Dropped: c.dropped.Load(), Voided: c.voided.Load(),
+		Evictions: c.evictions.Load(), Displaced: c.displaced.Load(), Unrefreshed: c.unrefreshed.Load(),
 	}
 }
 

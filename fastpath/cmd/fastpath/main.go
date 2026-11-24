@@ -87,6 +87,10 @@ func run() error {
 	flag.DurationVar(&cfg.Owner.StreamReap.AfterHeartbeat, "stream-reap-after-heartbeat",
 		cfg.Owner.StreamReap.AfterHeartbeat,
 		"a stream's hold is reaped no sooner than its last accepted heartbeat plus this (the control plane's renewal)")
+	flag.Var(&cfg.Owner.StarvedLeases, "starved-leases",
+		"what an owner does with a shard's leases when a request none has room for meets a top-up the store refused "+
+			"for the floor or the allowance (docs/design/billing-503-reduction-2026-11.md): off, log (the default, "+
+			"shadow), or close, which stops them admitting so their next checkpoint returns their free room")
 	flag.DurationVar(&cfg.HandOff, "hand-off", cfg.HandOff,
 		"how long a stopping node's owner has to hand its leases off; 0 hands none off")
 	flag.DurationVar(&cfg.ClockOffset, "clock-offset", cfg.ClockOffset,
@@ -123,6 +127,10 @@ func run() error {
 		"answer the authorizes the edge decides itself: admit through the node's front door, insert the rows and "+
 			"answer (docs/design/fast-admission-e2-decide.md section 1), for the workspaces the decide table names; "+
 			"needs -edge-snapshot-url and -edge-policy-url; every other request still passes to Python")
+	flag.DurationVar(&cfg.Edge.DecideCacheWait, "edge-decide-cache-wait", 0,
+		"how long the decide path waits for the strong read of a key or credit entry its cache holds cold or stale "+
+			"before it passes the request as cache.key (docs/design/fast-admission-e2-decide.md decision 2), at most "+
+			"250ms; needs -edge-decide; 0 waits for none")
 	flag.BoolVar(&cfg.FleetAudit, "fleet-audit", false,
 		"audit every workspace the switch names, an hour a pass, while this node owns the ring key fleet-audit "+
 			"(docs/design/fast-admission-widening.md section 7); needs -roles admission; off audits nothing")

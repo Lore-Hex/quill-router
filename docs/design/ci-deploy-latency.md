@@ -166,6 +166,16 @@ undelivered snapshot has waited four hours while no deploy run carries it or
 exists for main's head. Prices reach production later; code no longer queues
 behind a rollout that ships nothing but prices.
 
+Route holds are the exception (2026-11-24). A hold committed by the refresh
+did nothing until a rollout carried it, so a failing route kept serving
+customers for three to seven hours. A snapshot whose route history gained a
+net endpoint or model removal, or a retirement now in effect, is dispatched
+at once, mixed snapshots included. It still dispatches at most once per main
+head, only while no deploy.yml run on main is in flight (so hourly holds
+coalesce into one rollout rather than queueing several), and only once
+main's head has a green CI run of its own; the rollout's CI gate, mutex,
+lease order and bake rules are unchanged.
+
 No active rollout is interrupted and no lease is cleared. Cancellation remains
 push-only with its existing preparation/test-start/window guards. Workflows
 already queued from older source retain their old behavior; this change does

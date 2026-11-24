@@ -248,10 +248,15 @@ func TestTheAttributionNeverFillsTheCache(t *testing.T) {
 	}
 }
 
-// TestTheDecideLineCarriesThePassMix: the period's line ends with the pass
-// mix, after every field the line carried before it (a reader of the older
-// line finds its fields where they were), reads back as its counts, and the
-// next period's line starts again from nothing.
+// noCache is the decide line's cache counts, which follow the pass mix, for
+// a period whose lookups found every key fresh, or that looked none up.
+const noCache = ` cache_miss={} cache_wait={} cache_wait_ms_sum=0 cache_wait_ms_max=0`
+
+// TestTheDecideLineCarriesThePassMix: the period's line carries the pass
+// mix after every field the line carried before it (a reader of the older
+// line finds its fields where they were), and the cache's counts after it;
+// it reads back as its counts, and the next period's line starts again from
+// nothing.
 func TestTheDecideLineCarriesThePassMix(t *testing.T) {
 	f := authorizeGoldens(t)
 	base := authorizeCaseNamed(t, "answer:app_categories_empty")
@@ -279,12 +284,12 @@ func TestTheDecideLineCarriesThePassMix(t *testing.T) {
 	}
 	if want := ` float_at={"declared.estimated_input_tokens":1,"metadata":1} ` +
 		`passed_enabled={"body.float":2,"boot.signature":1} passed_unknown={"boot.signature":1} enabled_unknown=1 ` +
-		`mix_dropped=0`; !strings.HasSuffix(lines[0], want) ||
+		`mix_dropped=0` + noCache; !strings.HasSuffix(lines[0], want) ||
 		!strings.Contains(lines[0], ` passed={"body.float":2,"boot.signature":2,"workspace.not_enabled":1} `) ||
 		!strings.Contains(lines[0], "insert_call_ms_max=0"+want) {
 		t.Fatalf("the period's line: %s\nwant it to end %s", lines[0], want)
 	}
-	if want := ` float_at={} passed_enabled={} passed_unknown={} enabled_unknown=0 mix_dropped=0`; !strings.HasSuffix(lines[1], want) {
+	if want := ` float_at={} passed_enabled={} passed_unknown={} enabled_unknown=0 mix_dropped=0` + noCache; !strings.HasSuffix(lines[1], want) {
 		t.Fatalf("the next period's line: %s", lines[1])
 	}
 	parsed := parsedLines(t, h.logs)

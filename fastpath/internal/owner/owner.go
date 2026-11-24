@@ -118,6 +118,11 @@ type Config struct {
 	// left this off, and the next (PR 3), pinned once every member runs the
 	// first, sets it in the service's defaults.
 	RecordCeiling bool
+	// StarvedLeases is what the owner does with a starved shard's leases
+	// (starved.go): off (the zero value), log, or close. Logf is where it
+	// logs them; nil, log.Printf.
+	StarvedLeases Starved
+	Logf          func(format string, args ...any)
 }
 
 // StreamReap is a stream hold's reap floor
@@ -166,6 +171,9 @@ func (c Config) validate() error {
 		c.NewAuthorization == nil || c.Clock == nil || c.Enabled == nil || c.KeyStatus < 0 || c.Grace < 0 ||
 		c.FirstHeartbeat < 0 || c.StreamReap.AfterAdmission < 0 || c.StreamReap.AfterHeartbeat < 0 {
 		return errors.New("owner: an epoch, positive durations, an authorization minter, a clock and the switch")
+	}
+	if !c.StarvedLeases.valid() {
+		return fmt.Errorf("owner: starved leases are off, log or close, not %q", c.StarvedLeases)
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
 		return errors.New("owner: a store needs the owner's address, a renewal interval and the expiry window")

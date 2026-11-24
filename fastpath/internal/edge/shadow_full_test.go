@@ -77,16 +77,18 @@ func (c *recordingCache) Counters() gwstate.Counters {
 	n.Unrefreshed += c.more.Unrefreshed
 	n.Dropped += c.more.Dropped
 	n.ReadFailures += c.more.ReadFailures
+	n.ReadTimeouts += c.more.ReadTimeouts
 	return n
 }
 
-// grow adds to the cache's counts.
+// grow adds to the cache's counts; a failed read in each two timed out.
 func (c *recordingCache) grow(unrefreshed, dropped, failures int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.more.Unrefreshed += unrefreshed
 	c.more.Dropped += dropped
 	c.more.ReadFailures += failures
+	c.more.ReadTimeouts += failures / 2
 }
 
 func (c *recordingCache) Evict(lookupHash string) {
@@ -1469,7 +1471,8 @@ func TestTheDecideShadowLogsCountsAlone(t *testing.T) {
 	h.edge.full.flush()
 	logs := h.logs.all()
 	if !strings.Contains(logs, fmt.Sprintf("fastpath edge decide shadow: dropped=0 evictions=0 distinct_keys=1 "+
-		"distinct_keys_since=%d cache_unrefreshed=0 cache_dropped=0 cache_read_failures=0", c.at().Unix())) {
+		"distinct_keys_since=%d cache_unrefreshed=0 cache_dropped=0 cache_read_failures=0 cache_read_timeouts=0",
+		c.at().Unix())) {
 		t.Fatalf("the counts line: %s", logs)
 	}
 	if !strings.Contains(logs, "fastpath edge decide shadow: snapshot=golden-snapshot policy=golden-policy agree_full=1 "+

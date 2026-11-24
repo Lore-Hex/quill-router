@@ -36,14 +36,15 @@ func (c *clock) advance(d time.Duration) time.Time {
 // credit states by workspace, changed by the test, each read counted. A
 // read waits on gate while it is set.
 type fakeReader struct {
-	mu       sync.Mutex
-	keys     map[string]store.KeyContext
-	credits  map[string]store.CreditState
-	keyErr   error
-	gate     chan struct{}
-	started  chan string
-	keyReads map[string]int
-	creditN  map[string]int
+	mu        sync.Mutex
+	keys      map[string]store.KeyContext
+	credits   map[string]store.CreditState
+	keyErr    error
+	creditErr error
+	gate      chan struct{}
+	started   chan string
+	keyReads  map[string]int
+	creditN   map[string]int
 	// delay lengthens every read, widening the windows reads run across.
 	delay time.Duration
 }
@@ -94,6 +95,9 @@ func (r *fakeReader) ReadCreditState(ctx context.Context, workspace string) (sto
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.creditN[workspace]++
+	if r.creditErr != nil {
+		return store.CreditState{}, r.creditErr
+	}
 	state, ok := r.credits[workspace]
 	if !ok {
 		return store.CreditState{}, store.ErrCreditRowsIncomplete
@@ -762,6 +766,7 @@ func TestUsable(t *testing.T) {
 		"credit cold":          func(r *Read) { r.Credit = Cold },
 		"credit unneeded":      func(r *Read) { r.Credit = Unneeded },
 		"no credit rows":       func(r *Read) { r.CreditRows = false },
+		"a wait timed out":     func(r *Read) { r.Wait = WaitTimedOut },
 	} {
 		r := usable
 		change(&r)

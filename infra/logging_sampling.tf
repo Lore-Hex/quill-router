@@ -241,6 +241,70 @@ resource "google_logging_project_exclusion" "sample_control_plane_routine_lines"
   EOT
 }
 
+# The load balancer request log of two backends: the public site's,
+# trusted-router-public-backend, and the token exchange sites' bucket,
+# token-exchange-static. Both serve public pages and static files, and both
+# draw 404 scans: a directory brute force asks for one guessed path per
+# request, each logged as a full entry, so a single scan can multiply the
+# project's ingestion and trip the ingestion step change alert
+# (log_ingestion_cost_guard.tf). Nothing reads these entries one by one: no
+# log metric, alert, script or runbook names either backend's log
+# (docs/runbooks/fastpath-alerts.md reads only the edge's, sampled above),
+# and the balancer's request_count and latency metrics are not log-based.
+#
+# Sampled, 10% kept: responses under 1 s that the backend or Cloud CDN sent
+# (statusDetails response_sent_by_backend, response_from_cache or
+# response_from_cache_validated), with no Cloud Armor rule matched in
+# preview and no enforced outcome but ACCEPT, that are either 2xx or 3xx
+# below WARNING, or exactly 404 below ERROR.
+#
+# The severity guard differs from the four exclusions above on purpose. The
+# balancer logs every status of 400 or more at WARNING, 5xx included, so
+# severity<WARNING would keep every 404 and sample nothing of a scan. The
+# 404 branch admits WARNING and stops at ERROR; the 2xx/3xx branch keeps
+# severity<WARNING. The status bounds are what keep a 5xx; the severity
+# bounds are a backstop that never samples an entry at ERROR or above, nor
+# a success marked WARNING.
+#
+# Kept whole: every other 4xx (Cloud Armor's 403 and 429, the app's 429),
+# every 5xx, every response of 1 s or more, every client disconnect, byte
+# range or other statusDetails form, every preview match, every Armor
+# outcome but ACCEPT, and every entry with no status: the balancer's own
+# failures (internal_error) and Cloud CDN's revalidation sub-entries. Cloud
+# Logging compares a missing status as its default, 0, so status<400 alone
+# would match those; the >=200 bound keeps them.
+#
+# trusted-router-public-backend's Cloud Armor policy (cloud_armor.tf,
+# public_edge) logs enforcedSecurityPolicy with outcome ACCEPT on every
+# request it passes to the backend, so the guard names that outcome rather
+# than the field's presence, which would match no cache miss. That backend
+# already logs a 10% sample of its requests (logging sample rate 0.1, from
+# scripts/deploy/public_surface_edge.sh), so its routine forms fall to 1%
+# and its failures stay at that 10%. A 404 it passes to the
+# trusted-router-public service is also in that service's Cloud Run request
+# log, which keeps every 4xx in full (sample-cloud-run-request-successes
+# samples only status < 400). token-exchange-static has no security policy
+# and logs every request.
+resource "google_logging_project_exclusion" "sample_static_site_request_noise" {
+  project     = local.gcp_project_id
+  name        = "sample-static-site-request-noise"
+  description = "Keep 10% of fast 2xx/3xx and 404 load balancer request logs of the public site and token exchange backends; keep every other 4xx, every 5xx, every call of 1s or longer, every entry without a status, every Cloud Armor preview match or non-ACCEPT outcome and every entry at ERROR or above."
+  filter      = <<-EOT
+    logName="projects/quill-cloud-proxy/logs/requests"
+    AND resource.type="http_load_balancer"
+    AND resource.labels.backend_service_name=("token-exchange-static" OR "trusted-router-public-backend")
+    AND (
+      (httpRequest.status>=200 AND httpRequest.status<400 AND severity<WARNING)
+      OR (httpRequest.status=404 AND severity<ERROR)
+    )
+    AND httpRequest.latency<"1s"
+    AND jsonPayload.statusDetails=("response_sent_by_backend" OR "response_from_cache" OR "response_from_cache_validated")
+    AND NOT jsonPayload.previewSecurityPolicy:*
+    AND (NOT jsonPayload.enforcedSecurityPolicy:* OR jsonPayload.enforcedSecurityPolicy.outcome="ACCEPT")
+    AND sample(insertId, 0.9)
+  EOT
+}
+
 # infra-apply runs as tr-deploy, which holds logging.viewer only. This role
 # lets it manage exclusions and nothing else in Logging (no sinks, buckets or
 # log reads). An owner creates the role and binding once; both are imported.

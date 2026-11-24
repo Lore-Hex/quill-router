@@ -64,9 +64,28 @@ const (
 	// (docs/design/fast-admission-e2-key-windows.md section 4.7): a key whose
 	// spend windows Python's authorize enforces, under mode off or alert; an
 	// alert-only one, under mode off.
-	PassKeyWindow       = "key.key_window"
-	PassKeyWindowAlert  = "key.key_window_alert"
+	PassKeyWindow      = "key.key_window"
+	PassKeyWindowAlert = "key.key_window_alert"
+	// PassKeyBudgetStrict is a budget_strict key: one with a window (its
+	// reason under mode enforce of the key windows' policy; key.key_window
+	// or key.key_window_alert under the others), or a limitless one
+	// (gwstate's StrictLimitless) under the edge policy's
+	// fastpath_pilot_strict_keys off or shadow, whatever gate after the
+	// key's facts passes it, as before the mode existed
+	// (docs/design/fast-admission-e2-strict-keys.md section 5).
 	PassKeyBudgetStrict = "key.budget_strict"
+	// PassKeyBudgetStrictRow is a limitless strict key, under mode enforce,
+	// whose tr_key_limit shard 0 Python's strict reserve would not match as
+	// limitless: PassKeyBudgetStrictRow + gwstate.StrictRowMissing (its
+	// KEY_MISSING 402), + gwstate.StrictRowLimited (a mirrored limit the
+	// cached body does not carry), or + gwstate.StrictRowUnread (no row was
+	// read for it).
+	PassKeyBudgetStrictRow = "key.budget_strict_row."
+	// PassKeyBudgetStrictShards is a limitless strict key, under mode
+	// enforce, whose usage_shard_count is not 1: Python's authorize answers
+	// it 500 (key_usage_shard_count requires one shard for a strict key), a
+	// state only a reshard that failed after its commit could leave.
+	PassKeyBudgetStrictShards = "key.budget_strict_shards"
 	// PassKeyShape: the key's stored body is not one Go reads exactly
 	// (gwstate's key_shape:<field>), such as a usage_shard_count Python's
 	// re-validation would refuse.
@@ -334,6 +353,12 @@ type Decision struct {
 	// request unleased carries a ticket (shape C), which the shadow does not
 	// count as a difference (leasedUnleased).
 	LeasedAnswer bool
+	// StrictLimitless: the decision of a budget_strict key with no limit
+	// (gwstate.KeyFacts.StrictLimitless), composed as an uncapped key's,
+	// no key hold and Stage D disabled. The shadow counts its classes apart
+	// (its strict map), the gate of fastpath_pilot_strict_keys
+	// (docs/design/fast-admission-e2-strict-keys.md section 6).
+	StrictLimitless bool
 }
 
 // WindowCheck is what the edge checks an enforcing windowed key against: the
@@ -371,7 +396,9 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 // compares what the edge would answer for a workspace it does not yet
 // decide; DecideGate is then the decision gate's reason ("" for on; for a
 // windowed key the policy's mode does not cover, PassKeyWindow or
-// PassKeyWindowAlert; else the decide row's PassDecideOff or
+// PassKeyWindowAlert; for a limitless strict key under the policy's
+// fastpath_pilot_strict_keys shadow, PassKeyBudgetStrict; else the decide
+// row's PassDecideOff or
 // PassCacheDecide; else, for a workspace the switch copy does not enable,
 // PassWorkspaceNotEnabled; else, for an async-v1 request while the
 // policy's edge_decide is false, PassAsyncOff), and Pass is it. A windowed
@@ -456,6 +483,12 @@ func Decide(in DecideInputs) Decided {
 	// any gate passes with, as the windows' place in the key's fact order
 	// made it before they joined the cohort.
 	var windowGate string
+	// strictGate is PassKeyBudgetStrict for a limitless strict key under
+	// the policy's fastpath_pilot_strict_keys shadow, once the key's facts
+	// are read: like windowGate, the reason any later gate passes with, and
+	// the decision gate, so the shadow compares the answer the edge does
+	// not give (docs/design/fast-admission-e2-strict-keys.md section 5).
+	var strictGate string
 	// darkStream is a stream the policy does not let the edge decide (no
 	// fastpath_edge_streams, docs/design/fast-admission-streams.md section
 	// 8.4): it passes as body.stream, as it did at the request cohort before
@@ -465,6 +498,9 @@ func Decide(in DecideInputs) Decided {
 	pass := func(reason string) Decided {
 		if windowGate != "" {
 			reason = windowGate
+		}
+		if strictGate != "" {
+			reason = strictGate
 		}
 		if darkStream {
 			reason = gwauth.ReasonStream
@@ -534,7 +570,9 @@ func Decide(in DecideInputs) Decided {
 	}
 	read := in.Lookup(r.APIKeyLookupHash, at)
 	out.Read = read
-	if read.Key != gwstate.Fresh {
+	// A read-through wait that timed out (gwstate.WaitTimedOut) vouches for
+	// nothing it holds, fresh or not: none of its facts is read.
+	if read.Key != gwstate.Fresh || read.Wait == gwstate.WaitTimedOut {
 		return pass(PassCacheKey)
 	}
 	if !read.Found {
@@ -556,6 +594,14 @@ func Decide(in DecideInputs) Decided {
 	}
 	if !eligible {
 		return pass(keyPass(reason))
+	}
+	if key.StrictLimitless {
+		if reason := strictKeyPass(policy.StrictKeysMode(), read.Facts); reason != "" {
+			return pass(reason)
+		}
+		if policy.StrictKeysMode() == routingsnapshot.StrictKeysShadow {
+			strictGate = PassKeyBudgetStrict
+		}
 	}
 	if !ws.Eligible {
 		return pass(workspacePass(ws))
@@ -651,10 +697,12 @@ func Decide(in DecideInputs) Decided {
 	sd := policy.StageD
 	stageD := gwauth.StageDReasonOf(gwauth.StageDSettings{
 		// Python ANDs the switch with not budget_strict (gateway.py,
-		// _stage_d_eligibility_reason's caller); a budget-strict key
-		// passed above (key.budget_strict), so the switch is the whole
-		// of it.
-		EligibilityEnabled:          sd.EligibilityEnabled,
+		// _stage_d_eligibility_reason's caller): a strict key with a limit
+		// passed above (key.budget_strict, key.key_cap or a window's
+		// reason), and a limitless one reaching here is stage_d_disabled
+		// whatever the switch, as Python answers it (e2-strict-keys
+		// section 4.3).
+		EligibilityEnabled:          sd.EligibilityEnabled && !key.StrictLimitless,
 		HeartbeatEnabled:            sd.HeartbeatEnabled,
 		RequireHeartbeatDeclaration: sd.RequireHeartbeatDeclaration, PilotWorkspaces: sd.PilotWorkspaces,
 	}, gwauth.StageDRequest{
@@ -716,8 +764,9 @@ func Decide(in DecideInputs) Decided {
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
 		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap, Stream: r.Streamed(),
-		Ceiling:      streamCeiling(r.Streamed(), res, policy.StreamCeiling()),
-		LeasedAnswer: leased,
+		Ceiling:         streamCeiling(r.Streamed(), res, policy.StreamCeiling()),
+		LeasedAnswer:    leased,
+		StrictLimitless: key.StrictLimitless,
 	}
 	if w := key.Windows; w != nil && !w.AlertOnly {
 		// An alert-only key is decided as an uncapped one: Python's
@@ -740,6 +789,8 @@ func Decide(in DecideInputs) Decided {
 		out.DecideGate = gwauth.ReasonStream
 	case windowGate != "":
 		out.DecideGate = windowGate
+	case strictGate != "":
+		out.DecideGate = strictGate
 	default:
 		out.DecideGate, out.Via = in.Decide.decides(key.WorkspaceID, policy.Plane.Cloud, region, at)
 	}
@@ -995,6 +1046,36 @@ func keyWindowsGate(mode string, w gwstate.KeyWindows) string {
 		return ""
 	}
 	return keyPass(w.Reason())
+}
+
+// strictKeyPass is a limitless strict key's pass at its place in the key's
+// fact order (key_budget_strict's), "" when the edge goes on with it
+// (docs/design/fast-admission-e2-strict-keys.md section 5): under the
+// policy's fastpath_pilot_strict_keys off, or any mode Go does not know,
+// PassKeyBudgetStrict, today's reason; under shadow or enforce, a counter
+// row Python's strict reserve would not match as limitless
+// (gwstate.Facts.StrictRowReason) passes too, as PassKeyBudgetStrict under
+// shadow (every pass of a strict key reads as before the mode) and as
+// PassKeyBudgetStrictRow and its reason under enforce; so does a
+// usage_shard_count other than 1, PassKeyBudgetStrictShards under enforce.
+func strictKeyPass(mode string, facts gwstate.Facts) string {
+	switch mode {
+	case routingsnapshot.StrictKeysShadow, routingsnapshot.StrictKeysEnforce:
+	default:
+		return PassKeyBudgetStrict
+	}
+	// Python reads the shard count before the reserve reads the row.
+	pass := ""
+	if why := facts.StrictRowReason(); why != "" {
+		pass = PassKeyBudgetStrictRow + why
+	}
+	if facts.Key.Shards != 1 {
+		pass = PassKeyBudgetStrictShards
+	}
+	if pass != "" && mode == routingsnapshot.StrictKeysShadow {
+		return PassKeyBudgetStrict
+	}
+	return pass
 }
 
 // workspacePass is an ineligible workspace's §3 reason.

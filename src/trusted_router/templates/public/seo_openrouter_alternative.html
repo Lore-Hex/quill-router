@@ -9,7 +9,7 @@
 <section class="public-hero marketing-hero">
  <div>
  <h1>OpenRouter Alternatives: TrustedRouter vs 9 AI Gateways (2026)</h1>
- <p class="lead">TrustedRouter keeps OpenRouter's one-endpoint access to 600+ models, then adds a gateway that attests to the exact build it runs and never logs prompts, an EU gateway on every account, and a 5.5% fee with no subscription.</p>
+ <p class="lead">Compare AI gateways by the models you can call, who can process your prompts, and what you pay. For sensitive workloads, check where a request can go when your first provider is unavailable.</p>
  {# Sign-up before the long table, as on the page before the Oct 27 redesign. #}
  <div class="hero-actions">
  <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
@@ -25,9 +25,7 @@
  <div class="panel-head"><h2 id="quick-answer-heading">What is the best OpenRouter alternative in 2026?</h2></div>
  <div class="panel-body">
  <p><strong>TrustedRouter is a hosted, OpenAI-compatible AI gateway: one API key and endpoint for 600+ models from 100+ providers, with automatic failover.</strong></p>
- <p>It's the best OpenRouter alternative for teams that send sensitive data to AI models or answer to auditors. Its gateway attests to the exact build it runs and never logs prompts, its EU gateway is open to every account, and its 5.5% fee falls as low as 0.1% at enterprise scale. None of the other hosted gateways compared here publishes a hardware attestation.</p>
- <p>Most tools sold as OpenRouter alternatives sit in front of provider accounts you already have. If you want what OpenRouter actually gives you, one wallet, one API key and 600+ models, TrustedRouter is the like-for-like replacement, with a gateway you can verify.</p>
- <p>The rest each cover part of the job. Self-hosted proxies leave you to run, patch and secure the gateway. Observability tools record your traffic instead of keeping it private. Cloud platforms tie you to one provider's catalog and prices: the same open model can cost up to 75% less on TrustedRouter than on Amazon Bedrock.</p>
+ <p>If your application calls several model providers and you want one bill, start with the hosted routers in the table below. If you already have provider contracts, compare gateways that accept your own keys. A self-hosted proxy gives your team control over the gateway and responsibility for running it.</p>
  <blockquote class="v2-quote">
  <p>&ldquo;&lsquo;Trust us, we won&rsquo;t peek&rsquo; was never an acceptable answer to give a client.&rdquo;</p>
  <p class="v2-quote-cite">Robot, Robot &amp; Human, a legal AI platform and TrustedRouter customer. <a href="/customers/robot-robot-human">Read the case study</a></p>
@@ -38,14 +36,10 @@
 <section class="panel comparison-article" aria-labelledby="choose-alternative-heading">
  <div class="panel-head"><h2 id="choose-alternative-heading">How to choose an OpenRouter alternative for your workload</h2></div>
  <div class="panel-body">
- <p>Start with the model IDs, request features and operating requirements you already use. Compare the cost of the same workload, including input, output, cached tokens and gateway fees. A lower headline fee does not necessarily mean a lower total bill.</p>
- <ul>
- <li><strong>One account for multiple models:</strong> check the <a href="/models">live model catalog</a> and <a href="/pricing">current route prices</a>, then verify streaming, tools and structured output on your exact route.</li>
- <li><strong>Privacy requirements:</strong> distinguish gateway attestation from downstream provider retention. Inspect <a href="/security">the security evidence</a> and set a <a href="/docs/provider-routing">minimum privacy tier and fallback policy</a> that fit your data.</li>
- <li><strong>Agent and application budgets:</strong> use <a href="/spend-controls">programmable API key spend controls</a>. Strict admission includes in-flight estimates, with latency tradeoffs; it is not an absolute final-charge ceiling.</li>
- <li><strong>Migration risk:</strong> follow the <a href="/docs/migrate-from-openrouter">OpenRouter migration guide</a>, change the base URL and key, and test representative requests before moving production traffic. Check model availability, response fields, errors and fallback behavior rather than assuming every extension is interchangeable.</li>
- </ul>
- <p>Use the comparison below to shortlist a gateway, then <a href="/docs/evals">evaluate answer quality</a> and <a href="/benchmarks">inspect measured performance</a> for the routes your application will actually call.</p>
+ <h3 id="how-to-choose-heading">If my preferred provider is unavailable, where can my prompt go?</h3>
+ <p>Suppose your app sends a private support ticket to a model and the first provider is offline. With <a href="/docs#trusted-tier"><code>nyte/trusted</code></a>, TrustedRouter can send the ticket only to another eligible provider in the Trusted tier. If none qualifies, the request stops before inference.</p>
+ <p>Read the <strong>Attested gateway</strong> column as evidence about the software that routes the request. To find out who can read the ticket during inference, check the <a href="/docs/provider-routing">downstream provider requirements and fallback rules</a> separately. If the ticket must stay in the EU, also check which providers your configuration allows.</p>
+ <p>Use the <strong>Type</strong> column to see who operates the gateway, then compare the <strong>Platform fee</strong> alongside <a href="/pricing">input, output and cached-token prices</a> for the same workload. Before switching, send a sample request using your application's model and tools. The <a href="/docs/migrate-from-openrouter">OpenRouter migration guide</a> walks through the first call.</p>
  </div>
 </section>
 
@@ -200,25 +194,6 @@
  <p>TrustedRouter puts them behind one key and one bill, and fails over across providers automatically.</p>
  <p><a href="/providers">Browse providers</a></p>
  </article>
-</section>
-
-<!-- ==== OA-10: Five questions (replaces 'How to choose') ==== -->
-<section class="quote-feature" aria-labelledby="how-to-choose-heading">
- <div>
- <h2 id="how-to-choose-heading">Five questions to ask any OpenRouter alternative.</h2>
- </div>
- <div>
- <h3>Can you prove which code handles my prompts?</h3>
- <p>A policy says what a vendor intends. TrustedRouter publishes a hardware attestation of the exact build handling your requests, and that build doesn't log prompts.</p>
- <h3>What happens when no private route is available?</h3>
- <p>A router that falls back silently can send data where you didn't intend. With a privacy floor set, TrustedRouter refuses the request instead.</p>
- <h3>Where does EU traffic go, and on which plan?</h3>
- <p>On OpenRouter, in-region routing starts with the 8% Business plan. On TrustedRouter, the EU gateway is open to every account.</p>
- <h3>What will we pay at our volume?</h3>
- <p>TrustedRouter starts at 5.5% with no subscription and falls as low as 0.1% at enterprise scale.</p>
- <h3>Who will own the company next year?</h3>
- <p>Stripe has agreed to buy OpenRouter, Palo Alto Networks owns Portkey, and Mintlify put Helicone into maintenance mode. TrustedRouter is independent.</p>
- </div>
 </section>
 
 <!-- ==== OA-11: OpenRouter vs TrustedRouter as a real table (replaces .compare-matrix) ==== -->

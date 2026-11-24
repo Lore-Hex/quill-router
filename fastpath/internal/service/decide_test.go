@@ -518,11 +518,26 @@ func TestTheDecidePathNeedsTheSnapshotAndThePolicy(t *testing.T) {
 	for name, change := range map[string]func(*EdgeConfig){
 		"no snapshot": func(e *EdgeConfig) { e.SnapshotURL = "" },
 		"no policy":   func(e *EdgeConfig) { e.PolicyURL = "" },
+		// The read-through's wait: the decide path's, at most its bound.
+		"a cache wait past its bound": func(e *EdgeConfig) { e.DecideCacheWait = edge.MaxCacheWait + 1 },
+		"a negative cache wait":       func(e *EdgeConfig) { e.DecideCacheWait = -1 },
+		"a cache wait with no decide path": func(e *EdgeConfig) {
+			e.Decide, e.DecideShadow, e.DecideCacheWait = false, true, edge.MaxCacheWait
+		},
 	} {
 		cfg.Edge = whole
 		change(&cfg.Edge)
 		if err := cfg.valid(); err == nil {
 			t.Errorf("%s: valid", name)
+		}
+	}
+	if cfg.Edge = whole; Defaults().Edge.DecideCacheWait != 0 {
+		t.Fatal("the defaults wait for the cache")
+	}
+	for _, wait := range []time.Duration{time.Millisecond, edge.MaxCacheWait} {
+		cfg.Edge.DecideCacheWait = wait
+		if err := cfg.valid(); err != nil {
+			t.Errorf("a cache wait of %v: %v", wait, err)
 		}
 	}
 }

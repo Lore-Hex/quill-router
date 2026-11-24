@@ -1264,6 +1264,16 @@ class Settings(BaseSettings):
     # in the edge policy for the Go edge. A lifetime cap or a strict budget
     # still keeps a key out. Any other spelling refuses to start.
     fastpath_pilot_key_windows: Literal["off", "alert", "enforce"] = "off"
+    # Whether the Go edge decides a budget_strict key with no lifetime limit
+    # and no spend window (docs/design/fast-admission-e2-strict-keys.md
+    # section 5): `off` passes every strict key to Python, `shadow` has the
+    # edge compose such a key's answer for its decide shadow to compare and
+    # still pass it, `enforce` has it decide the key as an uncapped one, with
+    # no key hold. Published in the edge policy only when not off. Python's
+    # own pilot keeps every strict key out whatever this says: its leased
+    # branch reads no tr_key_limit row, so it could not keep the strict
+    # path's 402 for a missing one. Any other spelling refuses to start.
+    fastpath_pilot_strict_keys: Literal["off", "shadow", "enforce"] = "off"
     # Streams on the lease (docs/design/fast-admission-streams.md section
     # 5.4). `fastpath_pilot_streams`: this process's pilot admits a stream the
     # enclave heartbeats under a lease (section 5.1's rule). It moves only

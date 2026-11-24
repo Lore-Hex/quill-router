@@ -101,7 +101,11 @@ type authorizeCase struct {
 	BYOKEntityIDs       []string                   `json:"byok_entity_ids"`
 	BroadcastPointerIDs []string                   `json:"broadcast_pointer_ids"`
 	PolicyPatch         map[string]json.RawMessage `json:"policy_patch"`
-	Facts               struct {
+	// KeyLimitRow is a strict key's tr_key_limit shard 0 as Python's world
+	// held it: absent for a key that is not strict, null for a row that is
+	// missing, else its four mirrored limits (store.StrictKeyLimit).
+	KeyLimitRow json.RawMessage `json:"key_limit_row"`
+	Facts       struct {
 		Key struct {
 			LookupHash  string `json:"lookup_hash"`
 			Hash        string `json:"hash"`
@@ -327,11 +331,17 @@ func (w *fakeWorld) ReadKeyContext(ctx context.Context, lookupHash string) (stor
 		return store.KeyContext{}, false, nil
 	}
 	var key struct {
-		WorkspaceID string `json:"workspace_id"`
+		WorkspaceID  string          `json:"workspace_id"`
+		BudgetStrict json.RawMessage `json:"budget_strict"`
 	}
 	_ = json.Unmarshal([]byte(*c.Key.KeyBody), &key)
 	kc := store.KeyContext{KeyBody: *c.Key.KeyBody, RangeWorkspaceID: key.WorkspaceID,
 		BYOKIDs: slices.Clone(c.BYOKEntityIDs), BroadcastDestination: len(c.BroadcastPointerIDs) > 0}
+	// A strict key's row, read with the key as store.ReadKeyContext reads
+	// it: only for a body whose budget_strict is true.
+	if string(key.BudgetStrict) == "true" && c.KeyLimitRow != nil {
+		kc.StrictLimit = strictKeyLimitOf(c.KeyLimitRow)
+	}
 	if c.Workspace.Body != nil {
 		kc.WorkspaceBody, kc.WorkspaceFound = *c.Workspace.Body, true
 	}
@@ -1101,6 +1111,192 @@ func TestAnUncoveredWindowedKeyKeepsItsReason(t *testing.T) {
 	in.Decide = DecideView{}
 	if d := Decide(in); d.Pass != PassCacheDecide || d.ForShadow() == nil {
 		t.Errorf("decide copy stale, enforce: passed %q", d.Pass)
+	}
+}
+
+// The strict row Python's strict reserve matches as limitless, and the ones
+// it does not.
+var (
+	strictRowOK      = store.StrictKeyLimit{Read: true, Row: true, Limitless: true}
+	strictRowMissing = store.StrictKeyLimit{Read: true}
+	strictRowLimited = store.StrictKeyLimit{Read: true, Row: true}
+	strictRowUnread  = store.StrictKeyLimit{}
+)
+
+// strictInputs is the base case with its key's body changed by fields, the
+// policy's fastpath_pilot_strict_keys at mode and fastpath_pilot_key_windows
+// at windows ("" for absent), and the cache's strict row as row.
+func strictInputs(t *testing.T, fields map[string]any, mode, windows string, row store.StrictKeyLimit) DecideInputs {
+	t.Helper()
+	in := windowedInputs(t, fields, windows)
+	p := *in.Policy
+	p.FastpathPilotStrictKeys = nil
+	if mode != "" {
+		p.FastpathPilotStrictKeys = &mode
+	}
+	in.Policy = &p
+	return withRead(t, in, func(r *gwstate.Read) { r.Facts.StrictRow = row })
+}
+
+// TestTheStrictKeysModeGatesALimitlessStrictKey
+// (docs/design/fast-admission-e2-strict-keys.md section 5): a budget_strict
+// key with no limit passes as key.budget_strict with the policy's
+// fastpath_pilot_strict_keys absent (today's answer, composed for no
+// shadow); under shadow it is composed and passed with the mode as its
+// decision gate, every later pass reading key.budget_strict; under enforce
+// it is decided as an uncapped key. Its row must be one Python's reserve
+// matches as limitless, else it passes before any compose. A strict key
+// with a lifetime limit or any window passes as before, whatever the mode.
+func TestTheStrictKeysModeGatesALimitlessStrictKey(t *testing.T) {
+	strict := map[string]any{"budget_strict": true}
+	shadow, enforce := routingsnapshot.StrictKeysShadow, routingsnapshot.StrictKeysEnforce
+	paused := func(r *gwstate.Read) { r.CreditState.Paused = true }
+	for _, v := range []struct {
+		name    string
+		fields  map[string]any
+		mode    string
+		windows string
+		row     store.StrictKeyLimit
+		change  func(*gwstate.Read)
+		pass    string
+		gate    string
+		decided bool
+	}{
+		{"absent", strict, "", "", strictRowOK, nil, PassKeyBudgetStrict, "", false},
+		{"absent, key windows enforce", strict, "", routingsnapshot.KeyWindowsEnforce, strictRowOK, nil,
+			PassKeyBudgetStrict, "", false},
+		{"shadow", strict, shadow, "", strictRowOK, nil, PassKeyBudgetStrict, PassKeyBudgetStrict, true},
+		{"enforce", strict, enforce, "", strictRowOK, nil, "", "", true},
+		// The row, read with the key: what Python's strict reserve reads.
+		{"shadow, no row", strict, shadow, "", strictRowMissing, nil, PassKeyBudgetStrict, "", false},
+		{"enforce, no row", strict, enforce, "", strictRowMissing, nil,
+			PassKeyBudgetStrictRow + gwstate.StrictRowMissing, "", false},
+		{"enforce, a mirrored limit", strict, enforce, "", strictRowLimited, nil,
+			PassKeyBudgetStrictRow + gwstate.StrictRowLimited, "", false},
+		{"enforce, no row read", strict, enforce, "", strictRowUnread, nil,
+			PassKeyBudgetStrictRow + gwstate.StrictRowUnread, "", false},
+		{"absent, no row", strict, "", "", strictRowMissing, nil, PassKeyBudgetStrict, "", false},
+		// A strict key with two usage shards, which Python's authorize
+		// answers 500, whatever its row says; the shard count first.
+		{"enforce, two shards", map[string]any{"budget_strict": true, "usage_shard_count": 2}, enforce, "",
+			strictRowOK, nil, PassKeyBudgetStrictShards, "", false},
+		{"enforce, two shards, no row", map[string]any{"budget_strict": true, "usage_shard_count": 2}, enforce, "",
+			strictRowMissing, nil, PassKeyBudgetStrictShards, "", false},
+		{"shadow, two shards", map[string]any{"budget_strict": true, "usage_shard_count": 2}, shadow, "",
+			strictRowOK, nil, PassKeyBudgetStrict, "", false},
+		{"absent, sixty-four shards", map[string]any{"budget_strict": true, "usage_shard_count": 64}, "", "",
+			strictRowOK, nil, PassKeyBudgetStrict, "", false},
+		// A later gate: its own reason under enforce, the mode's under shadow.
+		{"shadow, paused", strict, shadow, "", strictRowOK, paused, PassKeyBudgetStrict, "", false},
+		{"enforce, paused", strict, enforce, "", strictRowOK, paused, PassWorkspacePaused, "", false},
+		// Strict keys with a limit pass as before, whatever either mode.
+		{"lifetime limit, enforce", map[string]any{"budget_strict": true, "limit_microdollars": 9_000_000},
+			enforce, routingsnapshot.KeyWindowsEnforce, strictRowOK, nil, PassKeyCap, "", false},
+		{"daily, enforce", map[string]any{"budget_strict": true, "limit_daily_microdollars": 5000}, enforce, "",
+			strictRowOK, nil, PassKeyWindow, "", false},
+		{"weekly, enforce", map[string]any{"budget_strict": true, "limit_weekly_microdollars": 5000}, enforce, "",
+			strictRowOK, nil, PassKeyWindow, "", false},
+		{"monthly, enforce", map[string]any{"budget_strict": true, "limit_monthly_microdollars": 5000}, enforce,
+			"", strictRowOK, nil, PassKeyWindow, "", false},
+		{"daily, both enforce", map[string]any{"budget_strict": true, "limit_daily_microdollars": 5000}, enforce,
+			routingsnapshot.KeyWindowsEnforce, strictRowOK, nil, PassKeyBudgetStrict, "", false},
+		{"alert-only window, both on", map[string]any{"budget_strict": true, "limit_daily_microdollars": 5000,
+			"budget_alert_only": true}, enforce, routingsnapshot.KeyWindowsAlert, strictRowOK, nil,
+			PassKeyBudgetStrict, "", false},
+		// Not strict: the mode changes nothing.
+		{"not strict, enforce", map[string]any{"budget_strict": false}, enforce, "", strictRowUnread, nil, "", "",
+			true},
+	} {
+		in := strictInputs(t, v.fields, v.mode, v.windows, v.row)
+		if v.change != nil {
+			in = withRead(t, in, v.change)
+		}
+		d := Decide(in)
+		if d.Pass != v.pass || d.DecideGate != v.gate || (d.ForShadow() != nil) != v.decided {
+			t.Errorf("%s: passed %q gate %q decision %v, want %q %q %v", v.name, d.Pass, d.DecideGate,
+				d.ForShadow() != nil, v.pass, v.gate, v.decided)
+			continue
+		}
+		dec := d.ForShadow()
+		if dec == nil {
+			continue
+		}
+		limitless := v.fields["budget_strict"] == true
+		if dec.StrictLimitless != limitless {
+			t.Errorf("%s: StrictLimitless %v", v.name, dec.StrictLimitless)
+		}
+		// Python's Stage D reason for a strict key, whatever the switch.
+		if want := "not_streaming"; limitless {
+			want = "stage_d_disabled"
+			if got := dec.Input.StageDReason; got != want {
+				t.Errorf("%s: Stage D %q, want %q", v.name, got, want)
+			}
+		} else if got := dec.Input.StageDReason; got != want {
+			t.Errorf("%s: Stage D %q, want %q", v.name, got, want)
+		}
+		// No key hold: the reservation row is the uncapped key's.
+		composed, err := dec.Finish("envelope", in.Request.At.Add(time.Hour))
+		if err != nil || composed.Reservation.KeyHash != dec.KeyHash {
+			t.Errorf("%s: %v", v.name, err)
+		}
+		if _, ok := d.Admit(); ok != (v.pass == "") {
+			t.Errorf("%s: Admit %v", v.name, ok)
+		}
+	}
+	// Under enforce the decide row is still a decision gate.
+	in := strictInputs(t, strict, enforce, "", strictRowOK)
+	in.Decide = DecideView{}
+	if d := Decide(in); d.Pass != PassCacheDecide || d.ForShadow() == nil {
+		t.Errorf("decide copy stale, enforce: passed %q", d.Pass)
+	}
+	// Under shadow the mode comes before the decide row.
+	in = strictInputs(t, strict, shadow, "", strictRowOK)
+	in.Decide = DecideView{}
+	if d := Decide(in); d.Pass != PassKeyBudgetStrict || d.DecideGate != PassKeyBudgetStrict {
+		t.Errorf("decide copy stale, shadow: passed %q gate %q", d.Pass, d.DecideGate)
+	}
+	// An unknown mode, which the policy's parser refuses, is off.
+	unknown := "alert"
+	in = strictInputs(t, strict, "", "", strictRowOK)
+	p := *in.Policy
+	p.FastpathPilotStrictKeys = &unknown
+	in.Policy = &p
+	if d := Decide(in); d.Pass != PassKeyBudgetStrict || d.ForShadow() != nil {
+		t.Errorf("an unknown mode: passed %q", d.Pass)
+	}
+}
+
+// TestAStrictKeysStageDIsDisabledLikePythons: Python ANDs the Stage D switch
+// with not budget_strict, so a limitless strict key's stream is never
+// eligible: under the strict mode's enforce and the edge's streams on, it
+// passes as stream.stage_d:stage_d_disabled where the same uncapped key's
+// stream is composed (the streams' own control).
+func TestAStrictKeysStageDIsDisabledLikePythons(t *testing.T) {
+	enforce := routingsnapshot.StrictKeysEnforce
+	streamed := func(in DecideInputs) DecideInputs {
+		var body map[string]any
+		if err := json.Unmarshal(in.Request.Body, &body); err != nil {
+			t.Fatal(err)
+		}
+		body["stream"] = true
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		in.Request.Body = raw
+		p := *in.Policy
+		on := true
+		p.FastpathEdgeStreams = &on
+		in.Policy = &p
+		return in
+	}
+	plain := Decide(streamed(strictInputs(t, map[string]any{"budget_strict": false}, enforce, "", strictRowOK)))
+	strict := Decide(streamed(strictInputs(t, map[string]any{"budget_strict": true}, enforce, "", strictRowOK)))
+	if strict.Pass != PassStreamStageD+"stage_d_disabled" {
+		t.Errorf("a strict key's stream: passed %q (the uncapped key's: %q)", strict.Pass, plain.Pass)
+	}
+	if plain.Pass == strict.Pass {
+		t.Errorf("the control passed as the strict key did: %q", plain.Pass)
 	}
 }
 

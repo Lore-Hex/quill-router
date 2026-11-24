@@ -111,6 +111,25 @@ if [ -n "$settle_hedge" ]; then
   fi
   hedge_flags="-settle-hedge $settle_hedge"
 fi
+# What an owner does with a starved shard's leases (-starved-leases;
+# docs/design/billing-503-reduction-2026-11.md, option A): off, log or
+# close. Absent, the node runs the release's default (log: each starved
+# shard logged, nothing closed). "close" stops a lease too small for a
+# request admitting once the store refused the shard a top-up for the floor
+# or the allowance, so its next checkpoint returns its free room
+# (local.fastpath_starved_leases; docs/runbooks/fastpath-deploy.md,
+# "Starved leases"). The pinned release must take -starved-leases before the
+# attribute is set; a value the release would refuse stops the script.
+starved_leases="$(attribute fastpath-starved-leases)" || exit 1
+starved_flags=""
+if [ -n "$starved_leases" ]; then
+  # The whole value, newlines included, as for the hedge.
+  if ! [[ "$starved_leases" =~ ^(off|log|close)$ ]]; then
+    echo "fastpath: fastpath-starved-leases is off, log, close, or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  starved_flags="-starved-leases $starved_leases"
+fi
 # The money settings (docs/design/fast-admission-widening.md, (b)): the
 # trust tier a lease needs, a workspace's allowance and the floor a grant
 # leaves, in microdollars, from fastpath-required-tier, fastpath-allowance
@@ -285,6 +304,30 @@ elif [ -n "$policy_url" ] || { [ -n "$decide_shadow" ] && [ "$decide_shadow" != 
   echo "fastpath: the edge policy, the decide shadow and the decide path need the routing snapshot; the startup script stops here" | systemd-cat -t fastpath -p err
   exit 1
 fi
+# The decide path's read-through (-edge-decide-cache-wait,
+# docs/design/fast-admission-e2-decide.md decision 2): how long a request
+# whose cached key or credit entry is cold or stale waits for the strong
+# read that fills it before it passes as cache.key, as a Go duration in
+# milliseconds, 1ms to 250ms, or 0 for none. Absent, the node runs the
+# release's default, 0: no wait. It is the decide path's, so it needs
+# fastpath-edge-decide "true". The pinned release must take
+# -edge-decide-cache-wait before the attribute is set; a value the release
+# would refuse stops the script.
+decide_cache_wait="$(attribute fastpath-edge-decide-cache-wait)" || exit 1
+cache_wait_flags=""
+if [ -n "$decide_cache_wait" ]; then
+  # The whole value, newlines included: a pattern a line of it matched
+  # could write more than the flag into the unit.
+  if ! [[ "$decide_cache_wait" =~ ^(0|[1-9]ms|[1-9][0-9]ms|1[0-9][0-9]ms|2[0-4][0-9]ms|250ms)$ ]]; then
+    echo "fastpath: fastpath-edge-decide-cache-wait is 0, 1ms to 250ms, or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  if [ "$decide" != "true" ]; then
+    echo "fastpath: fastpath-edge-decide-cache-wait is the decide path's, which needs fastpath-edge-decide true; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  cache_wait_flags="-edge-decide-cache-wait $decide_cache_wait"
+fi
 install -d /opt/fastpath
 # The release is verified before any of it is installed. The release
 # workflow publishes SHA256SUMS beside the binaries, and infra/fastpath.tf
@@ -366,7 +409,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags $fleet_flags $hedge_flags
+  -subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags $fleet_flags $starved_flags $cache_wait_flags $hedge_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30

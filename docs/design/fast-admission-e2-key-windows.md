@@ -638,7 +638,10 @@ e2-decide §9's levers.
 - **Strict keys** (`budget_strict`): their check counts in-flight holds and
   runs inside the transaction (§2.3); the edge would need its own hold on
   the key row, which the lease does not carry. They stay
-  `key.budget_strict`.
+  `key.budget_strict`. A strict key with no limit at all, whose check never
+  refuses it and which can never gain a limit, is decided by the edge
+  behind `fastpath_pilot_strict_keys`
+  ([`fast-admission-e2-strict-keys.md`](fast-admission-e2-strict-keys.md)).
 - **Lifetime caps** (`limit_microdollars`), alone or with windows: they
   take a key hold whose release the lease does not model; batched-settlement
   §4.6 keeps them synchronous. They stay `key.key_cap`.
