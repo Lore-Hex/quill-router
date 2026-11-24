@@ -95,6 +95,21 @@ type KeyFacts struct {
 	// 4.7). They do not keep a key out of the cohort: the edge policy's
 	// fastpath_pilot_key_windows does, as a decision gate (edge/decide.go).
 	Windows *KeyWindows
+	// StrictLimitless is a budget_strict key with no lifetime limit and no
+	// spend window (docs/design/fast-admission-e2-strict-keys.md section
+	// 4.1). Python's strict reserve never refuses such a key for its budget,
+	// and its limits can never go from none to some
+	// (storage_key_patch.StrictKeyFirstLimit), so it is Eligible: the edge
+	// policy's fastpath_pilot_strict_keys keeps it out, at the key's place
+	// in the fact order (edge/decide.go), and so does a counter row Python
+	// would not find or would find limited (Facts.StrictRow). A strict key
+	// with any limit stays out here, key_limit or key_budget_strict.
+	StrictLimitless bool
+	// Shards is the key's usage_shard_count (1 to 64), kept for an eligible
+	// key: Python's authorize refuses a strict key whose count is not 1
+	// (storage_gcp_counters.key_usage_shard_count raises, a 500), so a
+	// limitless strict key with another count passes (edge/decide.go).
+	Shards int
 }
 
 // KeyWindows are a key's configured spend windows as Python's authorize
@@ -139,12 +154,17 @@ func (k KeyFacts) At(now time.Time) (bool, string) {
 
 // PilotAt is At with the key's windows an exclusion at their place in the
 // fact order (after key_limit, before key_budget_strict), as Python's pilot
-// reads them while no mode of fastpath_pilot_key_windows covers them: the
-// reason gateway_key_vectors_v1.json gives, and the edge's under mode off.
+// reads them while no mode of fastpath_pilot_key_windows covers them, and a
+// limitless strict key an exclusion at key_budget_strict's, as Python's
+// pilot keeps every strict key out: the reason gateway_key_vectors_v1.json
+// gives, and the edge's under both modes off.
 func (k KeyFacts) PilotAt(now time.Time) (bool, string) {
 	ok, reason := k.At(now)
 	if k.Windows != nil && (ok || reason == ReasonKeyBudgetStrict) {
 		return false, k.Windows.Reason()
+	}
+	if ok && k.StrictLimitless {
+		return false, ReasonKeyBudgetStrict
 	}
 	return ok, reason
 }
@@ -241,17 +261,20 @@ func ParseKey(body string) KeyFacts {
 		// spend_windows.key_window_limits: the configured windows, alert-only
 		// or not, read at their place in the fact order. They keep the key
 		// in the cohort (Windows): the edge policy's mode gates them at the
-		// end of Decide. A strict key stays out whatever its windows.
+		// end of Decide. A strict key with windows stays out; one with no
+		// limit at all (the lifetime limit is key_limit, above) is in the
+		// cohort as StrictLimitless, which the policy's
+		// fastpath_pilot_strict_keys gates (edge/decide.go).
 		windows, field := keyWindows(f, int(shards))
 		if field != "" {
 			return keyShape(field)
 		}
 		k.Windows = windows
-		if strict {
+		if strict && windows != nil {
 			k.Reason = ReasonKeyBudgetStrict
 			break
 		}
-		k.Eligible, k.Tags = true, tags
+		k.Eligible, k.Tags, k.StrictLimitless, k.Shards = true, tags, strict, int(shards)
 	}
 	return k
 }
@@ -319,7 +342,7 @@ var consultedKeyFields = map[string]string{
 	"creator_user_id":            "CreatorUserID, used to derive the direct OpenAI pseudonym",
 	"app_id":                     "key_app",
 	"budget_alert_only":          "Windows.AlertOnly when a window is set (key_shape:budget_alert_only unless a JSON bool); not read otherwise",
-	"budget_strict":              "key_budget_strict",
+	"budget_strict":              "key_budget_strict with a window; StrictLimitless with no limit at all",
 	"disabled":                   "key_disabled",
 	"expires_at":                 "ExpiresAt, key_expired",
 	"federated_home":             "key_federated",
@@ -529,13 +552,42 @@ type Facts struct {
 	// not ws's.
 	BYOKProviders        []string
 	BroadcastDestination bool
+	// StrictRow is a strict key's tr_key_limit shard 0 as Python's strict
+	// reserve reads it (store.StrictKeyLimit), read with the key and cached
+	// with it; its Read is false for a key whose body does not say
+	// budget_strict.
+	StrictRow store.StrictKeyLimit
 }
+
+// StrictRowReason is why a limitless strict key's counter row keeps it out
+// of the cohort, "" when Python's strict reserve would match the row: the
+// row was not read (StrictRowUnread), is missing (StrictRowMissing:
+// Python's KEY_MISSING, a 402), or mirrors a limit the cached body does not
+// carry (StrictRowLimited: Python reads the mirror, never the body).
+func (f Facts) StrictRowReason() string {
+	switch r := f.StrictRow; {
+	case !r.Read:
+		return StrictRowUnread
+	case !r.Row:
+		return StrictRowMissing
+	case !r.Limitless:
+		return StrictRowLimited
+	}
+	return ""
+}
+
+// The StrictRowReason values.
+const (
+	StrictRowUnread  = "unread"
+	StrictRowMissing = "missing"
+	StrictRowLimited = "limited"
+)
 
 // FromContext reads the facts of a key context.
 func FromContext(c store.KeyContext) Facts {
 	key := ParseKey(c.KeyBody)
 	out := Facts{Key: key, Workspace: ParseWorkspace(c.WorkspaceBody, c.WorkspaceFound, key.WorkspaceID),
-		BroadcastDestination: c.BroadcastDestination}
+		BroadcastDestination: c.BroadcastDestination, StrictRow: c.StrictLimit}
 	// The query joined the workspace and took the BYOK and broadcast ranges
 	// by Spanner's JSON_VALUE of the key's workspace_id; Go's reading of the
 	// body must be the same id (a repeated field could be read otherwise),

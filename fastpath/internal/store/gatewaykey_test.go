@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"cloud.google.com/go/spanner"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
+	"github.com/Lore-Hex/quill-router/fastpath/schema"
 )
 
 func entity(kind, id, body string) *spanner.Mutation {
@@ -118,6 +120,166 @@ func TestAKeyContextIsNotFoundWithoutAPointerAndAKey(t *testing.T) {
 	}
 	if _, _, err := s.ReadKeyContext(ctx, ""); err == nil {
 		t.Fatal("an empty lookup hash")
+	}
+}
+
+// TestAStrictKeysCounterRowIsReadWithIt
+// (docs/design/fast-admission-e2-strict-keys.md section 4.2): for a key whose
+// body says budget_strict true, the key-context read also reads its
+// tr_key_limit shard 0 as Python's strict reserve does: present and every
+// mirrored limit NULL (Limitless), present with any one of the four set,
+// or missing (its 402). Shard 1 is never read. A key that is not strict, or
+// whose budget_strict is not the JSON literal true, reads no row, though
+// it has one.
+func TestAStrictKeysCounterRowIsReadWithIt(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	keyed := func(strict string, row map[string]any, extra ...*spanner.Mutation) string {
+		t.Helper()
+		lookup, keyHash := storetest.UniqueID("lh"), storetest.UniqueID("kh")
+		body := `{"hash":"` + keyHash + `","lookup_hash":"` + lookup + `","workspace_id":"` + ws + `"` + strict + `}`
+		mutations := []*spanner.Mutation{
+			entity("api_key_lookup", lookup, `{"key_id":"`+keyHash+`"}`),
+			entity("api_key", keyHash, body),
+		}
+		if row != nil {
+			mutations = append(mutations, keyLimitRow(keyHash, 0, row))
+		}
+		// A shard-1 row with a limit, which the read must not see.
+		mutations = append(mutations, keyLimitRow(keyHash, 1, map[string]any{"day_limit_micro": int64(1)}))
+		if _, err := shared.Apply(ctx, append(mutations, extra...)); err != nil {
+			t.Fatal(err)
+		}
+		return lookup
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{entity("workspace", ws, `{"id":"`+ws+`"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	nulls := map[string]any{"limit_micro": spanner.NullInt64{}, "day_limit_micro": spanner.NullInt64{},
+		"week_limit_micro": spanner.NullInt64{}, "month_limit_micro": spanner.NullInt64{}}
+	with := func(column string) map[string]any {
+		row := map[string]any{}
+		for k, v := range nulls {
+			row[k] = v
+		}
+		row[column] = int64(0)
+		return row
+	}
+	cases := []struct {
+		name   string
+		lookup string
+		want   StrictKeyLimit
+	}{
+		{"limitless", keyed(`,"budget_strict":true`, nulls), StrictKeyLimit{Read: true, Row: true, Limitless: true}},
+		{"no columns written", keyed(`,"budget_strict":true`, map[string]any{}),
+			StrictKeyLimit{Read: true, Row: true, Limitless: true}},
+		{"lifetime limit", keyed(`,"budget_strict":true`, with("limit_micro")), StrictKeyLimit{Read: true, Row: true}},
+		{"daily limit", keyed(`,"budget_strict":true`, with("day_limit_micro")), StrictKeyLimit{Read: true, Row: true}},
+		{"weekly limit", keyed(`,"budget_strict":true`, with("week_limit_micro")), StrictKeyLimit{Read: true, Row: true}},
+		{"monthly limit", keyed(`,"budget_strict":true`, with("month_limit_micro")),
+			StrictKeyLimit{Read: true, Row: true}},
+		{"no row", keyed(`,"budget_strict":true`, nil), StrictKeyLimit{Read: true}},
+		{"repeated, last true", keyed(`,"budget_strict":false,"budget_strict":true`, nulls),
+			StrictKeyLimit{Read: true, Row: true, Limitless: true}},
+		{"not strict", keyed(`,"budget_strict":false`, nulls), StrictKeyLimit{}},
+		{"absent", keyed(``, nulls), StrictKeyLimit{}},
+		{"a string", keyed(`,"budget_strict":"true"`, nulls), StrictKeyLimit{}},
+		{"repeated, last false", keyed(`,"budget_strict":true,"budget_strict":false`, nulls), StrictKeyLimit{}},
+	}
+	for _, c := range cases {
+		got, found, err := s.ReadKeyContext(ctx, c.lookup)
+		if err != nil || !found {
+			t.Fatalf("%s: %v %v", c.name, found, err)
+		}
+		if got.StrictLimit != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, got.StrictLimit, c.want)
+		}
+	}
+	// A strict row read that fails leaves the row unread, and the key's
+	// other facts as read: the key context still answers.
+	lookup := keyed(`,"budget_strict":true`, nulls)
+	expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel()
+	if _, _, err := s.ReadKeyContext(expired, lookup); err == nil {
+		t.Fatal("the control: an expired context reads nothing")
+	}
+	if limit, err := s.readStrictKeyLimit(expired, "kh"); err == nil || limit.Read {
+		t.Fatalf("an expired strict read: %+v %v", limit, err)
+	}
+}
+
+// TestAFailedStrictRowReadLeavesTheRowUnread: when only the second read
+// fails (here a database with no tr_key_limit table, so the key-context
+// query answers and the point read of the strict row errors), the key's
+// context is still found, its facts read, and its strict row unread
+// (Read false), which passes the key under enforce; the first read failing
+// fails the whole context, as before.
+func TestAFailedStrictRowReadLeavesTheRowUnread(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	statements, err := schema.Statements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := statements[:0:0]
+	for _, s := range statements {
+		if !strings.Contains(s, " tr_key_limit (") {
+			kept = append(kept, s)
+		}
+	}
+	if len(kept) != len(statements)-1 {
+		t.Fatalf("fastpath.sql makes tr_key_limit %d times", len(statements)-len(kept))
+	}
+	db, err := emulator.Database(ctx, storetest.UniqueID("nolimit"), kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	s, err := New(db, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, lookup, keyHash := storetest.UniqueID("ws"), storetest.UniqueID("lh"), storetest.UniqueID("kh")
+	body := `{"hash":"` + keyHash + `","lookup_hash":"` + lookup + `","workspace_id":"` + ws + `","budget_strict":true}`
+	if _, err := db.Apply(ctx, []*spanner.Mutation{
+		entity("api_key_lookup", lookup, `{"key_id":"`+keyHash+`"}`),
+		entity("api_key", keyHash, body),
+		entity("workspace", ws, `{"id":"`+ws+`"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The control: the second read alone does fail here.
+	if _, err := s.readStrictKeyLimit(ctx, keyHash); err == nil {
+		t.Fatal("the strict row read did not fail without its table")
+	}
+	got, found, err := s.ReadKeyContext(ctx, lookup)
+	if err != nil || !found {
+		t.Fatalf("the key context with only the strict read failing: %v %v", found, err)
+	}
+	if got.KeyBody != body || !got.WorkspaceFound || got.StrictLimit != (StrictKeyLimit{}) {
+		t.Fatalf("the context: %+v", got)
+	}
+}
+
+// TestTheStrictRowReadIsAPointRead: the strict key's row is read by its
+// complete primary key, shard 0, its four mirrored limits and nothing else.
+func TestTheStrictRowReadIsAPointRead(t *testing.T) {
+	want := []string{"limit_micro", "day_limit_micro", "week_limit_micro", "month_limit_micro"}
+	if !slices.Equal(strictLimitColumns, want) {
+		t.Fatalf("the strict row's columns %q, want %q", strictLimitColumns, want)
+	}
+	source, err := os.ReadFile("gatewaykey.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), `ReadRowWithOptions(ctx, "tr_key_limit", spanner.Key{keyHash, int64(0)},`) {
+		t.Fatal("the strict row is not read by (key_hash, 0)")
+	}
+	if strings.Contains(keyContextSQL, "tr_key_limit") {
+		t.Fatal("the key-context query reads tr_key_limit for every key")
 	}
 }
 

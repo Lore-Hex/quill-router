@@ -384,7 +384,10 @@ func TestTheKeyWindowFactsAreTheVectors(t *testing.T) {
 // TestAWindowedKeyIsInTheCohortWithItsWindows (section 4.7): a key whose one
 // exclusion was its windows is eligible with Windows; a lifetime cap and a
 // strict key still exclude it (key_limit first, the windows read before
-// key_budget_strict); PilotAt gives the pilot's reasons for each.
+// key_budget_strict); PilotAt gives the pilot's reasons for each. A strict
+// key with no limit at all is eligible as StrictLimitless
+// (fast-admission-e2-strict-keys.md section 4.1), its pilot reason still
+// key_budget_strict.
 func TestAWindowedKeyIsInTheCohortWithItsWindows(t *testing.T) {
 	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 	body := func(extra string) string {
@@ -410,7 +413,7 @@ func TestAWindowedKeyIsInTheCohortWithItsWindows(t *testing.T) {
 		{"disabled", `,"limit_daily_microdollars":5,"disabled":true`, false, ReasonKeyDisabled, ReasonKeyDisabled,
 			nil},
 		{"no window", `,"budget_alert_only":"yes"`, true, "", "", nil},
-		{"strict, no window", `,"budget_strict":true`, false, ReasonKeyBudgetStrict, ReasonKeyBudgetStrict, nil},
+		{"strict, no window", `,"budget_strict":true`, true, "", ReasonKeyBudgetStrict, nil},
 		{"float window", `,"limit_weekly_microdollars":1.0`, false, ReasonKeyShape + ":limit_weekly_microdollars",
 			ReasonKeyShape + ":limit_weekly_microdollars", nil},
 	} {
@@ -419,8 +422,109 @@ func TestAWindowedKeyIsInTheCohortWithItsWindows(t *testing.T) {
 			t.Errorf("%s: eligible %v %q windows %+v, want %v %q %+v", v.name, k.Eligible, k.Reason, k.Windows,
 				v.eligible, v.reason, v.windows)
 		}
+		if want := v.name == "strict, no window"; k.StrictLimitless != want {
+			t.Errorf("%s: StrictLimitless %v, want %v", v.name, k.StrictLimitless, want)
+		}
 		if ok, reason := k.PilotAt(now); ok != (v.pilot == "") || reason != v.pilot {
 			t.Errorf("%s: PilotAt %v %q, want %q", v.name, ok, reason, v.pilot)
+		}
+	}
+}
+
+// TestOnlyAStrictKeyWithNoLimitIsStrictLimitless
+// (fast-admission-e2-strict-keys.md section 4.1): a budget_strict key with a
+// lifetime limit is key_limit, with any window, enforcing or alert-only,
+// key_budget_strict, and neither is StrictLimitless; with no limit at all it
+// is eligible and StrictLimitless, its pilot reason key_budget_strict, an
+// expiry or a disabled flag still first. A key that is not strict, or whose
+// budget_strict is not a JSON bool, never is.
+func TestOnlyAStrictKeyWithNoLimitIsStrictLimitless(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	body := func(extra string) string {
+		return `{"hash":"kh_synthetic","salt":"s","secret_hash":"x","lookup_hash":"lh_synthetic","name":"n",` +
+			`"label":"l","workspace_id":"ws_synthetic","creator_user_id":"u"` + extra + `}`
+	}
+	for _, v := range []struct {
+		name, extra    string
+		eligible       bool
+		limitless      bool
+		reason, pilot  string
+		windowsPresent bool
+	}{
+		{"limitless", `,"budget_strict":true`, true, true, "", ReasonKeyBudgetStrict, false},
+		// Python's authorize refuses a strict key with another shard count
+		// (a 500); the key keeps it, and the edge passes it (decide.go).
+		{"limitless, two shards", `,"budget_strict":true,"usage_shard_count":2`, true, true, "",
+			ReasonKeyBudgetStrict, false},
+		{"limitless, nulls", `,"budget_strict":true,"limit_microdollars":null,"limit_daily_microdollars":null,` +
+			`"limit_weekly_microdollars":null,"limit_monthly_microdollars":null`, true, true, "",
+			ReasonKeyBudgetStrict, false},
+		{"lifetime limit", `,"budget_strict":true,"limit_microdollars":5`, false, false, ReasonKeyLimit,
+			ReasonKeyLimit, false},
+		{"zero lifetime limit", `,"budget_strict":true,"limit_microdollars":0`, false, false, ReasonKeyLimit,
+			ReasonKeyLimit, false},
+		{"daily", `,"budget_strict":true,"limit_daily_microdollars":5`, false, false, ReasonKeyBudgetStrict,
+			ReasonKeyWindowLimit, true},
+		{"weekly", `,"budget_strict":true,"limit_weekly_microdollars":5`, false, false, ReasonKeyBudgetStrict,
+			ReasonKeyWindowLimit, true},
+		{"monthly", `,"budget_strict":true,"limit_monthly_microdollars":5`, false, false, ReasonKeyBudgetStrict,
+			ReasonKeyWindowLimit, true},
+		{"alert-only window", `,"budget_strict":true,"limit_monthly_microdollars":5,"budget_alert_only":true`,
+			false, false, ReasonKeyBudgetStrict, ReasonKeyWindowAlert, true},
+		{"zero window", `,"budget_strict":true,"limit_daily_microdollars":0`, false, false, ReasonKeyBudgetStrict,
+			ReasonKeyWindowLimit, true},
+		{"expired", `,"budget_strict":true,"expires_at":"2026-01-01T00:00:00Z"`, true, true, "", ReasonKeyExpired,
+			false},
+		{"disabled", `,"budget_strict":true,"disabled":true`, false, false, ReasonKeyDisabled, ReasonKeyDisabled,
+			false},
+		{"not strict", `,"budget_strict":false`, true, false, "", "", false},
+		{"strict as a string", `,"budget_strict":"true"`, false, false, ReasonKeyShape + ":budget_strict",
+			ReasonKeyShape + ":budget_strict", false},
+		{"strict as an integer", `,"budget_strict":1`, false, false, ReasonKeyShape + ":budget_strict",
+			ReasonKeyShape + ":budget_strict", false},
+	} {
+		k := ParseKey(body(v.extra))
+		if k.Eligible != v.eligible || k.StrictLimitless != v.limitless || k.Reason != v.reason ||
+			(k.Windows != nil) != v.windowsPresent {
+			t.Errorf("%s: eligible %v limitless %v %q windows %v, want %v %v %q %v", v.name, k.Eligible,
+				k.StrictLimitless, k.Reason, k.Windows != nil, v.eligible, v.limitless, v.reason, v.windowsPresent)
+		}
+		if ok, reason := k.PilotAt(now); ok != (v.pilot == "") || reason != v.pilot {
+			t.Errorf("%s: PilotAt %v %q, want %q", v.name, ok, reason, v.pilot)
+		}
+		if want := map[bool]int{true: 2, false: 1}[strings.Contains(v.extra, "usage_shard_count")]; k.Eligible &&
+			k.Shards != want {
+			t.Errorf("%s: shards %d, want %d", v.name, k.Shards, want)
+		}
+	}
+}
+
+// TestAStrictKeysRowIsReadWithItAndGatesIt: FromContext keeps the row the
+// key-context read found (store.StrictKeyLimit), and StrictRowReason names
+// what Python's strict reserve would not match: no row read, no row (its
+// 402), a mirrored limit; "" only for a row present and limitless.
+func TestAStrictKeysRowIsReadWithItAndGatesIt(t *testing.T) {
+	for _, v := range []struct {
+		row  store.StrictKeyLimit
+		want string
+	}{
+		{store.StrictKeyLimit{}, StrictRowUnread},
+		{store.StrictKeyLimit{Row: true, Limitless: true}, StrictRowUnread},
+		{store.StrictKeyLimit{Read: true}, StrictRowMissing},
+		{store.StrictKeyLimit{Read: true, Limitless: true}, StrictRowMissing},
+		{store.StrictKeyLimit{Read: true, Row: true}, StrictRowLimited},
+		{store.StrictKeyLimit{Read: true, Row: true, Limitless: true}, ""},
+	} {
+		f := FromContext(store.KeyContext{
+			KeyBody: `{"hash":"kh","salt":"s","secret_hash":"x","lookup_hash":"lh","name":"n","label":"l",` +
+				`"workspace_id":"ws","creator_user_id":null,"budget_strict":true}`,
+			RangeWorkspaceID: "ws", StrictLimit: v.row,
+		})
+		if f.StrictRow != v.row || !f.Key.StrictLimitless {
+			t.Fatalf("%+v: the facts keep %+v, limitless %v", v.row, f.StrictRow, f.Key.StrictLimitless)
+		}
+		if got := f.StrictRowReason(); got != v.want {
+			t.Errorf("%+v: %q, want %q", v.row, got, v.want)
 		}
 	}
 }

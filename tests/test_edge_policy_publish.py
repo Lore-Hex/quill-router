@@ -1027,6 +1027,120 @@ def test_rollout_renders_key_windows_as_a_literal_off() -> None:
         '"TR_FASTPATH_PILOT_KEY_WINDOWS=off"']
 
 
+# --- fastpath_pilot_strict_keys (docs/design/fast-admission-e2-strict-keys.md section 5) ---
+
+def test_strict_keys_defaults_off_and_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TR_FASTPATH_PILOT_STRICT_KEYS", raising=False)
+    assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_pilot_strict_keys == "off"  # type: ignore[call-arg]
+    for mode in ("off", "shadow", "enforce"):
+        monkeypatch.setenv("TR_FASTPATH_PILOT_STRICT_KEYS", mode)
+        assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_pilot_strict_keys == mode  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["", "OFF", "Shadow", "alert", "on", "true", "false", "0", " off", "enforcing"])
+def test_strict_keys_refuses_any_other_spelling(value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Anything but the three values refuses to start, so the previous
+    revision keeps serving."""
+    with pytest.raises(ValidationError, match="fastpath_pilot_strict_keys"):
+        Settings(environment="test", sentry_dsn=None, fastpath_pilot_strict_keys=value)
+    monkeypatch.setenv("TR_FASTPATH_PILOT_STRICT_KEYS", value)
+    with pytest.raises(ValidationError, match="fastpath_pilot_strict_keys"):
+        Settings(_env_file=None, environment="test", sentry_dsn=None)  # type: ignore[call-arg]
+
+
+def test_off_publishes_no_strict_keys_member_and_the_bytes_of_today(key) -> None:
+    """Off (the default) the body has no fastpath_pilot_strict_keys, so a Go
+    node that does not know the member is unaffected: the off body is the
+    shadow body without that one member, byte for byte, and the golden body
+    is still what the publisher writes."""
+    default = _publisher(_settings(key), Clock(T0)).current().body
+    assert _settings(key).fastpath_pilot_strict_keys == "off"
+    assert b"fastpath_pilot_strict_keys" not in default
+    off = _publisher(_settings(key, fastpath_pilot_strict_keys="off"), Clock(T0)).current().body
+    assert off == default
+    shadow = json.loads(_publisher(_settings(key, fastpath_pilot_strict_keys="shadow"), Clock(T0)).current().body)
+    assert shadow.pop("fastpath_pilot_strict_keys") == "shadow"
+    assert json.dumps(shadow, sort_keys=True, separators=(",", ":")).encode("ascii") == default
+    assert b"fastpath_pilot_strict_keys" not in VECTORS.render_body()
+    assert VECTORS.fixture_settings().fastpath_pilot_strict_keys == "off"
+
+
+@pytest.mark.parametrize("mode", ["shadow", "enforce"])
+def test_shadow_and_enforce_publish_the_strict_member_signed(key, mode: str) -> None:
+    settings = _settings(key, fastpath_pilot_strict_keys=mode)
+    client = TestClient(_app(settings, _publisher(settings, Clock(T0))))
+    response = _get(client)
+    assert response.status_code == 200
+    body, _claims = _verify(response, settings, key[1], T0)
+    assert json.loads(body)["fastpath_pilot_strict_keys"] == mode
+    policy = parse_edge_policy(body)
+    assert policy.fastpath_pilot_strict_keys == mode
+    assert canonical_edge_policy_bytes(policy) == body
+
+
+def test_the_strict_member_is_independent_of_the_key_windows_member(key) -> None:
+    """The two switches publish apart: either alone, both, neither."""
+    for windows, strict in (("off", "enforce"), ("enforce", "off"), ("enforce", "shadow"), ("alert", "enforce")):
+        body = json.loads(_publisher(_settings(key, fastpath_pilot_key_windows=windows,
+                                               fastpath_pilot_strict_keys=strict), Clock(T0)).current().body)
+        assert body.get("fastpath_pilot_key_windows") == (None if windows == "off" else windows)
+        assert body.get("fastpath_pilot_strict_keys") == (None if strict == "off" else strict)
+
+
+def test_the_golden_files_ignore_the_strict_keys_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TR_FASTPATH_PILOT_STRICT_KEYS", "enforce")
+    # Positive control: the environment does reach an unpinned Settings.
+    assert Settings(environment="test", sentry_dsn=None).fastpath_pilot_strict_keys == "enforce"
+    assert VECTORS.render_body() == VECTORS.OUTPUT_BODY.read_bytes()
+    assert VECTORS.OUTPUT_MANIFEST.read_text() == VECTORS.render_manifest()
+
+
+def test_rollout_renders_strict_keys_as_a_literal_off() -> None:
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert re.findall(r'"TR_FASTPATH_PILOT_STRICT_KEYS=[^"]*"', rollout) == [
+        '"TR_FASTPATH_PILOT_STRICT_KEYS=off"']
+
+
+@pytest.mark.parametrize("mode", ["shadow", "enforce"])
+def test_a_strict_keys_member_parses_and_stays_canonical(mode: str) -> None:
+    decoded = {**json.loads(_golden_body()), "fastpath_pilot_strict_keys": mode}
+    raw = json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+    policy = parse_edge_policy(raw)
+    assert policy.fastpath_pilot_strict_keys == mode
+    assert canonical_edge_policy_bytes(policy) == raw.encode("ascii")
+    # Absent parses as off (None) and re-encodes without the member.
+    assert parse_edge_policy(_golden_body()).fastpath_pilot_strict_keys is None
+
+
+@pytest.mark.parametrize("value", ["off", None, "Enforce", "alert", True, 1, ""])
+def test_the_body_parser_refuses_another_strict_keys_member(value: Any) -> None:
+    decoded = json.loads(_golden_body())
+    parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":")))
+    with pytest.raises((ValueError, ValidationError)):
+        parse_edge_policy(json.dumps({**decoded, "fastpath_pilot_strict_keys": value}, sort_keys=True,
+                                     separators=(",", ":")))
+
+
+def test_the_strict_keys_setting_is_the_edges_alone() -> None:
+    """Python's own pilot keeps every strict key out under every mode
+    (pilot_reason's key_cap for budget_strict, tests/test_fastpath_frontdoor.py):
+    its leased branch reads no tr_key_limit row, so it could not keep the
+    strict path's 402 for a missing one. Only the publisher reads the
+    setting."""
+    readers = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "src" / "trusted_router").rglob("*.py")
+        if "fastpath_pilot_strict_keys" in path.read_text(encoding="utf-8")
+    )
+    assert readers == [
+        "src/trusted_router/config.py",
+        "src/trusted_router/edge_policy.py",
+        "src/trusted_router/services/edge_policy_publisher.py",
+    ]
+    source = (ROOT / "src" / "trusted_router" / "routes" / "internal" / "gateway.py").read_text()
+    assert "budget_strict=bool(api_key.budget_strict)," in source
+
+
 def test_ticket_authority_is_the_runtime_read_at_each_signing(key) -> None:
     """A signer, an epoch of at least 1 and a journal region, each required,
     read from the runtime when signing, not when the publisher was built."""

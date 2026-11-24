@@ -85,7 +85,7 @@ Fields, all required:
   ticketed, so the edge passes them. Both members are absent with the switch
   off; null and false are refused.
 
-Six top-level fields are optional:
+Seven top-level fields are optional:
 
 - ``fastpath_pilot_key_windows``: ``"alert"`` or ``"enforce"``, the setting of
   that name (docs/design/fast-admission-e2-key-windows.md section 5): which
@@ -93,6 +93,13 @@ Six top-level fields are optional:
   ``off``, so the default body is byte-identical to one from before the field
   existed, and Go reads absent as ``off``. ``null`` and ``"off"`` are refused,
   so each mode has exactly one encoding.
+- ``fastpath_pilot_strict_keys``: ``"shadow"`` or ``"enforce"``, the setting of
+  that name (docs/design/fast-admission-e2-strict-keys.md section 5): whether
+  the edge composes (shadow) or decides (enforce) a ``budget_strict`` key with
+  no lifetime limit and no spend window. Absent when the setting is ``off``,
+  so the default body is byte-identical, and Go reads absent as ``off``.
+  ``null`` and ``"off"`` are refused. Go reads it before the publisher writes
+  it.
 - ``fastpath_edge_hosted_decide``: ``true`` when the setting of that name is
   on; absent otherwise. Permits the exact hosted decision model arm. The
   nested ``async_settle.decide_route`` is present as ``true`` when this mode is
@@ -289,6 +296,10 @@ class EdgePolicyV1(Frozen):
     fastpath_pilot_key_windows: Literal["alert", "enforce"] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
+    # Optional: absent is "off", and the canonical bytes omit it then.
+    fastpath_pilot_strict_keys: Literal["shadow", "enforce"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     # Optional: absent is off, and the canonical bytes omit it then.
     fastpath_edge_hosted_decide: Flag | None = Field(
         default=None, exclude_if=lambda value: value is None,
@@ -315,6 +326,8 @@ class EdgePolicyV1(Frozen):
             raise ValueError("fastpath_edge_hosted_decide is absent when off, never null or false")
         if self.fastpath_pilot_key_windows is None and "fastpath_pilot_key_windows" in self.model_fields_set:
             raise ValueError("fastpath_pilot_key_windows is absent when off, never null")
+        if self.fastpath_pilot_strict_keys is None and "fastpath_pilot_strict_keys" in self.model_fields_set:
+            raise ValueError("fastpath_pilot_strict_keys is absent when off, never null")
         if self.fastpath_edge_streams is not True and "fastpath_edge_streams" in self.model_fields_set:
             raise ValueError("fastpath_edge_streams is absent when off, never null or false")
         if self.fastpath_stream_ceiling is not True and "fastpath_stream_ceiling" in self.model_fields_set:

@@ -827,6 +827,93 @@ func TestTheKeyWindowsModeIsOptional(t *testing.T) {
 	}
 }
 
+// strictKeysMember matches a fastpath_pilot_strict_keys member, whatever its
+// value, so the tests run on a golden body with or without one.
+var strictKeysMember = regexp.MustCompile(`"fastpath_pilot_strict_keys":("[^"]*"|[^,]*),`)
+
+// withStrictKeys is the golden body with its fastpath_pilot_strict_keys
+// member set to value (raw JSON) in its canonical place, just before
+// fastpath_pilot_workspaces; "" removes it.
+func withStrictKeys(t *testing.T, raw []byte, value string) []byte {
+	t.Helper()
+	out := strictKeysMember.ReplaceAll(raw, nil)
+	if value == "" {
+		return out
+	}
+	at := []byte(`"fastpath_pilot_workspaces":`)
+	if bytes.Count(out, at) != 1 {
+		t.Fatal("the golden body has no single fastpath_pilot_workspaces")
+	}
+	return bytes.Replace(out, at, append([]byte(`"fastpath_pilot_strict_keys":`+value+`,`), at...), 1)
+}
+
+// TestTheStrictKeysModeIsOptional (docs/design/fast-admission-e2-strict-keys.md
+// section 5): Go ships before Python publishes the member, so a body
+// without fastpath_pilot_strict_keys parses and reads as off, the only form
+// of off; a body with it parses "shadow" and "enforce" as published, and
+// verifies under a manifest signed for it; "off", null, another string,
+// another type and a member out of canonical order are refused, as
+// Python's parse_edge_policy refuses them.
+func TestTheStrictKeysModeIsOptional(t *testing.T) {
+	m, published := policyGolden(t)
+	raw := withStrictKeys(t, published, "")
+	p, err := ParseEdgePolicy(raw)
+	if err != nil || p.FastpathPilotStrictKeys != nil || p.StrictKeysMode() != StrictKeysOff {
+		t.Fatalf("absent fastpath_pilot_strict_keys: %v, %+v", err, p)
+	}
+	for _, mode := range []string{StrictKeysShadow, StrictKeysEnforce} {
+		body := withStrictKeys(t, raw, `"`+mode+`"`)
+		got, err := ParseEdgePolicy(body)
+		if err != nil || got.FastpathPilotStrictKeys == nil || got.StrictKeysMode() != mode {
+			t.Fatalf("%s: %v, %+v", mode, err, got)
+		}
+		// Every other field is what the golden body says, the key windows'
+		// mode among them.
+		got.FastpathPilotStrictKeys = nil
+		if a, b := canonical(got), canonical(p); !bytes.Equal(a, b) {
+			t.Fatalf("%s changed another field:\n%s\n%s", mode, a, b)
+		}
+		if got.KeyWindowsMode() != p.KeyWindowsMode() {
+			t.Fatalf("%s moved the key windows' mode", mode)
+		}
+	}
+	signed := withStrictKeys(t, raw, `"enforce"`)
+	s := testKeySigner(t, m)
+	verified, _, err := VerifyEdgePolicy(s.signPolicy(t, signed), []TrustedKey{goldenKey(t, m)}, signed,
+		policyOptions(m, policyIssuedAt))
+	if err != nil || verified.StrictKeysMode() != StrictKeysEnforce {
+		t.Fatalf("a signed body with fastpath_pilot_strict_keys: %v, %+v", err, verified)
+	}
+	for name, value := range map[string]string{
+		"off":           `"off"`,
+		"null":          `null`,
+		"empty":         `""`,
+		"upper case":    `"ENFORCE"`,
+		"another mode":  `"alert"`,
+		"padded":        `" shadow"`,
+		"a bool":        `true`,
+		"an integer":    `1`,
+		"an object":     `{"mode":"shadow"}`,
+		"an array":      `["shadow"]`,
+		"unknown key":   `"shadow","fastpath_pilot_strict_keys_x":"shadow"`,
+		"windows' name": `"enforce","fastpath_pilot_strict_windows":"enforce"`,
+	} {
+		if got, err := ParseEdgePolicy(withStrictKeys(t, raw, value)); err == nil {
+			t.Errorf("%s: accepted as %v", name, got.StrictKeysMode())
+		}
+	}
+	// Out of canonical order: the member before fastpath_pilot_regions.
+	at := []byte(`"fastpath_pilot_regions":`)
+	misplaced := bytes.Replace(raw, at, append([]byte(`"fastpath_pilot_strict_keys":"shadow",`), at...), 1)
+	if _, err := ParseEdgePolicy(misplaced); err == nil || !strings.Contains(err.Error(), "canonical") {
+		t.Errorf("a misplaced member: %v", err)
+	}
+	// The positive control for the refusals: the same splice accepts a mode.
+	if _, err := ParseEdgePolicy(withStrictKeys(t, raw, `"shadow"`)); err != nil {
+		t.Fatalf("the refusals' control: %v", err)
+	}
+}
+
 // TestTheStreamsMemberVectors: fastpath_edge_streams as Python publishes and
 // reads it (scripts/fastpath/edge_policy_vectors.py writes
 // edge_policy_streams_v1.json; tests/test_edge_policy_publish.py holds

@@ -100,6 +100,14 @@ const (
 	// 8.3, at most 0.05% of compares). Counted, never paged one by one;
 	// AlertWindowRace watches its rate and its repeats per key.
 	ClassWindowRace = "window_race"
+	// ClassStrictPythonBusy: Python answered its strict-budget-busy 503
+	// (strictBusyMessage, read through) to a limitless strict key Go
+	// decided: its per-process admission slot for the key was taken, a
+	// harm limit on the key's counter row, which the edge does not write.
+	// No refusal on the facts, so neither an agreement nor a would-admit
+	// (docs/design/fast-admission-e2-strict-keys.md section 6): counted
+	// apart, never paged.
+	ClassStrictPythonBusy = "strict.python_busy"
 	// ClassWindowRaceUnconfirmed: a race candidate no re-read settled (no
 	// read timestamp from Python or one that does not parse, the limiter, a
 	// failed or late re-read, a window reset since). It pages as a
@@ -158,10 +166,12 @@ const (
 const AlertWouldAdmit = "edge_would_admit_python_refused"
 
 // The 503 bodies' messages (errors.py assert_workspace_billing_active;
-// gateway.py's insert outcome unknown, decision 1).
+// gateway.py's insert outcome unknown, decision 1; main.py's handler of
+// strict_budget.StrictBudgetBusy).
 const (
 	pauseMessage       = "Workspace billing is paused"
 	unavailableMessage = "Authorization unavailable; retry"
+	strictBusyMessage  = "Strict budget authorization is busy; retry with backoff."
 )
 
 // KeyCache is the key and workspace cache the shadow reads and evicts
@@ -296,6 +306,11 @@ type fullTally struct {
 	// streams are the requests passed as body.stream, by the Stage D
 	// reason the edge reads for them (Decided.StreamStageD).
 	streams map[string]int
+	// strict are the classes of the requests whose decision is a limitless
+	// strict key's (Decision.StrictLimitless): the gate of
+	// fastpath_pilot_strict_keys counts its comparisons there
+	// (docs/design/fast-admission-e2-strict-keys.md section 6).
+	strict map[string]int
 	// async are the async-v1 counts (§4.4 of
 	// docs/design/fast-admission-e2-g15-async.md), by the line's map name
 	// (asyncCounts).
@@ -327,7 +342,8 @@ var asyncCounts = []string{asyncSeen, asyncCompared, asyncFields, asyncShape, as
 
 func newFullTally() *fullTally {
 	t := &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{},
-		cohort: map[string]int{}, windows: map[string]int{}, streams: map[string]int{}, async: map[string]map[string]int{}}
+		cohort: map[string]int{}, windows: map[string]int{}, streams: map[string]int{}, strict: map[string]int{},
+		async: map[string]map[string]int{}}
 	for _, name := range asyncCounts {
 		t.async[name] = map[string]int{}
 	}
@@ -337,7 +353,8 @@ func newFullTally() *fullTally {
 func (t *fullTally) clone() *fullTally {
 	c := &fullTally{classes: clonedCounts(t.classes), fields: clonedCounts(t.fields), rows: clonedCounts(t.rows),
 		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), readBack: t.readBack,
-		windows: clonedCounts(t.windows), streams: clonedCounts(t.streams), async: map[string]map[string]int{}}
+		windows: clonedCounts(t.windows), streams: clonedCounts(t.streams), strict: clonedCounts(t.strict),
+		async: map[string]map[string]int{}}
 	for name, m := range t.async {
 		c.async[name] = clonedCounts(m)
 	}
@@ -636,14 +653,18 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 			r = fullResult{class: ClassUnread + ".compare_failed"}
 		}
 	}()
+	strict := d.ForShadow() != nil && d.ForShadow().StrictLimitless
 	if leased, ok := leasedUnleased(d, a); ok {
 		r = inFlightAgreed(compareWindowed(d, leased, w), leased, decidePass)
 		// Python's own answer carried a ticket: counted as such, and its
 		// async members are not the ones compared (G15 section 4.4).
 		r.async.pythonAdmitted, r.async.compared, r.async.fields = true, "", nil
+		r.strict = strict
 		return r
 	}
-	return inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
+	r = inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
+	r.strict = strict
+	return r
 }
 
 // leasedUnleased is Python's answer as Python would have given it without
@@ -793,6 +814,9 @@ type fullResult struct {
 	// funding is the credit read that settled, or failed to settle,
 	// Python's credit refusal (confirmFunding); nil for any other answer.
 	funding *fundingRead
+	// strict: Go's decision is a limitless strict key's
+	// (Decision.StrictLimitless), whose class the strict map counts too.
+	strict bool
 	// key is the request's lookup hash (Decided.LookupHash), for
 	// distinct_keys; never logged.
 	key string
@@ -892,6 +916,9 @@ func compareClass(d Decided, a pyAnswer, py asyncMembers) fullResult {
 		r.class = ClassGoPassed + ".insert.scope_taken"
 	case a.status == http.StatusServiceUnavailable && refusal.message == unavailableMessage:
 		r.class = ClassPythonUnavailable
+	case a.status == http.StatusServiceUnavailable && refusal.message == strictBusyMessage &&
+		d.ForShadow().StrictLimitless:
+		r.class = ClassStrictPythonBusy
 	case a.status >= 500 && !(a.status == http.StatusServiceUnavailable && refusal.message == pauseMessage):
 		r.class = ClassPythonError + "." + strconv.Itoa(a.status)
 	case unchecked && refusal.kind == windowRefusal:
@@ -1650,6 +1677,9 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		if r.stream != "" {
 			tally.streams[r.stream]++
 		}
+		if r.strict {
+			boundedTo(tally.strict, r.class, maxShadowReasons*4)
+		}
 		if a := r.async; a.pop != "" {
 			tally.async[asyncSeen][a.pop]++
 			if a.shape != "" {
@@ -1745,8 +1775,8 @@ func (sh *fullShadow) flush() {
 			line += " " + name + "=%s"
 			args = append(args, jsonOf(t.async[name]))
 		}
-		line += " streams=%s"
-		args = append(args, jsonOf(t.streams))
+		line += " streams=%s strict=%s"
+		args = append(args, jsonOf(t.streams), jsonOf(t.strict))
 		sh.logf(line, args...)
 	}
 	// Every count of the line is the period's, the cache's too: its own
@@ -1786,7 +1816,10 @@ type DecideShadowCounts struct {
 	Classes, Fields, Rows, Decide, Cohort, Windows map[string]int
 	// Streams are the requests passed as body.stream by the Stage D reason
 	// the edge reads for them (Decided.StreamStageD).
-	Streams            map[string]int
+	Streams map[string]int
+	// Strict are the classes of the limitless strict keys' decisions (the
+	// line's strict map).
+	Strict             map[string]int
 	Async              map[string]map[string]int
 	ReadBack           int
 	Dropped, Evictions int64
@@ -1808,7 +1841,7 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	keys := len(sh.keys)
 	sh.mu.Unlock()
 	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
-		Windows: t.windows, Streams: t.streams,
+		Windows: t.windows, Streams: t.streams, Strict: t.strict,
 		Async: t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load(),
 		DistinctKeys: keys, DistinctKeysSince: sh.keysSince}
 }

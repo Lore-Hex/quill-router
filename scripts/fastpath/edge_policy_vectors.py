@@ -153,6 +153,9 @@ def fixture_settings(**overrides: object) -> Settings:
         # Off, as deployed: the body carries no fastpath_pilot_key_windows,
         # the member Go nodes accept only from e2-key-windows increment 2.
         fastpath_pilot_key_windows="off",
+        # Off, as deployed: the body carries no fastpath_pilot_strict_keys,
+        # the member Go nodes accept only from e2-strict-keys' edge release.
+        fastpath_pilot_strict_keys="off",
     )
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg, arg-type]

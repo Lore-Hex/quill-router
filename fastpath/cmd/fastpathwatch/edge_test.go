@@ -418,6 +418,44 @@ func TestTheEdgeReportPrintsTheWindowRaceFigures(t *testing.T) {
 	}
 }
 
+// TestTheEdgeReportPrintsTheStrictKeyFigures
+// (docs/design/fast-admission-e2-strict-keys.md section 6): the shadow's
+// strict map summed over the span's lines, from a line without one too (a
+// node from before the map): the limitless strict keys' comparable
+// requests and their agreements, Python's refusals of one Go would admit
+// (the gate's zero), and Python's strict-budget-busy 503s, neither.
+func TestTheEdgeReportPrintsTheStrictKeyFigures(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=10 ` +
+			`differ=1 would_admit_python_refused=1 read_back=0 classes={"agree_full":10,"differ":1,` +
+			`"strict.python_busy":2,"would_admit_python_refused.402.key_limit_exceeded":1} fields={} rows={} ` +
+			`decide={"key.budget_strict":14} cohort={} windows={} ` +
+			`strict={"agree_full":9,"differ":1,"strict.python_busy":2,` +
+			`"would_admit_python_refused.402.key_limit_exceeded":1,"python_error.503":1}`},
+		{"2", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=7 ` +
+			`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":7} fields={} rows={} ` +
+			`decide={"key.budget_strict":7} cohort={} windows={} strict={"agree_full":7}`},
+		{"3", "tr-fastpath-6", `2026/10/24 12:02:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=3 ` +
+			`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":3} fields={} rows={} ` +
+			`decide={"on":3} cohort={} windows={}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-22T13:00:00Z"},
+		&out, d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	g := r.I2
+	if g.StrictCompared != 17 || g.StrictAgreeFull != 16 || g.StrictWouldAdmit != 1 || g.StrictPythonBusy != 2 {
+		t.Errorf("the strict figures: compared %d agree %d would-admit %d busy %d: %s", g.StrictCompared,
+			g.StrictAgreeFull, g.StrictWouldAdmit, g.StrictPythonBusy, out.Bytes())
+	}
+}
+
 // TestTheEdgeReportTakesTheLargestDistinctKeys: distinct_keys is a node's
 // figure since its set began (distinct_keys_since), not a period's, so the
 // report's is the largest any line carries, never a sum over periods or
