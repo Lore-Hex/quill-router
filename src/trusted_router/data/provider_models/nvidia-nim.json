@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-11-24T02:36:58Z",
+  "generated_at": "2026-11-24T04:28:09Z",
   "model_count": 132,
   "models": [
     {
@@ -2264,10 +2264,9 @@
       "status": 1,
       "id": "stepfun-ai/step-5-preview",
       "upstream_id": "stepfun-ai/step-5-preview",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "display_name": "nvidia/nemotron-3.5-super-vl-120b-a12b",
@@ -2306,9 +2305,10 @@
       "status": 1,
       "id": "minimax/minimax-m3.1-flash",
       "upstream_id": "minimaxai/minimax-m3.1-flash",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "nvidia/nemotron-3.5-bolt-e4b",

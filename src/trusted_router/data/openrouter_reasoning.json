@@ -1275,12 +1275,6 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "moonshotai/kimi-k2-thinking": {
-      "mandatory": true,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "moonshotai/kimi-k2.5": {
       "mandatory": false,
       "default_enabled": true,
