@@ -273,7 +273,7 @@
         "top_p"
       ],
       "routable": true,
-      "input_token_price_per_m": 1050000,
+      "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 3500000,
       "cached_input_token_price_per_m": 129500
     },
@@ -369,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-24T12:28:21Z",
+  "generated_at": "2026-11-24T13:12:19Z",
   "model_count": 8
 }

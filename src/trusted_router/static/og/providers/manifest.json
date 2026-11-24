@@ -235,10 +235,10 @@
   },
   "decisionmodelsio-eu": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio-eu"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 5,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
