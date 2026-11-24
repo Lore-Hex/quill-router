@@ -279,8 +279,7 @@ def site(status: int | None, latency: str, details: str = "response_sent_by_back
     """A request to the public site or an exchange site, as the balancer logs it.
 
     A GET with a Cloud CDN lookup; INFO below 400 and when there is no status,
-    WARNING for every status of 400 or more, 5xx included (the live log has
-    no balancer entry at ERROR or above).
+    WARNING for every status of 400 or more, 5xx included.
     """
     entry = lb(status, latency, details, backend, cacheId="IAD", **payload)
     entry["httpRequest"].update(requestMethod="GET", cacheLookup=True)
@@ -377,18 +376,18 @@ SAMPLED = {
         run_line(f"{GW}fastpath pilot passed over reason=key_cap workspace_id=ws_x"),
     ],
     STATIC_SITE: [
-        site(200, "0.002080s", "response_from_cache"),
-        site(200, "0.133315s"),
-        site(200, "0.120417s", "response_from_cache_validated"),
+        site(200, "0.002s", "response_from_cache"),
+        site(200, "0.130s"),
+        site(200, "0.120s", "response_from_cache_validated"),
         site(304, "0.004s", "response_from_cache"),
         # A directory brute force's guess, logged at WARNING like every 4xx.
-        site(404, "0.144736s"),
+        site(404, "0.140s"),
         # The public site: a cache miss carries Cloud Armor's ACCEPT, a cache hit no Armor record.
         site(200, "0.042s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
-        site(200, "0.005207s", "response_from_cache", PUBLIC),
+        site(200, "0.005s", "response_from_cache", PUBLIC),
         site(304, "0.003s", "response_from_cache", PUBLIC),
         site(308, "0.010s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
-        site(404, "0.024082s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(404, "0.020s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
         site(404, "0.999s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
     ],
 }
@@ -484,7 +483,7 @@ KEPT = {
     "public site and exchange site failures, slow calls and Armor matches": [
         site(403, "0.002s", "denied_by_security_policy", PUBLIC, enforcedSecurityPolicy=ARMOR_HOST_DENY),
         site(403, "0.030s"),
-        site(429, "0.103854s", "denied_by_security_policy", PUBLIC, enforcedSecurityPolicy=ARMOR_THROTTLED),
+        site(429, "0.100s", "denied_by_security_policy", PUBLIC, enforcedSecurityPolicy=ARMOR_THROTTLED),
         site(429, "0.050s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
         site(400, "0.020s"),
         site(405, "0.010s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
@@ -499,7 +498,7 @@ KEPT = {
         site(None, "0.050s", "client_disconnected_before_any_response", PUBLIC),
         site(200, "0.300s", "client_disconnected_after_partial_response"),
         site(404, "0.100s", "client_disconnected_after_partial_response"),
-        site(200, "1.243477s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(200, "1.250s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
         site(200, "1.5s", "response_from_cache"),
         site(404, "1.0s"),
         site(200, "0.040s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT, previewSecurityPolicy=ARMOR_PREVIEW),
@@ -645,7 +644,7 @@ STATIC_SITE_GUARDS = [
         {**site(403, "0.030s"), "severity": "INFO"},
     ], id="status-upper-bound"),
     pytest.param(r"\n\s*AND httpRequest\.latency<[^\n]+", [
-        site(200, "1.243477s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
+        site(200, "1.250s", backend=PUBLIC, enforcedSecurityPolicy=ARMOR_ACCEPT),
         site(200, "1.5s", "response_from_cache"),
         site(404, "1.0s"),
     ], id="latency"),

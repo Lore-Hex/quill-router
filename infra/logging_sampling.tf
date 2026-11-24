@@ -245,13 +245,12 @@ resource "google_logging_project_exclusion" "sample_control_plane_routine_lines"
 # trusted-router-public-backend, and the token exchange sites' bucket,
 # token-exchange-static. Both serve public pages and static files, and both
 # draw 404 scans: a directory brute force asks for one guessed path per
-# request, each logged as a full entry, so a scan from a few clients can
-# multiply the project's ingestion within hours. On 2026-11-23 two such
-# scans tripped the ingestion step change alert (log_ingestion_cost_guard.tf).
-# Nothing reads these entries one by one: no log metric, alert, script or
-# runbook names either backend's log (docs/runbooks/fastpath-alerts.md reads
-# only the edge's, sampled above), and the balancer's request_count and
-# latency metrics are not log-based.
+# request, each logged as a full entry, so a single scan can multiply the
+# project's ingestion and trip the ingestion step change alert
+# (log_ingestion_cost_guard.tf). Nothing reads these entries one by one: no
+# log metric, alert, script or runbook names either backend's log
+# (docs/runbooks/fastpath-alerts.md reads only the edge's, sampled above),
+# and the balancer's request_count and latency metrics are not log-based.
 #
 # Sampled, 10% kept: responses under 1 s that the backend or Cloud CDN sent
 # (statusDetails response_sent_by_backend, response_from_cache or
@@ -260,20 +259,20 @@ resource "google_logging_project_exclusion" "sample_control_plane_routine_lines"
 # below WARNING, or exactly 404 below ERROR.
 #
 # The severity guard differs from the four exclusions above on purpose. The
-# balancer logs every status of 400 or more at WARNING, 5xx included (no
-# entry in this log reached ERROR in the 30 days kept), so severity<WARNING
-# would keep every 404 and sample nothing of a scan. The 404 branch admits
-# WARNING and stops at ERROR; the 2xx/3xx branch keeps severity<WARNING. The
-# status bounds are what keep a 5xx; the severity bounds keep any entry
-# marked ERROR or above, and any success marked WARNING, out of the sample.
+# balancer logs every status of 400 or more at WARNING, 5xx included, so
+# severity<WARNING would keep every 404 and sample nothing of a scan. The
+# 404 branch admits WARNING and stops at ERROR; the 2xx/3xx branch keeps
+# severity<WARNING. The status bounds are what keep a 5xx; the severity
+# bounds are a backstop that never samples an entry at ERROR or above, nor
+# a success marked WARNING.
 #
 # Kept whole: every other 4xx (Cloud Armor's 403 and 429, the app's 429),
 # every 5xx, every response of 1 s or more, every client disconnect, byte
 # range or other statusDetails form, every preview match, every Armor
 # outcome but ACCEPT, and every entry with no status: the balancer's own
 # failures (internal_error) and Cloud CDN's revalidation sub-entries. Cloud
-# Logging compares a missing status as 0 (checked against this log), so
-# status<400 alone would match those; the >=200 bound keeps them.
+# Logging compares a missing status as its default, 0, so status<400 alone
+# would match those; the >=200 bound keeps them.
 #
 # trusted-router-public-backend's Cloud Armor policy (cloud_armor.tf,
 # public_edge) logs enforcedSecurityPolicy with outcome ACCEPT on every
