@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-11-24T17:28:45Z",
-  "model_count": 27,
+  "generated_at": "2026-11-24T19:28:16Z",
+  "model_count": 28,
   "models": [
     {
       "id": "moonshotai/kimi-k3",
@@ -732,6 +732,31 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Qwen4 Max on Fireworks",
+      "title": "accounts/fireworks/models/qwen4-max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen4-max",
+      "upstream_id": "accounts/fireworks/models/qwen4-max",
+      "context_length": 262144,
+      "created": 1795476305,
+      "supported_features": [
+        "tools"
+      ],
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 75000
     }
   ],
   "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",

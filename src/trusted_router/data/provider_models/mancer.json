@@ -146,7 +146,7 @@
   ],
   "source": "https://mancer.tech/oai/v1/models",
   "pricing_source": "https://mancer.tech/models",
-  "generated_at": "2026-11-24T17:28:45Z",
+  "generated_at": "2026-11-24T19:28:16Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }
