@@ -17,7 +17,7 @@ def records():
     def add(view, **values):
         rows[view].append({field: values.get(field, "COMMITTED" if field == "SPANNER_STATE" else None) for field in audit.PROJECTIONS[view].split()})
 
-    add("TABLES", TABLE_NAME="t")
+    add("TABLES", TABLE_NAME="t", TABLE_TYPE="BASE TABLE")
     add("COLUMNS", TABLE_NAME="t", COLUMN_NAME="id", ORDINAL_POSITION="1", SPANNER_TYPE="INT64", IS_NULLABLE="NO", IS_GENERATED="NEVER", IS_STORED=None)
     add("COLUMNS", TABLE_NAME="t", COLUMN_NAME="timestamp", ORDINAL_POSITION=2, SPANNER_TYPE="TIMESTAMP", IS_NULLABLE="YES", IS_GENERATED="NEVER")
     add("COLUMN_OPTIONS", TABLE_NAME="t", COLUMN_NAME="timestamp", OPTION_NAME="allow_commit_timestamp", OPTION_TYPE="BOOL", OPTION_VALUE="TRUE")
