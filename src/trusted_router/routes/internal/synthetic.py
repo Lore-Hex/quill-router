@@ -58,7 +58,7 @@ from trusted_router.synthetic.route_health import (
 from trusted_router.types import ErrorType
 from trusted_router.unserved_route_hold_plan import (
     applied_unserved_route_holds,
-    pending_unserved_route_holds,
+    pending_unserved_route_hold_counts,
 )
 
 log = logging.getLogger(__name__)
@@ -624,13 +624,15 @@ def register(router: APIRouter) -> None:
                         "reason": "analytics_unavailable",
                     }
                 }
-            held, applied = await run_in_threadpool(_route_holds)
+            held, applied, hold_counts = await run_in_threadpool(_route_holds)
             paging, holding = split_held_flags(flags, held, applied)
             await run_in_threadpool(_report_once, report_route_health, paging)
             if holding:
                 # Claimed per hold episode, not per hour: the route keeps
                 # arriving here until its hold deploys (report_route_holds).
-                await run_in_threadpool(_report_episode_once, report_route_holds, holding, held)
+                await run_in_threadpool(
+                    _report_episode_once, report_route_holds, holding, held, hold_counts,
+                )
             return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
@@ -716,9 +718,12 @@ def _report_episode_once(report: Callable[..., Any], *args: Any) -> Any:
         return report(*args)
 
 
-def _route_holds() -> tuple[dict[tuple[str, str], UnservedRoute], frozenset[tuple[str, str]]]:
+def _route_holds() -> tuple[
+    dict[tuple[str, str], UnservedRoute], frozenset[tuple[str, str]], dict[tuple[str, str], int],
+]:
     """(routes the next price refresh will hold, with their evidence; routes
-    the deployed manifests hold now).
+    the deployed manifests hold now; the hold count each pending hold would
+    carry, above 1 for an escalated repeat hold).
 
     Pending: the /route-health/unserved.json evidence, less any route the
     refresh's provider and route caps would refuse on the deployed manifests.
@@ -726,9 +731,11 @@ def _route_holds() -> tuple[dict[tuple[str, str], UnservedRoute], frozenset[tupl
     unexpired unserved-route holds in the deployed manifests; unreadable
     manifests count as none."""
     held: dict[tuple[str, str], UnservedRoute] = {}
+    counts: dict[tuple[str, str], int] = {}
     try:
         evidence = {(route.provider, route.model): route for route in evaluate_unserved_routes(STORE)}
-        held = {route: evidence[route] for route in pending_unserved_route_holds(set(evidence))}
+        counts = pending_unserved_route_hold_counts(set(evidence))
+        held = {route: evidence[route] for route in counts}
     except Exception:  # noqa: BLE001 - no evidence means page as before, never "held"
         log.warning("synthetic_route_health.hold_evidence_unavailable", exc_info=True)
     applied: frozenset[tuple[str, str]] = frozenset()
@@ -736,7 +743,7 @@ def _route_holds() -> tuple[dict[tuple[str, str], UnservedRoute], frozenset[tupl
         applied = frozenset(applied_unserved_route_holds())
     except Exception:  # noqa: BLE001 - unreadable means page as before, never "held"
         log.warning("synthetic_route_health.applied_holds_unavailable", exc_info=True)
-    return held, applied
+    return held, applied, counts
 
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:

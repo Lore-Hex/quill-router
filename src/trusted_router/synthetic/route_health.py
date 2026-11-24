@@ -985,6 +985,7 @@ def route_hold_overdue_stage(route: UnservedRoute, now: dt.datetime) -> int:
 def report_route_holds(
     flags: list[RouteHealthFlag],
     evidence: dict[tuple[str, str], UnservedRoute] | None = None,
+    hold_counts: dict[tuple[str, str], int] | None = None,
     *,
     now: dt.datetime | None = None,
 ) -> None:
@@ -998,12 +999,19 @@ def report_route_holds(
     first_failure_at), not the hour: one announcement per episode, then one
     route-hold-not-applied alert per ROUTE_HOLD_APPLY_DEADLINE while the hold
     is overdue. Once the hold deploys the route leaves rotation and stops
-    arriving. When the 24h hold lifts and the route still fails, the new
-    streak is a new episode and announces again.
+    arriving. When the hold lifts and the route still fails, the new streak
+    is a new episode and announces again.
+
+    ``hold_counts`` gives the hold count the pending hold would carry
+    (unserved_route_hold_plan.next_unserved_hold_count). A repeat hold (count
+    above 1: the route qualified again soon after its last hold lifted) is
+    held longer and raises route-hold-repeat instead of route-hold, once per
+    episode, asking a human to consider a permanent operator hold.
 
     A flag without evidence (none is expected) keeps the hourly claim.
     """
     from trusted_router.synthetic.alerts import ops_alert
+    from trusted_router.unserved_route_hold_plan import REQUALIFY_WINDOW, unserved_hold_hours
 
     now = now or dt.datetime.now(dt.UTC)
     for flag in flags:
@@ -1014,6 +1022,24 @@ def report_route_holds(
             f"hour={now.astimezone(dt.UTC):%Y-%m-%dT%H}" if route is None
             else f"episode={route.first_failure_at};stage={stage}"
         )
+        count = (hold_counts or {}).get((flag.provider, flag.model), 1)
+        hold_hours = unserved_hold_hours(count)
+        repeat = route is not None and count > 1
+        if repeat:
+            window_hours = int(REQUALIFY_WINDOW.total_seconds() // 3600)
+            ops_alert(
+                f"route-hold-repeat: {flag.provider}/{flag.model} qualified for the "
+                f"provider-route-unserved hold again within {window_hours}h of its last hold "
+                f"lifting{_availability_cause(flag)}; this is hold {count}, so the price refresh "
+                f"holds it for {hold_hours}h instead of {unserved_hold_hours(count - 1)}h. "
+                "A timed hold keeps re-admitting a route that does not recover: consider a "
+                "permanent operator hold (_OPERATOR_HOLD_REASONS in the provider's "
+                "scripts/pricing/providers module) until the provider confirms a fix",
+                fingerprint=["route-hold-repeat", flag.provider, flag.model],
+                tags={**tags, "hold_count": str(count)},
+                # Once per episode, whatever the overdue stage.
+                claim_detail=f"episode={route.first_failure_at}" if route is not None else None,
+            )
         if route is not None and stage > 0:
             deadline_hours = int(ROUTE_HOLD_APPLY_DEADLINE.total_seconds() // 3600)
             ops_alert(
@@ -1028,11 +1054,13 @@ def report_route_holds(
                 claim_detail=claim_detail,
             )
             continue
+        if repeat:
+            continue
         ops_alert(
             f"route-hold: {flag.provider}/{flag.model} has failed every probe for hours "
             f"while {flag.provider} serves other models{_availability_cause(flag)}; the hourly "
             "price refresh holds it from routing and the catalog "
-            "(provider-route-unserved) for 24h, then re-probes it",
+            f"(provider-route-unserved) for {hold_hours}h, then re-probes it",
             fingerprint=["route-hold", flag.provider, flag.model],
             tags=tags,
             claim_detail=claim_detail,
