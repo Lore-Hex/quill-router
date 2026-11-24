@@ -249,6 +249,11 @@ _SNAPSHOT_ATTRIBUTES = (
     "fastpath-edge-decide",
 )
 
+# The node's own decide cache wait in its metadata, exactly as
+# infra/fastpath.tf merges it: the for_each entry's cache_wait, absent when "".
+NODE_CACHE_WAIT = ('{ for name, value in { fastpath-edge-decide-cache-wait = each.value.cache_wait } '
+                   ': name => value if value != "" }')
+
 
 def _snapshot_flags(script: str) -> set[str]:
     """The flags the script adds for the edge's routing snapshot and shadow
@@ -471,22 +476,31 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
     # the snapshot's attributes in with no condition on the node's name.
     resource = tf[tf.index('resource "google_compute_instance" "fastpath_node"'):]
     resource = resource[:resource.index("\n}\n")]
-    # Each entry names its zone and machine type: { zone = ..., machine_type = ... }.
+    # Each entry names its zone, machine type and its own decide cache wait,
+    # one shape for all: { zone = ..., machine_type = ..., cache_wait = ... }.
     for_each = re.search(r"^\s*for_each\s*=\s*\{\n(.*?)^\s*\}$", resource, re.M | re.S)
     assert for_each
     nodes = re.findall(r'^\s*"tr-fastpath-\d+"\s*=', for_each.group(1), re.M)
     placed = re.findall(
-        r'^\s*"tr-fastpath-\d+"\s*=\s*\{\s*zone\s*=\s*"us-central1-[a-z]",\s*machine_type\s*=\s*"[a-z0-9-]+"\s*\}$',
+        r'^\s*"tr-fastpath-\d+"\s*=\s*\{\s*zone\s*=\s*"us-central1-[a-z]",\s*machine_type\s*=\s*"[a-z0-9-]+",'
+        r'\s*cache_wait\s*=\s*"[^"]*"\s*\}$',
         for_each.group(1), re.M)
     assert nodes and len(placed) == len(nodes), (nodes, placed)
-    metadata = re.search(r"^\s*metadata\s*=\s*merge\(\{[^}]*\},\s*([^\n]*)\)$", resource, re.M)
+    # The node's own decide cache wait is the one attribute that depends on
+    # the node, and it names nothing of the snapshot's; it merges in after
+    # the fleet's, so it takes that value's place on that node alone
+    # (test_fastpath_edge_decide_cache_wait.py).
+    assert resource.count(NODE_CACHE_WAIT) == 1 and resource.count("each.value.cache_wait") == 1
+    metadata = re.search(r"^\s*metadata\s*=\s*merge\(\{[^}]*\},\s*([^\n]*)\)$",
+                         resource.replace(NODE_CACHE_WAIT, "NODE_CACHE_WAIT"), re.M)
     # The starved-leases, decide cache wait and settle log's hedge
     # attributes merge in after it, as unconditionally (each empty unless
     # set, test_fastpath_starved_leases.py,
     # test_fastpath_edge_decide_cache_wait.py and test_fastpath_settle_hedge.py).
     assert metadata and metadata.group(1).split(", ") == [
         "local.fastpath_edge_snapshot", "local.fastpath_starved_leases_metadata",
-        "local.fastpath_edge_decide_cache_wait_metadata", "local.fastpath_settle_hedge_metadata"], metadata
+        "local.fastpath_edge_decide_cache_wait_metadata", "NODE_CACHE_WAIT",
+        "local.fastpath_settle_hedge_metadata"], metadata
 
 
 def test_the_snapshot_flags_are_found() -> None:

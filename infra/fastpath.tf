@@ -496,12 +496,17 @@ locals {
   # The decide path's read-through (-edge-decide-cache-wait,
   # docs/design/fast-admission-e2-decide.md decision 2): "" leaves the
   # attribute off, and a node runs its release's default, no wait; "100ms"
-  # has a request whose cached key or credit entry is cold or stale wait up
-  # to that for the strong read that fills it, rather than pass as
-  # cache.key. Set only with a pinned release that takes the flag, and only
-  # a node created from the script that reads the attribute takes it, by the
-  # unit rewrite in docs/runbooks/fastpath-deploy.md, "The decide cache's
-  # wait". "0", or "" again, is the off switch.
+  # has a request whose cached key or credit entry is cold or stale wait,
+  # on a timer of that length started after its first look, for the strong
+  # read that fills it, rather than pass as cache.key. Set only with a
+  # pinned release that takes the flag, and only a node created from the
+  # script that reads the attribute takes it, by the unit rewrite in
+  # docs/runbooks/fastpath-deploy.md, "The decide cache's wait". A node's
+  # own value, its for_each entry's cache_wait below, takes this one's place
+  # on that node alone; "" there leaves this one. So "0", or "" again, here
+  # turns the wait off only where no node carries its own: the off switch is
+  # every cache_wait "" (or "0") as well, and before pinning a release
+  # without the flag, every value "", since "0" still passes it.
   fastpath_edge_decide_cache_wait = ""
   fastpath_edge_decide_cache_wait_metadata = {
     for name, value in { fastpath-edge-decide-cache-wait = local.fastpath_edge_decide_cache_wait } : name => value if value != ""
@@ -795,11 +800,21 @@ resource "google_compute_instance" "fastpath_node" {
   # attributes, and checks no release against its pinned digests (#2668).
   # The same release and metadata; 15 and 16 are drained, leave the edge
   # backend one apply before their removal, then are removed.
+  #
+  # cache_wait is the node's own fastpath-edge-decide-cache-wait: "" adds
+  # nothing, so the node carries local.fastpath_edge_decide_cache_wait's
+  # value or none; "0" or 1ms to 250ms is the node's alone and takes the
+  # fleet value's place. Only a node from 17 on runs the script that reads
+  # the attribute, so only such a node carries one, and the decide path must
+  # be on (tests/test_fastpath_edge_decide_cache_wait.py). Every entry names
+  # cache_wait, so the entries share one shape. 17 carries 100ms, the canary
+  # of docs/runbooks/fastpath-deploy.md, "The decide cache's wait" step 2,
+  # read beside 18 for an hour.
   for_each = {
-    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
-    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
-    "tr-fastpath-17" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
-    "tr-fastpath-18" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
+    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4", cache_wait = "" }
+    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4", cache_wait = "" }
+    "tr-fastpath-17" = { zone = "us-central1-a", machine_type = "e2-standard-4", cache_wait = "100ms" }
+    "tr-fastpath-18" = { zone = "us-central1-b", machine_type = "e2-standard-4", cache_wait = "" }
   }
 
   project      = local.gcp_project_id
@@ -825,6 +840,8 @@ resource "google_compute_instance" "fastpath_node" {
     scopes = ["cloud-platform"]
   }
 
+  # The node's own cache_wait comes after the fleet's decide cache wait, so
+  # it takes that value's place; "" adds nothing.
   metadata = merge({
     enable-oslogin               = "TRUE"
     fastpath-release             = local.fastpath_release
@@ -838,7 +855,7 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-floor               = local.fastpath_floor
     fastpath-allowance-tier2     = local.fastpath_allowance_tier2
     fastpath-allowance-tier1     = local.fastpath_allowance_tier1
-  }, local.fastpath_edge_snapshot, local.fastpath_starved_leases_metadata, local.fastpath_edge_decide_cache_wait_metadata, local.fastpath_settle_hedge_metadata)
+  }, local.fastpath_edge_snapshot, local.fastpath_starved_leases_metadata, local.fastpath_edge_decide_cache_wait_metadata, { for name, value in { fastpath-edge-decide-cache-wait = each.value.cache_wait } : name => value if value != "" }, local.fastpath_settle_hedge_metadata)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
     release_bucket = google_storage_bucket.fastpath_releases.name
