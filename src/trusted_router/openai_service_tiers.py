@@ -9,9 +9,11 @@ metadata use the same values.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from trusted_router.money import token_cost_microdollars
 from trusted_router.pricing import _customer_price
+from trusted_router.provider_lifecycle import openai_gpt56_sol_pricing_period
 
 OPENAI_SERVICE_TIERS = ("default", "auto", "priority")
 OPENAI_PRIORITY_MAX_PROMPT_TOKENS = 272_000
@@ -56,12 +58,30 @@ def _customer_priority_pricing(
     )
 
 
-OPENAI_PRIORITY_PRICING: dict[str, OpenAIPriorityPricing] = {
-    "openai/gpt-5.6-sol": _customer_priority_pricing(
+_OPENAI_GPT56_SOL_MODEL_ID = "openai/gpt-5.6-sol"
+# GPT-5.6 Sol's Fast (ex-Priority) rates share the Standard tier's promotion
+# and switch with it at OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT, locked
+# at authorization like every other effective-dated price. The public pricing
+# page's Fast table (developers.openai.com/api/docs/pricing.md, read
+# 2026-11-23) lists $8 input / $0.80 cached / $40 output per million up to
+# 272K input during the promotion, 2x the $4 / $0.40 / $20 Standard
+# promotion. After it, 2x Standard ($5 / $0.50 / $30) is $10 / $1 / $60.
+_OPENAI_GPT56_SOL_FAST_PRICING: dict[str, OpenAIPriorityPricing] = {
+    "promotion": _customer_priority_pricing(
+        8_000_000,
+        800_000,
+        40_000_000,
+    ),
+    "standard": _customer_priority_pricing(
         10_000_000,
         1_000_000,
         60_000_000,
     ),
+}
+
+# Models whose Fast price does not change over time. GPT-5.6 Sol is priced by
+# date above.
+OPENAI_PRIORITY_PRICING: dict[str, OpenAIPriorityPricing] = {
     "openai/gpt-5.6-terra": _customer_priority_pricing(
         5_000_000,
         500_000,
@@ -75,7 +95,15 @@ OPENAI_PRIORITY_PRICING: dict[str, OpenAIPriorityPricing] = {
 }
 
 
-def openai_priority_pricing(model_id: str) -> OpenAIPriorityPricing | None:
+def openai_priority_pricing(
+    model_id: str,
+    *,
+    at: datetime | str | None = None,
+) -> OpenAIPriorityPricing | None:
+    """Fast (Priority) customer rates at ``at``: the authorization time when
+    pricing a request, or the lifecycle clock when omitted."""
+    if model_id == _OPENAI_GPT56_SOL_MODEL_ID:
+        return _OPENAI_GPT56_SOL_FAST_PRICING[openai_gpt56_sol_pricing_period(at)]
     return OPENAI_PRIORITY_PRICING.get(model_id)
 
 
@@ -86,8 +114,9 @@ def openai_priority_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    effective_at: datetime | str | None = None,
 ) -> int:
-    pricing = openai_priority_pricing(model_id)
+    pricing = openai_priority_pricing(model_id, at=effective_at)
     if pricing is None:
         raise ValueError(f"OpenAI Priority processing is unavailable for {model_id}")
     cost = (

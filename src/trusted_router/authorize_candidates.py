@@ -666,6 +666,7 @@ def endpoint_cost_microdollars(
             output_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_creation_tokens=cache_creation_tokens,
+            effective_at=effective_at,
         )
     document = endpoint_pricing_document((endpoint,))
     return endpoint_cost_microdollars_from_document(

@@ -2335,6 +2335,13 @@ def _openai_gpt56_sol_period(effective_at: datetime) -> str:
     )
 
 
+def openai_gpt56_sol_pricing_period(at: datetime | str | None = None) -> str:
+    """"promotion" or "standard" for GPT-5.6 Sol at ``at`` (default: the
+    lifecycle clock). OpenAI's Standard and Fast (Priority) service tiers both
+    leave the promotion at OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT."""
+    return _openai_gpt56_sol_period(_effective_time(at))
+
+
 def provider_pricing_schedule(
     provider_slug: str,
     model_id: str,

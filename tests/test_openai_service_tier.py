@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,10 @@ from trusted_router.catalog import endpoint_for_id
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
+from trusted_router.provider_lifecycle import (
+    OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT,
+    _utc_now,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +25,15 @@ def openai_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     serve_manifest_rows(
         monkeypatch, tmp_path, "openai", [OPENAI_GPT_5_6_SOL, OPENAI_GPT_4O_MINI]
     )
+
+
+def _sol_fast_rates(now: datetime) -> tuple[int, int, int]:
+    """GPT-5.6 Sol's Fast customer input, cached-input and output rates at
+    ``now``. Authorization prices at the wall clock and the catalog at the
+    lifecycle clock, so each test passes the clock its path reads."""
+    if now < OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT:
+        return 8_440_000, 844_000, 42_200_000
+    return 10_550_000, 1_055_000, 63_300_000
 
 
 def _client_and_key() -> tuple[TestClient, dict[str, object]]:
@@ -90,11 +104,12 @@ def test_hourly_openai_parser_captures_announced_standard_price_cuts() -> None:
 def test_priority_authorization_uses_only_openai_and_reserves_priority_price() -> None:
     client, key = _client_and_key()
     auth = _authorize(client, key)
+    prompt, _cached, completion = _sol_fast_rates(datetime.now(UTC))
 
     assert auth["provider"] == "openai"
     assert {route["provider"] for route in auth["route_candidates"]} == {"openai"}
-    expected = token_cost_microdollars(1_000, 10_550_000) + token_cost_microdollars(
-        1_000, 63_300_000
+    expected = token_cost_microdollars(1_000, prompt) + token_cost_microdollars(
+        1_000, completion
     )
     assert auth["estimated_cost_microdollars"] == expected
 
@@ -123,6 +138,7 @@ def test_priority_settlement_bills_actual_returned_tier() -> None:
     assert default_settle.json()["data"]["cost_microdollars"] == expected_default
 
     priority = _authorize(client, key, idempotency_key="priority-served")
+    prompt, _cached, completion = _sol_fast_rates(datetime.now(UTC))
     priority_settle = client.post(
         "/v1/internal/gateway/settle",
         json={
@@ -135,8 +151,8 @@ def test_priority_settlement_bills_actual_returned_tier() -> None:
         },
     )
     assert priority_settle.status_code == 200, priority_settle.text
-    expected_priority = token_cost_microdollars(1_000, 10_550_000) + token_cost_microdollars(
-        1_000, 63_300_000
+    expected_priority = token_cost_microdollars(1_000, prompt) + token_cost_microdollars(
+        1_000, completion
     )
     assert priority_settle.json()["data"]["cost_microdollars"] == expected_priority
     assert expected_priority > expected_default
@@ -145,6 +161,7 @@ def test_priority_settlement_bills_actual_returned_tier() -> None:
 def test_priority_cached_tokens_use_priority_cached_rate() -> None:
     client, key = _client_and_key()
     auth = _authorize(client, key, idempotency_key="priority-cache")
+    prompt, cached, completion = _sol_fast_rates(datetime.now(UTC))
     settled = client.post(
         "/v1/internal/gateway/settle",
         json={
@@ -160,9 +177,9 @@ def test_priority_cached_tokens_use_priority_cached_rate() -> None:
     )
     assert settled.status_code == 200, settled.text
     expected = (
-        token_cost_microdollars(100, 10_550_000)
-        + token_cost_microdollars(900, 1_055_000)
-        + token_cost_microdollars(100, 63_300_000)
+        token_cost_microdollars(100, prompt)
+        + token_cost_microdollars(900, cached)
+        + token_cost_microdollars(100, completion)
     )
     assert settled.json()["data"]["cost_microdollars"] == expected
 
@@ -204,8 +221,9 @@ def test_auto_reserves_priority_but_settles_reported_default() -> None:
         service_tier="auto",
         idempotency_key="auto-downgrade",
     )
-    priority_estimate = token_cost_microdollars(1_000, 10_550_000) + token_cost_microdollars(
-        1_000, 63_300_000
+    prompt, _cached, completion = _sol_fast_rates(datetime.now(UTC))
+    priority_estimate = token_cost_microdollars(1_000, prompt) + token_cost_microdollars(
+        1_000, completion
     )
     assert auth["estimated_cost_microdollars"] == priority_estimate
 
@@ -281,10 +299,11 @@ def test_catalog_advertises_openai_priority_pricing() -> None:
         "auto",
         "priority",
     ]
+    prompt, cached, completion = _sol_fast_rates(_utc_now())
     assert openai_endpoint["trustedrouter"]["priority_pricing"] == {
-        "prompt_microdollars_per_million_tokens": 10_550_000,
-        "cached_prompt_microdollars_per_million_tokens": 1_055_000,
-        "completion_microdollars_per_million_tokens": 63_300_000,
+        "prompt_microdollars_per_million_tokens": prompt,
+        "cached_prompt_microdollars_per_million_tokens": cached,
+        "completion_microdollars_per_million_tokens": completion,
         "max_prompt_tokens": 272_000,
     }
 
