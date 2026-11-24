@@ -1,0 +1,91 @@
+{% extends "public/_base.html" %}
+{% block head_extra %}<link rel="stylesheet" href="/static/quickstart.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block body_attributes %}class="router-guide-page free-llm-api-page"{% endblock %}
+{# The page sentence already names the free tokens and no card. #}
+{% block hero_free_note %}{% endblock %}
+{% block body %}
+<section class="guide-section" id="start" aria-labelledby="free-start">
+  <h2 id="free-start">Get a free API key</h2>
+  <ol class="free-steps">
+    <li>Sign up. No card needed.</li>
+    <li>Create a key in the console.</li>
+    <li>Paste this code. It works with the OpenAI SDK you already use.</li>
+  </ol>
+  <div class="md-code" data-md-code data-md-first="python">
+    <div class="md-code-head tr-code-head">
+      <div class="md-tabs" role="tablist" aria-label="Language">
+        <button type="button" role="tab" id="free-tab-python" aria-controls="free-panel-python" aria-selected="true" data-md-tab="python">Python</button>
+        <button type="button" role="tab" id="free-tab-typescript" aria-controls="free-panel-typescript" aria-selected="false" tabindex="-1" data-md-tab="typescript">TypeScript</button>
+      </div>
+      <span class="tr-code-tools"><button class="md-copy tr-code-copy" type="button" aria-label="Copy the code" title="Copy" data-md-copy hidden></button></span>
+    </div>
+    <div class="md-code-body">
+      <div class="md-code-panel" role="tabpanel" id="free-panel-python" aria-labelledby="free-tab-python" data-md-panel="python">
+        <div class="tr-code-body"><pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url=<span class="tr-code-s">"{{ api_base_url }}"</span>,
+    api_key=os.environ[<span class="tr-code-s">"TRUSTEDROUTER_API_KEY"</span>],
+)
+
+response = client.chat.completions.create(
+    model=<span class="tr-code-s free-cheap">"trustedrouter/cheap"</span>,
+    messages=[{<span class="tr-code-s">"role"</span>: <span class="tr-code-s">"user"</span>, <span class="tr-code-s">"content"</span>: <span class="tr-code-s">"Say hello"</span>}],
+)
+print(response.choices[0].message.content)</code></pre></div>
+      </div>
+      <div class="md-code-panel" role="tabpanel" id="free-panel-typescript" aria-labelledby="free-tab-typescript" data-md-panel="typescript" data-md-inactive>
+        <div class="tr-code-body"><pre><code>import OpenAI from <span class="tr-code-s">"openai"</span>;
+
+const client = new OpenAI({
+  baseURL: <span class="tr-code-s">"{{ api_base_url }}"</span>,
+  apiKey: process.env.TRUSTEDROUTER_API_KEY,
+});
+
+const response = await client.chat.completions.create({
+  model: <span class="tr-code-s free-cheap">"trustedrouter/cheap"</span>,
+  messages: [{ role: <span class="tr-code-s">"user"</span>, content: <span class="tr-code-s">"Say hello"</span> }],
+});
+console.log(response.choices[0].message.content);</code></pre></div>
+      </div>
+    </div>
+    <span class="md-copy-status tr-code-status" data-md-copy-status role="status" aria-live="polite" aria-atomic="true"></span>
+  </div>
+  <p class="free-note"><code>trustedrouter/cheap</code> sends each request to the lowest-priced model first. Swap in any model name from the table below.</p>
+</section>
+
+{% if free_api_models %}
+<section class="guide-section" id="cheapest" aria-labelledby="free-cheapest">
+  <h2 id="free-cheapest">Cheapest models today</h2>
+  <p class="guide-lead">Price per million tokens. Prices update every hour. The full list is on the <a href="/models">models page</a>.</p>
+  <table class="guide-table free-table">
+    <thead><tr><th scope="col">Model</th><th scope="col">Input</th><th scope="col">Output</th></tr></thead>
+    <tbody>
+      {% for model in free_api_models %}
+      <tr>
+        <th scope="row"><a href="/models/{{ model.id }}"><code>{{ model.id }}</code></a>{% if model.offer %} <span class="free-offer">Launch offer, ends {{ model.offer }}</span>{% endif %}</th>
+        <td data-label="Input">{{ model.input }}</td>
+        <td data-label="Output">{{ model.output }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="guide-section" aria-labelledby="free-pricing">
+  <h2 id="free-pricing">How pricing works</h2>
+  <div class="guide-split free-single">
+    <p>Your first tokens are free. After that, you pay the provider's price plus 5.5%, with a minimum of 1¢ per million tokens. No subscription and no monthly fee. See <a href="/pricing">pricing</a> for details.</p>
+  </div>
+</section>
+
+<section class="guide-section" aria-label="Get started">
+  <div class="free-closing">
+    <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Get a free API key</button>
+    <p>Read next: <a href="/pricing">pricing</a>, <a href="/docs/migrate-from-openai">migrate from OpenAI</a>, <a href="/openai-compatible-llm-api">OpenAI compatible API</a>.</p>
+  </div>
+</section>
+{% endblock %}
+{% block body_scripts %}<script defer src="/static/quickstart.js?v={{ static_version|default('local') }}"></script>{% endblock %}

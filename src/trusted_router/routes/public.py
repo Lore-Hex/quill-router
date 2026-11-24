@@ -1774,6 +1774,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def company_signin_guide(request: Request) -> str:
         return public_page_html(settings, request.url.path.strip("/"))
 
+    @public_html_route("/free-llm-api")
+    def free_llm_api() -> str:
+        return public_page_html(settings, "free-llm-api")
+
     @public_html_route("/openai-compatible-llm-api")
     def seo_openai_compatible_llm_api() -> str:
         return public_page_html(settings, "openai-compatible-llm-api")
