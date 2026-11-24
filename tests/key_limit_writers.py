@@ -48,32 +48,86 @@ are read as obj.name before either layer runs (_Fetches).
 The escape rule (_escape_routes) decides where SQL text naming the table may
 go. A value whose rendering may name the table (a string constant, f-string,
 concatenation or format naming it, a name or attribute bound to one, or a
-list, tuple, dict or set holding one) may leave its scope only by:
+list, tuple, dict or set holding one; every string literal and f-string is
+followed, not only the outermost expression) may leave its scope only by:
 
 - a recognised executor call (any of its arguments: the statement is judged
   by the rules below, its parameters are data) or mutation call (judged by
   the mutation rules); or
 - a call to a helper of the module that derived_sinks follows, at a
   parameter shown to reach only executors (clean_sinks: every use of it,
-  and of each name it is bound to or put into, is one of these routes).
+  and of each name it is bound to or put into, is one of these routes, so
+  a helper that returns it, or a method result holding it, is not clean).
 
-It may be built on (concatenated, formatted, put in a container literal,
-indexed, given to a str method or to str, repr, list, tuple, set or sorted),
-bound to a name (whose uses are followed, a closure's included), put into a
-local container with append, extend, insert, add, update, setdefault or +=
-(one made in the function, whose uses, and those of every name it was bound
-to, are followed; a container from a parameter, a module, a class or a loop
-is shared with other scopes, an escape), looped
-over into a name, or used in a way that keeps none of its text (compared,
-tested, measured with len, given to isinstance, used as a lookup key, a str
-predicate's receiver, or a discarded expression). Every other route is
-key_limit.escape, every column: given to any other callee (a function,
-method, lambda, class, callable object, exception or unknown name,
-positionally, by keyword or spread: a raised message reaches a handler in
-another scope), returned, yielded, stored in an attribute, a subscript or a
-global, unpacked, a default argument, an assert's message, or anything not
-listed. The routes are an allow list, so a
-construct not thought of lands in the escape by default.
+The steps it may take on the way never let code the scanner cannot see
+receive it. Every other operand must be provably builtin (_builtin_value: a
+literal; an f-string with a literal part; a container display, comprehension,
+concatenation or conditional of such; a str method's result on such a str;
+str, repr or format of such; or a name bound only to such, a module or class
+name only to an immutable one, a function's container only if it is never
+passed on). The steps:
+
+- built on: concatenated or %-formatted with a provably builtin operand; an
+  f-string part (a format spec only for a provably builtin value); a
+  container display or comprehension (a set element or dict key only beside
+  provably builtin ones); indexed or sliced with provably builtin indexes (a
+  key's __eq__ meets its keys); given to str, repr, format,
+  list, tuple, reversed, or set, frozenset or sorted when its elements are
+  provably builtin, with every other argument provably builtin; given to a
+  str method of a provably builtin str (join, format, replace, ...) with
+  every other argument provably builtin;
+- a method of it (a str's, or a container's: get, setdefault, pop, copy,
+  items, sort, ...) with every argument provably builtin: its result is
+  followed (a str predicate's result is a bool); encode and decode only
+  with codecs and error handlers Python ships;
+- bound to a name (whose uses are followed, a closure's included; in a
+  class body only for a class with no bases, keywords or decorators);
+- put into a container made in the same function with append, extend,
+  insert, add, update, setdefault or += (add, update and setdefault only
+  into one whose contents are provably builtin); the container and every
+  name it was bound to are followed, and so is the call's result;
+- looped over into a name;
+- used in a way that keeps none of its text and calls no user code:
+  compared (==, in, ...) with provably builtin operands, or by is; tested;
+  negated; measured with len, bool, hash, id, type or callable; given to
+  isinstance with builtin types; a key looked up in a provably builtin
+  container; or a discarded expression.
+
+Every other route is key_limit.escape, every column: given to any other
+callee (a function, method, lambda, class, callable object, exception,
+print or unknown name, positionally, by keyword or spread), returned,
+yielded, stored in an attribute, a subscript or a global, unpacked, a
+default argument, an assert's message, or anything not listed. The routes
+are an allow list, so a construct not thought of lands in the escape by
+default.
+
+User code an allowed step could reach, and how each is closed:
+
+- implicit dunder calls of the other operand (__radd__, __rmod__, __eq__,
+  __lt__, __contains__, __getitem__, __iadd__): every other operand of an
+  operator, comparison, subscript or += must be provably builtin;
+- callbacks (sorted's or sort's key, max's default, map, filter, reduce,
+  partial, a str.translate table, a format_map mapping): every argument
+  beside the value must be provably builtin, and map, filter, reduce, min
+  and max are not allowed at all;
+- __format__ of a value a format spec goes to, and a lone {x} or "{}"
+  whose result is x's (a str subclass's own methods perhaps): only for
+  provably builtin values;
+- __iter__ of what is iterated: the value is iterated only when it is
+  itself the iterable (a builtin), never given to another's iteration;
+- __hash__ and __eq__ of keys: a set element, a dict key, add, update and
+  setdefault only beside provably builtin keys;
+- streams: print (sys.stdout may be any writer, file= any stream) is an
+  escape; encode and decode only with shipped codecs (the registry is
+  extensible);
+- __instancecheck__: isinstance only with builtin types;
+- context managers, descriptors and class machinery (a metaclass
+  namespace, __init_subclass__, __set_name__, a class decorator): with
+  statements are escapes, attributes of the value are read only to call a
+  method of a builtin, and a class body binds the value only for a plain
+  class;
+- raise and assert: an exception's message reaches a handler in another
+  scope, an escape.
 
 The backstop (scope_marks) does not depend on parsing. A scope that holds
 the key-limit table (by name or through the constant holding it), a limit
@@ -144,7 +198,9 @@ Threat model. The inventory guards against accidental limit writers in
 reviewed code: a new statement, mutation or script that writes
 tr_key_limit's limit columns outside the guarded functions. SQL text naming
 the table may reach an executor only directly or through followed helpers of
-the same module; every other route fails closed (the escape rule). Any scope
+the same module, by the steps listed above; every other route it takes out
+of its scope, and every step that could hand it to code the scanner cannot
+see, fails closed (the escape rule). Any scope
 that names the table, a limit column and a write is a limit writer unless it
 is a listed, behavior-pinned exception, and the parser fails closed, as
 listed above, on SQL or a mutation it cannot resolve within the module that
@@ -639,9 +695,13 @@ class _Module:
         self.sinks: dict[str, list[_Sink]] = {}
         self.clean: set[tuple[str, _Sink]] = set()
         self.loads: dict[str, list[ast.AST]] = {}
+        self.augmented: dict[str, list[ast.AugAssign]] = {}
+        self.builtin_values: dict[int, bool] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                 self.loads.setdefault(node.id, []).append(node)
+            elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+                self.augmented.setdefault(node.target.id, []).append(node)
 
     def _qualify(self, node: ast.AST, prefix: str, stack: list[ast.AST], outer: str) -> None:
         for child in ast.iter_child_nodes(node):
@@ -1682,16 +1742,27 @@ def _unknown_could_write(text: str) -> bool:
 # route fails closed (key_limit.escape, every column). The routes are an
 # allow list: a consumer not listed, of any shape, is an escape.
 
-#: Builtins whose result holds no text of their argument.
-_ABSORBING_BUILTINS = frozenset({"len", "bool", "isinstance", "issubclass", "hash", "id", "type", "callable", "print"})
-#: Builtins whose result is their argument's text, judged in turn.
+#: Builtins that read a value without running user code on it, and keep none
+#: of its text. (print is not one: sys.stdout may be any writer.)
+_ABSORBING_BUILTINS = frozenset({"len", "bool", "hash", "id", "type", "callable"})
+#: Builtins whose result is built from their argument (its text, or an
+#: element of it), judged in turn; set, frozenset and sorted also hash or
+#: compare its elements.
 _TEXT_BUILTINS = frozenset({"str", "repr", "format", "list", "tuple", "set", "frozenset", "sorted", "reversed"})
+_ELEMENT_COMPARING = frozenset({"set", "frozenset", "sorted"})
+#: Types whose isinstance check runs no user code.
+_BUILTIN_TYPES = frozenset({"str", "bytes", "bytearray", "int", "float", "complex", "bool", "list", "tuple", "dict",
+                            "set", "frozenset", "type", "object"})
 #: str methods whose result holds no text of the string.
 _STR_PREDICATES = frozenset({"startswith", "endswith", "count", "find", "rfind", "index", "rindex", "isidentifier",
                              "isalnum", "isalpha", "isascii", "isdecimal", "isdigit", "islower", "isnumeric",
                              "isprintable", "isspace", "istitle", "isupper"})
 #: str methods whose result is the string's text, judged in turn.
 _STR_TEXT_METHODS = frozenset(name for name in dir(str) if not name.startswith("_")) - _STR_PREDICATES
+#: Codecs and error handlers Python ships (encode and decode look any other
+#: name up in the codec registry, which user code may extend).
+_STANDARD_CODECS = frozenset({"utf-8", "utf8", "ascii", "latin-1", "latin1", "utf-16", "utf-32", "strict", "ignore",
+                              "replace", "backslashreplace", "xmlcharrefreplace", "surrogateescape"})
 #: Methods that put a value into the local container they are called on.
 _CONTAINER_MUTATORS = frozenset({"append", "extend", "insert", "add", "update", "setdefault"})
 
@@ -1719,12 +1790,164 @@ def _declared_global(m: _Module, node: ast.AST, name: str) -> bool:
                                    for sub in ast.walk(functions[-1]))
 
 
+# -- provably builtin values -----------------------------------------------
+#
+# Python hands a value to the other operand's code in an operator (__radd__,
+# __rmod__, __eq__, __contains__, __getitem__ of the container indexed with
+# it, __hash__ and __eq__ of the keys of a set or dict it joins, __format__ of
+# the value a format spec goes to). Such a step is allowed only when the
+# other operand is provably builtin.
+
+
+def _builtin_value(m: _Module, node: ast.AST, seen: frozenset[int] = frozenset()) -> bool:
+    """Whether a value is provably builtin, so its methods and those of
+    everything it holds run no user code: a literal; an f-string with a
+    literal part (a lone {x} is x's __format__ result, a str subclass
+    perhaps); a container display, comprehension, concatenation, % or
+    conditional of such; a str method's result on such a str (format only
+    with such arguments); str, repr or format of such; an element of such;
+    or a name bound only to such (a module or class name only to an
+    immutable one; a container only in its own function, never passed on)."""
+    if not seen:
+        if id(node) not in m.builtin_values:
+            m.builtin_values[id(node)] = _builtin_value(m, node, frozenset({-1}))
+        return m.builtin_values[id(node)]
+    if id(node) in seen or len(seen) > 16:
+        return False
+    seen = seen | {id(node)}
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.JoinedStr):
+        lone = len(node.values) == 1 and isinstance(node.values[0], ast.FormattedValue)
+        return not lone or _builtin_value(m, cast(ast.FormattedValue, node.values[0]).value, seen)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return all(_builtin_value(m, element, seen) for element in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(_builtin_value(m, part, seen) for part in [*node.keys, *node.values] if part is not None) and (
+            None not in node.keys or all(_builtin_value(m, value, seen)
+                                         for key, value in zip(node.keys, node.values, strict=True) if key is None))
+    if isinstance(node, ast.Starred):
+        return _builtin_value(m, node.value, seen)  # a loop's or a spread's element
+    if isinstance(node, ast.BinOp):
+        return _builtin_value(m, node.left, seen) and _builtin_value(m, node.right, seen)
+    if isinstance(node, ast.BoolOp):
+        return all(_builtin_value(m, value, seen) for value in node.values)
+    if isinstance(node, ast.IfExp):
+        return _builtin_value(m, node.body, seen) and _builtin_value(m, node.orelse, seen)
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+        return _builtin_value(m, node.value, seen) and _builtin_value(m, node.slice, seen)
+    if isinstance(node, ast.Slice):
+        return all(part is None or _builtin_value(m, part, seen) for part in (node.lower, node.upper, node.step))
+    if isinstance(node, ast.UnaryOp):
+        return _builtin_value(m, node.operand, seen)
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        return _builtin_value(m, node.elt, seen) and all(_builtin_value(m, g.iter, seen) for g in node.generators)
+    if isinstance(node, ast.DictComp):
+        return (_builtin_value(m, node.key, seen) and _builtin_value(m, node.value, seen)
+                and all(_builtin_value(m, g.iter, seen) for g in node.generators))
+    if isinstance(node, ast.Call):
+        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in _STR_TEXT_METHODS | _STR_PREDICATES and _builtin_str(
+                m, func.value, seen):
+            return func.attr not in ("format", "format_map") or all(_builtin_value(m, a, seen) for a in arguments)
+        if isinstance(func, ast.Name) and func.id in ("str", "repr", "format", "len") and not m.bindings(
+                func, func.id):
+            return all(_builtin_value(m, argument, seen) for argument in arguments)
+        return False
+    if isinstance(node, ast.Name):
+        bound = m.bindings(node, node.id)
+        if not bound and node.id in _BUILTIN_TYPES:
+            return True  # the builtin type itself
+        if not bound or any(_is_parameter(value) for value in bound):
+            return False
+        local = _binding_scope(m, node, node.id) != 0 and not _declared_global(m, node, node.id)
+        for value in bound:
+            if not _builtin_value(m, value, seen):
+                return False
+            if not local and not _immutable(value):
+                return False  # a module or class container may be changed by any code
+        return not local or all(_immutable(value) for value in bound) or _inert_container(m, node, seen)
+    return False
+
+
+def _immutable(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Constant, ast.JoinedStr)):
+        return True
+    if isinstance(node, ast.Tuple):
+        return all(_immutable(element) for element in node.elts)
+    if isinstance(node, ast.BinOp):
+        return _immutable(node.left) and _immutable(node.right)
+    if isinstance(node, ast.IfExp):
+        return _immutable(node.body) and _immutable(node.orelse)
+    if isinstance(node, ast.BoolOp):
+        return all(_immutable(value) for value in node.values)
+    # A str method's result (a str, bytes or tuple; split's list aside).
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _STR_TEXT_METHODS - {"split", "rsplit", "splitlines"})
+
+
+def _builtin_str(m: _Module, node: ast.AST, seen: frozenset[int] = frozenset()) -> bool:
+    """A provably builtin str: a str literal, an f-string, or a name bound
+    only to them."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, (ast.JoinedStr, ast.BinOp)):
+        return _builtin_value(m, node, seen)
+    if isinstance(node, ast.Name):
+        bound = m.bindings(node, node.id) or []
+        return bool(bound) and all(not _is_parameter(value) and _builtin_str(m, value, seen | {id(node)})
+                                   for value in bound if id(value) not in seen)
+    return False
+
+
+def _inert_container(m: _Module, node: ast.Name, seen: frozenset[int]) -> bool:
+    """Whether a function's local name (a container perhaps) is used only in
+    ways that cannot put a value that is not builtin into it: indexed (and
+    stored into with builtin keys and values), iterated, compared, tested,
+    measured, or given to its own methods with builtin arguments. Bound to
+    another name, passed on or held by another container, it may be."""
+    scope = _binding_scope(m, node, node.id)
+    for use in m.loads.get(node.id, []):
+        if _binding_scope(m, use, node.id) != scope:
+            continue
+        parent = m.parents.get(id(use))
+        grand = m.parents.get(id(parent)) if parent is not None else None
+        if isinstance(parent, ast.Subscript) and use is parent.value:
+            if isinstance(parent.ctx, ast.Load):
+                continue
+            if isinstance(grand, (ast.Assign, ast.AugAssign)) and _builtin_value(m, parent.slice, seen) and (
+                    _builtin_value(m, grand.value, seen)):
+                continue
+            return False
+        if isinstance(parent, ast.Attribute) and isinstance(grand, ast.Call) and grand.func is parent:
+            if all(_builtin_value(m, a, seen) for a in [*grand.args, *(k.value for k in grand.keywords)]):
+                continue
+            return False
+        if isinstance(parent, (ast.For, ast.comprehension)) and use is parent.iter:
+            continue
+        if isinstance(parent, (ast.Compare, ast.If, ast.While, ast.BoolOp, ast.Expr)) or (
+                isinstance(parent, ast.UnaryOp) and isinstance(parent.op, ast.Not)):
+            continue
+        if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) and parent.func.id in (
+                "len", "bool") and not m.bindings(parent.func, parent.func.id):
+            continue
+        return False
+    for sub in m.augmented.get(node.id, []):
+        if _binding_scope(m, sub.target, node.id) == scope and not _builtin_value(m, sub.value, seen):
+            return False
+    return True
+
+
+# -- routes ------------------------------------------------------------------
+
+
 def _route(m: _Module, node: ast.AST, clean: set[tuple[str, _Sink]], binds: list[TaintKey]) -> ast.AST | None:
     """Follow a value naming the table up through what builds on it (a
     concatenation, an f-string, a format, a str method, a container, a
-    subscript, a conditional) to where it goes: a name it is bound to (added
-    to binds, its uses judged in turn), an allowed consumer, or an escape
-    (the node returned)."""
+    subscript, a conditional, a method's result) to where it goes: a name it
+    is bound to (added to binds, its uses judged in turn), an allowed
+    consumer, or an escape (the node returned)."""
     while True:
         parent = m.parents.get(id(node))
         if parent is None:
@@ -1737,8 +1960,19 @@ def _route(m: _Module, node: ast.AST, clean: set[tuple[str, _Sink]], binds: list
 
 
 def _bind(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
+    """A value bound to a name: followed to the name's uses. Unpacked,
+    stored in an attribute, a subscript or a global, or bound in the body of
+    a class with bases, keywords or decorators (a metaclass namespace,
+    __init_subclass__, __set_name__ or a decorator runs on it): an escape."""
     if not isinstance(target, ast.Name) or _declared_global(m, target, target.id):
-        return _ESCAPE  # unpacked, stored in an attribute or subscript, or a global
+        return _ESCAPE
+    owner = m.parents.get(id(target))
+    while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                                                        ast.ClassDef, ast.Module)):
+        owner = m.parents.get(id(owner))
+    if isinstance(owner, ast.ClassDef) and (owner.keywords or owner.decorator_list or any(
+            not (isinstance(base, ast.Name) and base.id == "object") for base in owner.bases)):
+        return _ESCAPE
     binds.append((_binding_scope(m, target, target.id), target.id))
     return _STOP
 
@@ -1777,37 +2011,66 @@ def _bind_container(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tupl
 
 
 def _bind_augmented(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
-    """x += value: a string is rebound (x is followed, as for x = ...); any
-    other value is changed in place, as a container is."""
+    """x += value: a builtin string is rebound (x is followed, as for
+    x = ...); a local container is changed in place; anything else runs its
+    own __iadd__ or __add__ on the value: an escape."""
     if isinstance(target, ast.Name):
         bases = [value.left if isinstance(value, ast.BinOp) and getattr(value, "augmented", False) else value
                  for value in m.bindings(target, target.id) or []]
-        if bases and all(isinstance(value, (ast.JoinedStr, ast.BinOp)) or (
-                isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes))) for value in bases):
+        if bases and all(_builtin_str(m, value) for value in bases):
             return _bind(m, target, binds)
     return _bind_container(m, target, binds)
+
+
+def _arguments(call: ast.Call) -> list[ast.AST]:
+    return [*call.args, *(keyword.value for keyword in call.keywords)]
 
 
 def _step(m: _Module, node: ast.AST, parent: ast.AST, clean: set[tuple[str, _Sink]],
           binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
     """One step of a route: ("up", next) when the next node holds the
     value's text, ("stop", None) for an allowed consumer, a binding or a use
-    that keeps none of the text, else ("escape", None)."""
-    if isinstance(parent, (ast.BinOp, ast.JoinedStr, ast.FormattedValue, ast.BoolOp, ast.Starred, ast.ListComp,
-                           ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+    that keeps none of the text and gives it to no user code, else
+    ("escape", None)."""
+    if isinstance(parent, ast.BinOp):
+        other = parent.right if node is parent.left else parent.left
+        return ("up", parent) if _builtin_value(m, other) else _ESCAPE  # its __radd__, __rmod__, ...
+    if isinstance(parent, ast.FormattedValue):
+        if node is parent.format_spec and not _builtin_value(m, parent.value):
+            return _ESCAPE  # the spec goes to the formatted value's __format__
         return ("up", parent)
-    if isinstance(parent, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
-        return ("up", parent) if isinstance(getattr(parent, "ctx", ast.Load()), ast.Load) else _ESCAPE
+    if isinstance(parent, (ast.JoinedStr, ast.BoolOp, ast.Starred, ast.ListComp, ast.GeneratorExp)):
+        return ("up", parent)
+    if isinstance(parent, ast.SetComp):
+        return ("up", parent) if _builtin_value(m, parent) else _ESCAPE
+    if isinstance(parent, ast.DictComp):
+        return ("up", parent) if node is parent.value or _builtin_value(m, parent.key) else _ESCAPE
+    if isinstance(parent, (ast.Tuple, ast.List)):
+        return ("up", parent) if isinstance(parent.ctx, ast.Load) else _ESCAPE
+    if isinstance(parent, ast.Set) or (isinstance(parent, ast.Dict) and any(key is node for key in parent.keys)):
+        others = [o for o in (parent.elts if isinstance(parent, ast.Set) else parent.keys) if o is not node]
+        return ("up", parent) if all(o is not None and _builtin_value(m, o) for o in others) else _ESCAPE
+    if isinstance(parent, ast.Dict):
+        return ("up", parent)
     if isinstance(parent, ast.IfExp):
         return _STOP if node is parent.test else ("up", parent)
     if isinstance(parent, ast.comprehension):
         return _bind(m, parent.target, binds) if node is parent.iter else _STOP
     if isinstance(parent, ast.Subscript):
         if node is parent.value:
+            if not _builtin_value(m, parent.slice):
+                return _ESCAPE  # a key compared with its keys (__eq__), or an index's own code
             return ("up", parent) if isinstance(parent.ctx, ast.Load) else _STOP
-        return _STOP if isinstance(parent.ctx, ast.Load) else _ESCAPE
-    if isinstance(parent, (ast.Compare, ast.Expr)) or (
-            isinstance(parent, ast.UnaryOp) and isinstance(parent.op, ast.Not)):
+        if isinstance(parent.ctx, ast.Load) and _builtin_value(m, parent.value):
+            return _STOP  # a key looked up in a builtin container
+        return _ESCAPE  # the container's __getitem__, or a key stored
+    if isinstance(parent, ast.Compare):
+        operands = [o for o in [parent.left, *parent.comparators] if o is not node]
+        if all(isinstance(op, (ast.Is, ast.IsNot)) for op in parent.ops) or all(
+                _builtin_value(m, o) for o in operands):
+            return _STOP
+        return _ESCAPE  # the other operand's __eq__, __contains__, ...
+    if isinstance(parent, ast.Expr) or (isinstance(parent, ast.UnaryOp) and isinstance(parent.op, ast.Not)):
         return _STOP
     if isinstance(parent, (ast.If, ast.While, ast.Assert)) and node is parent.test:
         return _STOP  # (an assert's message is raised with it: an escape)
@@ -1820,16 +2083,21 @@ def _step(m: _Module, node: ast.AST, parent: ast.AST, clean: set[tuple[str, _Sin
         targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
         verdicts = [_bind(m, target, binds) for target in targets]
         return _ESCAPE if _ESCAPE in verdicts else _STOP
-    if isinstance(parent, (ast.For, ast.AsyncFor)) and node is parent.iter:
+    if isinstance(parent, ast.For) and node is parent.iter:
         return _bind(m, parent.target, binds)
     if isinstance(parent, ast.Attribute) and node is parent.value:
         call = m.parents.get(id(parent))
-        if isinstance(call, ast.Call) and call.func is parent:
-            if parent.attr in _STR_PREDICATES or parent.attr in _CONTAINER_MUTATORS:
-                return _STOP  # a bool, or a value put into this container (judged on its own)
-            if parent.attr in _STR_TEXT_METHODS:
-                return ("up", call)  # the method's result is the text
-        return _ESCAPE
+        if not (isinstance(call, ast.Call) and call.func is parent):
+            return _ESCAPE
+        arguments = _arguments(call)
+        if parent.attr in ("encode", "decode"):
+            standard = all(isinstance(a, ast.Constant) and a.value in _STANDARD_CODECS for a in arguments)
+            return ("up", call) if standard else _ESCAPE
+        if not all(_builtin_value(m, argument) for argument in arguments):
+            return _ESCAPE  # a callback (sort's key), a mapping (format_map), a key compared with it
+        if parent.attr in _STR_PREDICATES:
+            return _STOP
+        return ("up", call)  # any method's result may hold the value (get, setdefault, pop, copy, items, ...)
     if isinstance(parent, ast.keyword):
         call = m.parents.get(id(parent))
         return _argument_step(m, node, call, clean, binds) if isinstance(call, ast.Call) else _ESCAPE
@@ -1849,31 +2117,28 @@ def _argument_step(m: _Module, node: ast.AST, call: ast.Call, clean: set[tuple[s
         for sink in m.sinks[name]:
             if (name, sink) in clean and any(given is node for given in _sink_arguments(call, sink)):
                 return _STOP  # a followed helper of the module that only runs it
+    others = [argument for argument in _arguments(call) if argument is not node]
+    if not all(_builtin_value(m, other) for other in others):
+        return _ESCAPE  # beside a callback, a stream (file=), a key, a mapping: user code may receive it
     func = call.func
     if isinstance(func, ast.Name) and not m.bindings(func, func.id):
-        if func.id in _ABSORBING_BUILTINS:
+        if func.id in _ABSORBING_BUILTINS and not others:
             return _STOP
+        if func.id == "isinstance" and len(call.args) == 2 and call.args[0] is node and not call.keywords:
+            return _STOP  # its class is provably builtin (a builtin type): no __instancecheck__
         if func.id in _TEXT_BUILTINS:
+            if func.id in _ELEMENT_COMPARING and not _builtin_value(m, node):
+                return _ESCAPE  # its elements' __hash__, __eq__, __lt__
             return ("up", call)
-    if isinstance(func, ast.Attribute) and func.attr in _STR_TEXT_METHODS and _is_text(m, func.value):
+    if isinstance(func, ast.Attribute) and func.attr in _STR_TEXT_METHODS and func.attr not in (
+            "encode", "decode") and _builtin_str(m, func.value):
         return ("up", call)  # sep.join(...), template.format(...), text.replace(..., value)
     if isinstance(func, ast.Attribute) and func.attr in _CONTAINER_MUTATORS and isinstance(func.value, ast.Name):
-        return _bind_container(m, func.value, binds)  # into a local container, whose uses are judged in turn
+        if func.attr in ("add", "update", "setdefault") and not _builtin_value(m, func.value):
+            return _ESCAPE  # a key compared with keys already there
+        verdict = _bind_container(m, func.value, binds)
+        return ("up", call) if verdict == _STOP else verdict  # setdefault returns the value it holds
     return _ESCAPE
-
-
-def _is_text(m: _Module, node: ast.AST) -> bool:
-    """Whether a method's receiver is a string (a literal, or a name bound
-    only to strings), so its .join, .format or .replace builds text."""
-    if isinstance(node, ast.JoinedStr):
-        return True
-    if isinstance(node, ast.Constant):
-        return isinstance(node.value, str)
-    if isinstance(node, ast.Name):
-        bound = m.bindings(node, node.id) or []
-        return bool(bound) and all(isinstance(value, (ast.Constant, ast.JoinedStr)) and (
-            not isinstance(value, ast.Constant) or isinstance(value.value, str)) for value in bound)
-    return False
 
 
 def _escape_routes(m: _Module, seeds: Iterable[ast.AST], tainted: Iterable[TaintKey],
@@ -1914,6 +2179,13 @@ def _table_values(m: _Module) -> list[ast.AST]:
     bound to a list, tuple, dict or set holding it (in any module)."""
     seeds: list[ast.AST] = [node for node in _top_level_strings(m) if _carries_table(m.texts(node))]
     for node in ast.walk(m.tree):
+        # Every string literal and f-string too, not only the outermost
+        # expression: each operator and call it passes through is judged.
+        if (isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes))
+                and not _is_docstring(node, m.parents) and _carries_table(m.values(node) or [])):
+            seeds.append(node)
+        elif isinstance(node, ast.JoinedStr) and _carries_table(m.texts(node)):
+            seeds.append(node)
         if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
             resolved = m.values(node)
             bound = (m.bindings(node, node.id) if isinstance(node, ast.Name) else m.index.globals.get(node.attr)) or []

@@ -114,7 +114,10 @@ and the documented exceptions, each pinned by a test and by a fingerprint of
 its reviewed source. In Python, text naming `tr_key_limit` may reach an
 executor only directly or through a helper of the same module that the scan
 follows; any other route it takes out of its scope (another callee, a return,
-an attribute, a subscript or a global) counts as writing every limit column.
+an attribute, a subscript or a global), and any step on the way that could
+hand it to code the scan cannot see (an operator, comparison or lookup whose
+other operand is not provably a builtin value, a callback, a stream),
+counts as writing every limit column.
 
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the

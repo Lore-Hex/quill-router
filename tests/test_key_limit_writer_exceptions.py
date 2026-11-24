@@ -510,13 +510,17 @@ def test_the_key_mirror_rows_raise_a_message_naming_the_table() -> None:
 
 
 def test_the_key_usage_snapshot_raises_a_message_naming_the_table() -> None:
-    """storage_key_usage.api_key_usage_snapshot sums rows it is given and
-    raises a message naming the table on an incomplete set."""
+    """storage_key_usage.api_key_usage_snapshot sums rows it is given (it
+    has no database to write) and raises a message naming the table on an
+    incomplete set."""
     from trusted_router.storage_key_usage import api_key_usage_snapshot
 
     key = _api_key(usage_shard_count=2)
     with pytest.raises(RuntimeError, match=_INCOMPLETE):
         api_key_usage_snapshot(key, [(0, 1, 0, 0, 0, None, 0, None, 0, None)])
+    snapshot = api_key_usage_snapshot(key, [(0, 1, 0, 0, 0, None, 0, None, 0, None),
+                                            (1, 2, 0, 0, 0, None, 0, None, 0, None)])
+    assert snapshot.usage_microdollars == 3
 
 
 def test_the_key_window_decision_only_reads_and_raises_a_message() -> None:
@@ -529,7 +533,11 @@ def test_the_key_window_decision_only_reads_and_raises_a_message() -> None:
     with pytest.raises(RuntimeError, match=_INCOMPLETE):
         key_window_limit_decision(_snapshot_database(snapshot), _ParamTypes(), key_hash="kh", estimate=1,
                                   window_limits={"daily": 10}, shard_count=2)
-    assert snapshot.statements and all(written_columns(sql) == set() for sql in snapshot.statements)
+    # The path past the error too (the database has only snapshot()).
+    snapshot.rows = [(0, 0, None, 0, None, 0, None), (1, 0, None, 0, None, 0, None)]
+    key_window_limit_decision(_snapshot_database(snapshot), _ParamTypes(), key_hash="kh", estimate=1,
+                              window_limits={"daily": 10}, shard_count=2)
+    assert len(snapshot.statements) == 2 and all(written_columns(sql) == set() for sql in snapshot.statements)
 
 
 def test_the_typed_key_usage_only_reads_and_raises_a_message() -> None:
@@ -543,7 +551,83 @@ def test_the_typed_key_usage_only_reads_and_raises_a_message() -> None:
                             _read_entity_from=lambda snap, kind, pk, cls: _api_key(usage_shard_count=2))
     with pytest.raises(RuntimeError, match=_INCOMPLETE):
         SpannerStore.typed_key_usage(store, "kh")
-    assert snapshot.statements and all(written_columns(sql) == set() for sql in snapshot.statements)
+    # The path past the error too (the database has only snapshot()).
+    snapshot.rows = [(0, 1, 0, 0, 0, None, 0, None, 0, None), (1, 2, 0, 0, 0, None, 0, None, 0, None)]
+    usage = SpannerStore.typed_key_usage(store, "kh")
+    assert usage is not None and usage["usage"] == 3
+    assert len(snapshot.statements) == 2 and all(written_columns(sql) == set() for sql in snapshot.statements)
+
+
+# --- review round 11: a value naming the table given to code it calls ---------
+
+
+def test_the_authorize_vectors_world_is_built_in_the_fake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """scripts/fastpath/authorize_vectors.build_world indexes the fake's
+    rows with the table's name, and on purpose changes a strict key's
+    mirrored limit behind the entity's back (a golden case): run, every
+    change lands in the in-memory fake it makes, never a database."""
+    import scripts.fastpath.authorize_vectors as vectors
+    from tests.fakes.spanner import FakeSpannerDatabase
+    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
+
+    made: list[tuple[Any, Any]] = []
+    real = vectors.make_fake_store
+
+    def recording(**kwargs: Any) -> tuple[Any, Any]:
+        made.append(real(**kwargs))
+        return made[-1]
+
+    monkeypatch.setattr(vectors, "make_fake_store", recording)
+    world = vectors._merge(vectors.DEFAULT_WORLD, {"key": {"budget_strict": True}, "key_limit_row": {"limit_micro": 1}})
+    _store, database = vectors.build_world(world, vectors.DEFAULT_POLICY)
+    assert len(made) == 1 and database is made[0][1] and isinstance(database, FakeSpannerDatabase)
+    assert any(row.get("limit_micro") == 1 for row in database.typed[KEY_LIMIT_TABLE].values())
+
+
+def test_the_key_window_vectors_snapshot_only_answers_its_select() -> None:
+    """scripts/fastpath/key_window_vectors._Snapshot compares the statement
+    it is given with the SELECT it expects: a read-only test double that
+    returns its rows, refuses any other statement, and has no method that
+    writes."""
+    from scripts.fastpath import key_window_vectors as vectors
+
+    snapshot = vectors._Snapshot([(0, 1, None, 0, None, 0, None)])
+    assert snapshot.execute_sql(vectors.SQL, params={"kh": "k", "shard_count": 1}, param_types={"kh": 0,
+                                "shard_count": 0}) == [(0, 1, None, 0, None, 0, None)]
+    with pytest.raises(AssertionError, match="UPDATE tr_key_limit"):
+        snapshot.execute_sql("UPDATE tr_key_limit SET day_limit_micro = 1", params={"kh": "k", "shard_count": 1},
+                             param_types={"kh": 0, "shard_count": 0})
+    assert written_columns(vectors.SQL) == set()
+    assert not any(hasattr(snapshot, name) for name in ("execute_update", "batch_update", "insert", "update"))
+
+
+def test_the_credit_stress_reads_only_its_fake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """scripts/stress_credit_shards.run_stress reads the in-memory fake's
+    rows by the table's name after a stress run: run small, it works on the
+    fake its _seed makes, and the key's limits there are the ones it seeded."""
+    import copy
+
+    import scripts.stress_credit_shards as stress
+    from tests.fakes.spanner import FakeSpannerDatabase
+    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
+
+    seeded: list[tuple[Any, Any, Any]] = []
+    limits: list[dict[Any, Any]] = []
+    real = stress._seed
+
+    def recording(**kwargs: Any) -> tuple[Any, Any, Any]:
+        seeded.append(real(**kwargs))
+        database = seeded[-1][1]
+        limits.append(copy.deepcopy({key: {c: row.get(c) for c in LIMIT_COLUMNS}
+                                     for key, row in database.typed[KEY_LIMIT_TABLE].items()}))
+        return seeded[-1]
+
+    monkeypatch.setattr(stress, "_seed", recording)
+    result = stress.run_stress(request_count=4, concurrency=2, shard_count=2)
+    database = seeded[0][1]
+    assert isinstance(database, FakeSpannerDatabase) and result.invariant_clean
+    assert {key: {c: row.get(c) for c in LIMIT_COLUMNS}
+            for key, row in database.typed[KEY_LIMIT_TABLE].items()} == limits[0]
 
 
 # --- fastpath/schema/fastpath.sql --------------------------------------------

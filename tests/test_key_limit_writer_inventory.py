@@ -47,10 +47,8 @@ def _detail() -> ScanDetail:
     return scan_repository_detail()
 
 
-_READ = "reads the table (a read call, or a read of the in-memory fake), never writes it"
 _COUNTER_DML = "assigns usage, reserved or window usage only; never a limit column"
 _DDL = "the table's schema (DDL) only"
-_FIXTURE = "edits the in-memory fake's rows to build golden vectors or a load test, never a database"
 
 CHOKEPOINTS = {
     ("src/trusted_router/storage_gcp_key_limit_mirror.py", "write_key_limit_rows"),
@@ -144,6 +142,17 @@ LIMIT_COLUMN_EXCEPTIONS = {
     ('src/trusted_router/storage_gcp.py', 'SpannerStore.typed_key_usage'): (
         "reads the key's rows in a snapshot, and raises a message naming the table on an incomplete set (escape) (tests/test_key_limit_writer_exceptions.py::test_the_typed_key_usage_only_reads_and_raises_a_message)"
     ),
+    # Review round 11: a value naming the table given to code it calls (a
+    # container's __getitem__, a parameter's __eq__).
+    ('scripts/fastpath/authorize_vectors.py', 'build_world'): (
+        "builds a golden-vector world in the in-memory fake it makes, indexing the fake's rows by the table's name, and on purpose changes a strict key's mirrored limit behind the entity's back (a golden case); never a database (escape) (tests/test_key_limit_writer_exceptions.py::test_the_authorize_vectors_world_is_built_in_the_fake)"
+    ),
+    ('scripts/fastpath/key_window_vectors.py', '_Snapshot.execute_sql'): (
+        'a read-only test double that compares the statement it is given with the SELECT it expects (escape) (tests/test_key_limit_writer_exceptions.py::test_the_key_window_vectors_snapshot_only_answers_its_select)'
+    ),
+    ('scripts/stress_credit_shards.py', 'run_stress'): (
+        "reads the in-memory fake's rows by the table's name after a stress run on that fake (escape) (tests/test_key_limit_writer_exceptions.py::test_the_credit_stress_reads_only_its_fake)"
+    ),
     ('fastpath/schema/fastpath.sql', '<file>'): (
         "the fast path's schema: its write words are other tables' ON DELETE CASCADE (backstop) (tests/test_key_limit_writer_exceptions.py::test_the_fast_path_schema_only_defines_tr_key_limit)"
     ),
@@ -176,6 +185,9 @@ REVIEWED_FINGERPRINTS = {
     ('src/trusted_router/storage_key_usage.py', 'api_key_usage_snapshot'): "4683ac05c272a0173e6130b0d375e609e238bfa8ed38495620fc3fef3011a542",
     ('src/trusted_router/storage_gcp_authorize.py', 'key_window_limit_decision'): "f53e6c86d4f78f815b7caf7d2f5fa87a2d11f3b1def5b846f5a6fc3e2c45cdeb",
     ('src/trusted_router/storage_gcp.py', 'SpannerStore.typed_key_usage'): "532ba62a4fdfcd1ce6b0b30adcdcb8701dcfe2865b90df6bf8b366ca3b01911a",
+    ('scripts/fastpath/authorize_vectors.py', 'build_world'): "b7aed4af6bcc827a638706e1e127f8d7075206db8e02319a6099b4523711fe5f",
+    ('scripts/fastpath/key_window_vectors.py', '_Snapshot.execute_sql'): "2147f0aeee09c61d52aa69bd1663ba11eabed6f548320f961aa40fd0b0f127bb",
+    ('scripts/stress_credit_shards.py', 'run_stress'): "7bd0e15ab3a45a4e9601fac8b804d76cb52fc1ed50ef01187dac8f76a3c50017",
     ('fastpath/schema/fastpath.sql', '<file>'): "ea907766c7fcad450405fa2499164b874ab95a31f9c3b0dbf738ee6cadb7b5ff",
     ('scripts/deploy/migrate_typed_counters.sh', '<file>'): "662d7925229da597a7ddfa947f07f70bfdffef9b4bb0438ce05512f9b85ec465",
 }
@@ -246,11 +258,15 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
         "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/expand_billing_shards.py', 'Reader.plan')]
     ),
     # Fixtures and load tests (the in-memory fake only).
-    ("key_limit.name", "scripts/fastpath/authorize_vectors.py", "build_world"): _FIXTURE,
+    ("key_limit.name", "scripts/fastpath/authorize_vectors.py", "build_world"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/fastpath/authorize_vectors.py', 'build_world')]
+    ),
     ("key_limit.name", "scripts/fastpath/authorize_vectors.py", "stored"): (
         "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/fastpath/authorize_vectors.py', 'stored')]
     ),
-    ("key_limit.name", "scripts/stress_credit_shards.py", "run_stress"): _READ,
+    ("key_limit.name", "scripts/stress_credit_shards.py", "run_stress"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/stress_credit_shards.py', 'run_stress')]
+    ),
     # Review round 10: a value naming the table leaving its scope.
     ("key_limit.escape", 'scripts/backfill_leased_key_usage.py', 'read_key_counters'): (
         "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/backfill_leased_key_usage.py', 'read_key_counters')]
@@ -293,6 +309,15 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
     ),
     ("key_limit.escape", "src/trusted_router/storage_gcp_key_limit_mirror.py", "write_key_limit_rows"): (
         "the Spanner chokepoint: its error messages name the table"
+    ),
+    ("key_limit.escape", 'scripts/fastpath/authorize_vectors.py', 'build_world'): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/fastpath/authorize_vectors.py', 'build_world')]
+    ),
+    ("key_limit.escape", 'scripts/fastpath/key_window_vectors.py', '_Snapshot.execute_sql'): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/fastpath/key_window_vectors.py', '_Snapshot.execute_sql')]
+    ),
+    ("key_limit.escape", 'scripts/stress_credit_shards.py', 'run_stress'): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/stress_credit_shards.py', 'run_stress')]
     ),
     # Other files.
     ("key_limit.text", "fastpath/internal/store/gatewaykey.go", "<file>"): (
@@ -476,9 +501,9 @@ KEY_LIMIT_FORMS = [
     ("quoted f-string, built and returned", "def f(fragment):\n    return f\"UPDATE tr_key_limit SET "
      "reserved=length('{fragment}')\"\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("% with an unknown argument", "def f(c, x):\n    c.execute('UPDATE tr_key_limit SET reserved=%s' % x)\n",
-     {("key_limit.sql", "f"): True}),
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     (".format with an unknown argument", "def f(c, x):\n    c.execute('UPDATE tr_key_limit SET reserved={}'.format(x))\n",
-     {("key_limit.sql", "f"): True}),
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a join of non-literals", "def f(c, parts):\n    c.execute('UPDATE tr_key_limit SET ' + ', '.join(parts))\n",
      {("key_limit.sql", "f"): True}),
     ("a read with an interpolated value (an unknown part at a call, whatever is known)",
@@ -523,11 +548,11 @@ KEY_LIMIT_FORMS = [
      "    payload['update']['columns'].append('usage')\n    tx.update(**payload['update'])\n",
      {("key_limit.name", "f"): True}),
     ("a %(name)s mapping with an unknown value", "def f(c, col):\n"
-     "    c.execute('UPDATE tr_key_limit SET %(col)s = 1' % {'col': col})\n", {("key_limit.sql", "f"): True}),
+     "    c.execute('UPDATE tr_key_limit SET %(col)s = 1' % {'col': col})\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a %(name)s mapping of a known column", "def f(c):\n"
      "    c.execute('UPDATE tr_key_limit SET %(col)s = 1' % {'col': 'reserved'})\n", {("key_limit.sql", "f"): False}),
     (".format(**kw)", "def f(c, kw):\n    c.execute('UPDATE tr_key_limit SET reserved={v}'.format(**kw))\n",
-     {("key_limit.sql", "f"): True}),
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a returned statement with an unknown verb", "def f(verb):\n"
      "    return f'{verb} tr_key_limit SET limit_micro = 1'\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a returned statement edited by str.replace with an unknown part", "def f(column):\n"
@@ -719,7 +744,7 @@ KEY_LIMIT_FORMS = [
     ("an int to a helper that builds its statement", "def reserve(c, n):\n"
      "    c.execute('UPDATE tr_key_limit SET reserved = reserved + ' + str(n))\n"
      "def f(c):\n    c.execute('SELECT 1 FROM tr_key_limit')\n    reserve(c, 5)\n",
-     {("key_limit.sql", "reserve"): True}),
+     {("key_limit.sql", "reserve"): True, ("key_limit.escape", "reserve"): True}),
     ("a flag to a helper that builds its statement", "def reserve(c, byok):\n"
      "    c.execute('UPDATE tr_key_limit SET ' + ('byok_usage' if byok else 'usage') + ' = 0')\n"
      "def f(c):\n    c.execute('SELECT 1 FROM tr_key_limit')\n    reserve(c, True)\n",
@@ -847,10 +872,103 @@ KEY_LIMIT_FORMS = [
      "    c.batch_update(statements)\n", {("key_limit.sql", "f"): False}),
     ("statements looped over", "def f(c):\n    for q in ['UPDATE tr_key_limit SET reserved=0', "
      "'DELETE FROM tr_key_limit WHERE key_hash=%s']:\n        c.execute(q)\n", {("key_limit.sql", "f"): False}),
-    ("compared, measured, printed and looked up", "KEY_LIMIT_TABLE = 'tr_key_limit'\ndef f(table, rows):\n"
-     "    if table == KEY_LIMIT_TABLE and len(KEY_LIMIT_TABLE) and isinstance(KEY_LIMIT_TABLE, str):\n"
+    ("compared with a parameter, printed, looked up in a parameter", "KEY_LIMIT_TABLE = 'tr_key_limit'\n"
+     "def f(table, rows):\n    if table == KEY_LIMIT_TABLE and len(KEY_LIMIT_TABLE):\n"
      "        print(KEY_LIMIT_TABLE)\n    return rows[KEY_LIMIT_TABLE]\n",
+     {("key_limit.name", "<module>.KEY_LIMIT_TABLE"): False, ("key_limit.name", "f"): False,
+      ("key_limit.escape", "f"): True}),
+    # Review round 11: an allowed step may never let code outside the
+    # scanner's knowledge receive the value. The reviewer's four forms:
+    ("a dict's setdefault result given on (the reviewer's)", "run = lambda c, q: c.execute(q + ', day_limit_micro=1')\n"
+     "def f(c):\n    statements = {'sql': 'UPDATE tr_key_limit SET reserved=0'}\n"
+     "    run(c, statements.setdefault('sql', ''))\n", {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("a helper returning a dict's setdefault result is not clean (the reviewer's)",
+     "run = lambda c, q: c.execute(q + ', day_limit_micro=1')\ndef identity(c, q):\n    c.execute(q)\n"
+     "    queries = {'sql': q}\n    return queries.setdefault('sql', '')\n"
+     "def f(c):\n    run(c, identity(c, 'UPDATE tr_key_limit SET reserved=0'))\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("sorted with a key callback (the reviewer's)", "from functools import partial\n"
+     "run = lambda c, q: c.execute(q + ', day_limit_micro=1')\n"
+     "def f(c):\n    sorted(['UPDATE tr_key_limit SET reserved=0'], key=partial(run, c))\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("print to a writer (the reviewer's)", "class Writer:\n    def __init__(self, c):\n        self.c = c\n"
+     "    def write(self, q):\n        self.c.execute(q + ', day_limit_micro=1')\n"
+     "def f(c):\n    print('UPDATE tr_key_limit SET reserved=0', file=Writer(c))\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("a key looked up in an object (the reviewer's)", "class Runner:\n    def __init__(self, c):\n        self.c = c\n"
+     "    def __getitem__(self, q):\n        self.c.execute(q + ', day_limit_micro=1')\n"
+     "def f(c):\n    Runner(c)['UPDATE tr_key_limit SET reserved=0']\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    # More user-code routes the review did not use.
+    ("in an object (__contains__)", "def f(runner):\n    return 'UPDATE tr_key_limit SET reserved=0' in runner\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("added to an object (__radd__)", "def f(runner):\n    'UPDATE tr_key_limit SET reserved=0' + runner\n",
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+    ("compared with an object (__eq__)", "def f(runner):\n    runner == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("max with a default", "def f(pick):\n    return max(['UPDATE tr_key_limit SET reserved=0'], default=pick)\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("a mapping of a % template (__getitem__)", "def f(runner):\n"
+     "    '%(UPDATE tr_key_limit SET reserved=0)s' % runner\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+    ("a format spec given to an object (__format__)", "def f(runner):\n"
+     "    spec = 'UPDATE tr_key_limit SET reserved=0'\n    f'{runner:{spec}}'\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("str.translate with an object", "def f(table):\n    'UPDATE tr_key_limit SET reserved=0'.translate(table)\n",
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+    ("a codec not shipped with Python", "def f():\n    'UPDATE tr_key_limit SET reserved=0'.encode('probe-codec')\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("a set with an element not builtin (__eq__, __hash__)", "def f(key):\n"
+     "    {'UPDATE tr_key_limit SET reserved=0', key}\n", {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("isinstance of a class not builtin (__instancecheck__)", "def f(cls):\n"
+     "    return isinstance('UPDATE tr_key_limit SET reserved=0', cls)\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("a class body with a base (__init_subclass__)", "class Base:\n    pass\nclass Holder(Base):\n"
+     "    q = 'UPDATE tr_key_limit SET reserved=0'\n", {("key_limit.sql", "Holder"): False, ("key_limit.escape", "Holder"): True}),
+    ("a list sorted with a key", "def f(key):\n    q = ['UPDATE tr_key_limit SET reserved=0']\n    q.sort(key=key)\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("a dict of statements indexed with an object (__eq__ meets its keys)", "def f(key):\n"
+     "    statements = {'UPDATE tr_key_limit SET reserved=0': 1}\n    statements[key]\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("sorted with an element not builtin (__lt__)", "def f(obj):\n"
+     "    sorted(['UPDATE tr_key_limit SET reserved=0', obj])\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("added to a set holding an object (__eq__)", "def f(key):\n    seen = {key}\n"
+     "    seen.add('UPDATE tr_key_limit SET reserved=0')\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("searched in a module's list (any code may change it)", "NAMES = []\ndef f():\n"
+     "    return 'UPDATE tr_key_limit SET reserved=0' in NAMES\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("concatenated with a lone f-string field (a str subclass perhaps)", "def f(obj):\n"
+     "    'UPDATE tr_key_limit SET reserved=0' + f'{obj}'\n",
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+    ("concatenated with a bare format of an object", "def f(obj):\n"
+     "    'UPDATE tr_key_limit SET reserved=0' + '{}'.format(obj)\n",
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+    ("dict.get with a key not builtin", "def f(k):\n    d = {'q': 'UPDATE tr_key_limit SET reserved=0'}\n"
+     "    d.get(k)\n", {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("print (sys.stdout may be any writer)", "def f():\n    print('UPDATE tr_key_limit SET reserved=0')\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("+= onto an object (__iadd__)", "def f(acc):\n    acc += 'UPDATE tr_key_limit SET reserved=0'\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("a container passed on, then searched", "def f(fill):\n    names = []\n    fill(names)\n"
+     "    return 'UPDATE tr_key_limit SET reserved=0' in names\n",
+     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    ("concatenated with str() of a parameter (a str subclass's __radd__)", "def f(c, n):\n"
+     "    c.execute('UPDATE tr_key_limit SET reserved = reserved + ' + str(n))\n",
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+    # Steps that stay allowed: every other operand provably builtin.
+    ("compared with literals, looked up in a literal dict", "KEY_LIMIT_TABLE = 'tr_key_limit'\ndef f():\n"
+     "    tables = ('tr_credit_balance', 'tr_key_limit')\n    names = {'tr_key_limit': 1}\n    found = names[KEY_LIMIT_TABLE]\n"
+     "    if KEY_LIMIT_TABLE in tables and KEY_LIMIT_TABLE == 'tr_key_limit' and isinstance(KEY_LIMIT_TABLE, str):\n"
+     "        return len(KEY_LIMIT_TABLE) + len(tables)\n    return 0\n",
      {("key_limit.name", "<module>.KEY_LIMIT_TABLE"): False, ("key_limit.name", "f"): False}),
+    ("sorted literal statements, run", "def f(c):\n"
+     "    for q in sorted(['UPDATE tr_key_limit SET reserved=0', 'DELETE FROM tr_key_limit']):\n        c.execute(q)\n",
+     {("key_limit.sql", "f"): True}),
+    ("a dict's setdefault result run", "def f(c):\n    d = {}\n"
+     "    c.execute(d.setdefault('q', 'UPDATE tr_key_limit SET reserved=0'))\n", {("key_limit.sql", "f"): True}),
+    ("an f-string with a parameter, run", "def f(c, k):\n    t = 'tr_key_limit'\n"
+     "    c.execute(f'UPDATE {t} SET reserved=0 WHERE key_hash={k!r}')\n", {("key_limit.name", "f"): False, ("key_limit.sql", "f"): True}),
 ]
 
 
@@ -1542,6 +1660,61 @@ _ROUND_10 = {
 @pytest.mark.parametrize("label", list(_ROUND_10))
 def test_the_round_10_injections_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
     change, helpers = _ROUND_10[label]
+    scope = "PostgresStore._release_key_hold_tx"
+    source = (ROOT / _PG).read_text()
+    where = source.index(_RELEASE_END)
+    source = (source[:where] + "\n" + textwrap.indent(textwrap.dedent(change), "        ") + source[where:]
+              + "\n\n" + helpers)
+    detail = _injected_detail(tmp_path, _PG, source)
+    assert detail.get(("key_limit.escape", "storage_postgres.py", scope)) is True, label
+    assert ("storage_postgres.py", scope) in limit_column_writers(detail)
+
+
+# Review round 11: the reviewer's four forms, and more routes by which an
+# allowed step could hand the value to user code, each injected into
+# PostgresStore._release_key_hold_tx (helpers beside the module).
+_PROBE_RUNNER = ("class ProbeRunner:\n    def __init__(self, c):\n        self.c = c\n"
+                 "    def run(self, q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\n"
+                 "    def __call__(self, q):\n        return self.run(q)\n    def write(self, q):\n        self.run(q)\n"
+                 "    def __getitem__(self, q):\n        return self.run(q)\n    def __contains__(self, q):\n"
+                 "        return self.run(q)\n    def __radd__(self, q):\n        return self.run(q)\n"
+                 "    def __eq__(self, q):\n        return self.run(q)\n")
+_ROUND_11 = {
+    "a dict's setdefault result (the reviewer's)": ("""
+        probe_statements = {'sql': 'UPDATE tr_key_limit SET reserved=0'}
+        probe_run(conn, probe_statements.setdefault('sql', ''))
+    """, "probe_run = lambda c, q: c.execute(q + ', day_limit_micro=1')\n"),
+    "a helper returning a dict's setdefault result (the reviewer's)": ("""
+        ProbeRunner(conn).run(probe_identity(conn, 'UPDATE tr_key_limit SET reserved=0'))
+    """, _PROBE_RUNNER + "def probe_identity(c, q):\n    c.execute(q)\n    queries = {'sql': q}\n"
+         "    return queries.setdefault('sql', '')\n"),
+    "sorted with a key callback (the reviewer's)": ("""
+        sorted(['UPDATE tr_key_limit SET reserved=0'], key=ProbeRunner(conn))
+    """, _PROBE_RUNNER),
+    "print to a writer (the reviewer's)": ("""
+        print('UPDATE tr_key_limit SET reserved=0', file=ProbeRunner(conn))
+    """, _PROBE_RUNNER),
+    "a key looked up in an object (the reviewer's)": ("""
+        ProbeRunner(conn)['UPDATE tr_key_limit SET reserved=0']
+    """, _PROBE_RUNNER),
+    "__contains__": ("""
+        probe_found = 'UPDATE tr_key_limit SET reserved=0' in ProbeRunner(conn)
+    """, _PROBE_RUNNER),
+    "__radd__": ("""
+        probe_sum = 'UPDATE tr_key_limit SET reserved=0' + ProbeRunner(conn)
+    """, _PROBE_RUNNER),
+    "__eq__": ("""
+        probe_same = ProbeRunner(conn) == 'UPDATE tr_key_limit SET reserved=0'
+    """, _PROBE_RUNNER),
+    "max with a default": ("""
+        probe_pick = max([], default=ProbeRunner(conn)) or max(['UPDATE tr_key_limit SET reserved=0'], key=ProbeRunner(conn))
+    """, _PROBE_RUNNER),
+}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_11))
+def test_the_round_11_injections_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    change, helpers = _ROUND_11[label]
     scope = "PostgresStore._release_key_hold_tx"
     source = (ROOT / _PG).read_text()
     where = source.index(_RELEASE_END)
