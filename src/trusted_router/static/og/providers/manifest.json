@@ -127,11 +127,11 @@
   },
   "byteplus": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 0,
     "name": "BytePlus ModelArk",
     "privacy": "Policy documented",
-    "route_count": 11,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "byteplus"
   },
   "cerebras": {
@@ -226,10 +226,10 @@
   },
   "decisionmodelsio": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 4,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio"
   },
@@ -721,10 +721,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 6,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
