@@ -996,11 +996,167 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-11-24"
+    },
+    {
+      "display_name": "Claude Haiku 5.5",
+      "title": "anthropic/claude-haiku-5.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-5.5",
+      "upstream_id": "anthropic/claude-haiku-5.5",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1000000,
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 10000
+    },
+    {
+      "display_name": "Claude Sonnet 5.5",
+      "title": "anthropic/claude-sonnet-5.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5.5",
+      "upstream_id": "anthropic/claude-sonnet-5.5",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1000000,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "GPT-6.1 Terra",
+      "title": "openai/gpt-6.1-terra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.1-terra",
+      "upstream_id": "openai/gpt-6.1-terra",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1050000,
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "GPT-6.2 Astra",
+      "title": "openai/gpt-6.2-astra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.2-astra",
+      "upstream_id": "openai/gpt-6.2-astra",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1050000,
+      "routable": true,
+      "input_token_price_per_m": 8000000,
+      "output_token_price_per_m": 40000000,
+      "cached_input_token_price_per_m": 400000
+    },
+    {
+      "display_name": "GPT-6.2 Sol",
+      "title": "openai/gpt-6.2-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.2-sol",
+      "upstream_id": "openai/gpt-6.2-sol",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1050000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000
     }
   ],
   "source": "https://api.inference.boundless.network/v1/models",
   "pricing_source": "https://inference.boundless.network/models",
-  "generated_at": "2026-11-24T15:28:37Z",
+  "generated_at": "2026-11-24T17:28:45Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 33
+  "model_count": 38
 }

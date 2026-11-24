@@ -585,12 +585,6 @@
       ],
       "default_effort": "high"
     },
-    "dots-studio/dots-3-note-preview:free": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "elorian/glimpse": {
       "mandatory": false,
       "default_enabled": false,
