@@ -77,9 +77,14 @@ The flow, per request, in this order:
    widens its gaps. Most misses are this expiry between sparse requests;
    Python's refusals evicting a workspace's keys (`cold.evicted`) are the
    next cause. The decide line names each miss (`cache_miss`). With the wait
-   set, a miss waits up to it (at most 250 ms, `edge.MaxCacheWait`, out of
-   the decide budget) for the strong read it starts anyway
-   (`gwstate.Cache.LookupWithin`), and is decided on what that read found;
+   set (at most 250 ms, `edge.MaxCacheWait`), a miss waits for the strong
+   read it starts anyway (`gwstate.Cache.LookupWithin`) on a timer of that
+   length, started after the first look and cancelled by nothing else (the
+   lookup has no request context), so a wait that times out, counted when
+   its timer fires, can measure slightly over the setting
+   (`cache_wait_ms_max`). The wait is spent inside the decide budget
+   (`DecideBudget`, 1.5 s from the request's arrival) and never extends it.
+   The miss is decided on what that read found;
    a read slower than the wait passes as before, and nothing seen at or
    past the wait's monotonic deadline is taken, on every path (the first
    look, a read done then, the last look): such a wait is timed out, and a
