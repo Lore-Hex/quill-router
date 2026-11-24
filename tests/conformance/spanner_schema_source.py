@@ -71,8 +71,9 @@ REVIEWED_DDL_STATEMENTS = {
         "DROP TABLE tr_trust_backfill": "recreate empty legacy marker; retain current CREATE",
     },
     # Access control for the ClickHouse node programs: a view and a role with
-    # its grants. The fresh-install tables are unchanged, and no node
-    # statement is in the emulator manifest.
+    # its grants. The view is fresh-install schema, so migration_ddl() emits it
+    # (the schema audit compares it with production); the role and grants are
+    # not in the metadata the audit reads and stay out of the emulator manifest.
     "migrate_clickhouse_node_role.sh": {
         r"""CREATE VIEW tr_workspace_directory_source SQL SECURITY DEFINER AS
     SELECT e.id AS id,
@@ -376,9 +377,10 @@ def shell_argument(text: str) -> str:
 
 
 def assert_no_shell_variables(statement: str, location: str) -> None:
-    # This production generated column contains a SQL JSON path, not a shell
-    # variable. No other dollar syntax (including $DEFINITION) is accepted.
-    assert "$" not in statement.replace("'$.expires_at'", "''"), f"{location}: unresolved shell variable: {statement}"
+    # Quoted SQL JSON paths ('$.expires_at' in a generated column, '$.name' in
+    # a view) are not shell variables. No other dollar syntax (including
+    # $DEFINITION or ${VAR}) is accepted.
+    assert "$" not in re.sub(r"'\$\.\w+'", "''", statement), f"{location}: unresolved shell variable: {statement}"
 
 
 def schema_sources(root: Path = ROOT) -> list[Path]:
@@ -666,6 +668,7 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
     policies: dict[str, str] = {}
     commit_columns: set[tuple[str, str]] = set()
     retired_indexes: set[str] = set()
+    views: list[str] = []
     for path in sources:
         assert_ddl_carriers_consumed(path, None, root)
         source, physical_lines = shell_source(path)
@@ -755,6 +758,9 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
             normalized = normalized_statement(argument)
             number = physical_lines[source.count("\n", 0, start)]
             assert normalized in reviewed, f"{path}:{number}: unconsumed DDL dispatch: {argument}"
+            if normalized.startswith("CREATE VIEW "):
+                # Reviewed, and part of every installation's schema: keep it.
+                views.append(argument.replace(r"\$", "$"))
             reviewed.pop(normalized)  # a second unparsed dispatch needs review
         # Recognizing a sink is insufficient: all its dispatch arguments above
         # must be consumed (or individually reviewed) before these spans count.
@@ -786,6 +792,7 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
             result.append(f"ALTER TABLE {table} ALTER COLUMN {column} SET OPTIONS (allow_commit_timestamp=true)")
     result.extend(indexes.values())
     result.extend(f"ALTER TABLE {table} ADD ROW DELETION POLICY ({policy})" for table, policy in policies.items())
+    result.extend(views)  # Last: a view may read any table above.
     assert len(creates) >= 15 and len(indexes) >= 10, "schema extraction unexpectedly empty"
     for statement in result:
         assert_no_shell_variables(statement, "extracted DDL")

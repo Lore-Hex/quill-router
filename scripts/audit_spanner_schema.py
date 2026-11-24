@@ -27,7 +27,8 @@ Schema = dict[str, dict[str, Any]]
 # Explicit projections fail closed when a server cannot expose any required field.
 # All reads are metadata in the GoogleSQL default schema, never application rows.
 PROJECTIONS = {
-    "TABLES": "TABLE_NAME PARENT_TABLE_NAME ON_DELETE_ACTION ROW_DELETION_POLICY_EXPRESSION",
+    "TABLES": "TABLE_NAME TABLE_TYPE PARENT_TABLE_NAME ON_DELETE_ACTION ROW_DELETION_POLICY_EXPRESSION",
+    "VIEWS": "TABLE_NAME VIEW_DEFINITION SECURITY_TYPE",
     "COLUMNS": "TABLE_NAME COLUMN_NAME ORDINAL_POSITION SPANNER_TYPE IS_NULLABLE IS_GENERATED GENERATION_EXPRESSION IS_STORED COLUMN_DEFAULT SPANNER_STATE",
     "COLUMN_OPTIONS": "TABLE_NAME COLUMN_NAME OPTION_NAME OPTION_TYPE OPTION_VALUE",
     "INDEXES": "TABLE_NAME INDEX_NAME INDEX_TYPE IS_UNIQUE IS_NULL_FILTERED INDEX_STATE PARENT_TABLE_NAME",
@@ -43,7 +44,10 @@ QUERIES = {
     for name, projection in PROJECTIONS.items()
 }
 BOOL_FIELDS = {"IS_NULLABLE", "IS_STORED", "IS_UNIQUE", "IS_NULL_FILTERED", "IS_DEFERRABLE", "INITIALLY_DEFERRED", "ENFORCED"}
-EXPRESSION_FIELDS = {"GENERATION_EXPRESSION", "COLUMN_DEFAULT", "CHECK_CLAUSE", "ROW_DELETION_POLICY_EXPRESSION"}
+EXPRESSION_FIELDS = {"GENERATION_EXPRESSION", "COLUMN_DEFAULT", "CHECK_CLAUSE", "ROW_DELETION_POLICY_EXPRESSION", "VIEW_DEFINITION"}
+# TABLES lists views too. A view has columns and a definition, never a primary
+# key, index or constraint; any other TABLE_TYPE is not understood here.
+BASE_TABLE, VIEW = "BASE TABLE", "VIEW"
 STATE_FIELDS = {"SPANNER_STATE": "COMMITTED", "INDEX_STATE": "READ_WRITE"}
 NOT_READY = "PRODUCTION OBJECT NOT READY"
 # Fixed GoogleSQL reserved keywords, plus DAY for the schema's TTL intervals.
@@ -161,15 +165,29 @@ def validate_completeness(data: Mapping[str, Sequence[Mapping[str, Any]]]) -> No
     keys = keyed("KEY_COLUMN_USAGE", "CONSTRAINT_NAME", "COLUMN_NAME")
     references = keyed("REFERENTIAL_CONSTRAINTS", "CONSTRAINT_NAME")
     keyed("COLUMN_OPTIONS", "TABLE_NAME", "COLUMN_NAME", "OPTION_NAME")
-    if not tables:
+    views = keyed("VIEWS", "TABLE_NAME")
+    for (table,), row in tables.items():
+        if row["TABLE_TYPE"] not in {BASE_TABLE, VIEW}:
+            fail("TABLES", f"{table} {row['TABLE_TYPE']!r}", "unknown table type")
+    if not any(row["TABLE_TYPE"] == BASE_TABLE for row in tables.values()):
         fail("TABLES", "<default schema>", "no tables visible")
-    for view in ("COLUMNS", "INDEXES", "TABLE_CONSTRAINTS"):
+    for view in ("COLUMNS", "INDEXES", "TABLE_CONSTRAINTS", "VIEWS"):
         for row in data[view]:
             if (row["TABLE_NAME"],) not in tables:
                 fail(view, dict(row), "unknown TABLES table")
-    for (table,) in tables:
+    for (table,), row in tables.items():
         if not any(t == table for t, _ in columns):
             fail("COLUMNS", table, "table has no columns")
+        if row["TABLE_TYPE"] == VIEW:
+            definition = views.get((table,), {}).get("VIEW_DEFINITION")
+            if not isinstance(definition, str) or not definition.strip():
+                fail("VIEWS", table, "view has no definition")
+            for other in ("INDEXES", "TABLE_CONSTRAINTS"):
+                if any(item["TABLE_NAME"] == table for item in data[other]):
+                    fail(other, table, "view has an index or constraint")
+            continue
+        if (table,) in views:
+            fail("VIEWS", table, "base table has a view definition")
         if (table, "PRIMARY_KEY") not in indexes:
             fail("INDEXES", f"{table}/PRIMARY_KEY", "missing primary-key index")
         primary = [row for row in constraints.values() if row["TABLE_NAME"] == table and row["CONSTRAINT_TYPE"] == "PRIMARY KEY"]
@@ -257,6 +275,8 @@ def normalise(rows: Mapping[str, Sequence[Mapping[str, Any]]]) -> Schema:
         add(f"table/{row['TABLE_NAME']}", row, {"TABLE_NAME"})
     if not result:
         raise ValueError("No default-schema tables visible; cannot audit")
+    for row in data["VIEWS"]:
+        result[f"table/{row['TABLE_NAME']}"].update({k: v for k, v in row.items() if k != "TABLE_NAME"})
     for row in data["COLUMNS"]:
         add(f"column/{row['TABLE_NAME']}/{row['COLUMN_NAME']}", row, {"TABLE_NAME", "COLUMN_NAME"})
     for row in data["COLUMN_OPTIONS"]:
