@@ -1,10 +1,13 @@
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.media_discovery import media_discovery
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.transcription import TRANSCRIPTION_MODELS
 
@@ -32,6 +35,7 @@ def test_two_catalogs_agree_on_every_video(client: TestClient) -> None:
     ]["1080p"] == 8
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_job_token_live_and_unavailable_prices_are_distinct(client: TestClient) -> None:
     rows = {r["id"]: r for r in client.get("/v1/videos/models").json()["data"]}
     ltx = rows["lightricks/ltx-2.3-fast"]["trustedrouter"]["media"]["pricing"]["routes"]
@@ -43,9 +47,13 @@ def test_job_token_live_and_unavailable_prices_are_distinct(client: TestClient) 
     seed = rows["bytedance/seedance-2.0-fast"]
     token = seed["trustedrouter"]["media"]["pricing"]["routes"]["byteplus"]
     assert token["unit"] == "million_output_tokens"
-    assert set(seed["supported_resolutions"]) == set(token["usd_by_resolution"]) == {"480p", "720p"}
+    assert set(token["usd_by_resolution"]) == {"480p", "720p"}
     assert all(Decimal(v) > 0 for v in token["usd_by_resolution"].values())
-    assert 16 not in seed["supported_durations"] and seed["supported_frame_images"] == ["first_frame"]
+    # Model metadata is built from routable hosts. A BytePlus hold leaves the
+    # borrowed route out of it, so BytePlus's own limits apply only while live.
+    if "byteplus" not in PREPAID_PROVIDER_HOLD_REASONS:
+        assert set(seed["supported_resolutions"]) == set(token["usd_by_resolution"])
+        assert 16 not in seed["supported_durations"] and seed["supported_frame_images"] == ["first_frame"]
     empty = media_discovery("google/veo-3.1", [], {})
     assert empty and empty["pricing"]["routes"] == {}
 
