@@ -257,6 +257,8 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     select_price_tier,
 )
 from trusted_router.provider_lifecycle import (
+    ProviderPrice,
+    provider_long_context_price,
     provider_model_retired,
     provider_price_microdollars,
 )
@@ -394,18 +396,22 @@ def effective_endpoint(
     )
     if provider_price is None:
         return endpoint
-    prompt_price = _customer_price(provider_price.prompt_microdollars_per_million_tokens)
-    completion_price = _customer_price(provider_price.completion_microdollars_per_million_tokens)
-    cached_prompt_price = (
-        _customer_price(provider_price.prompt_cached_microdollars_per_million_tokens)
-        if provider_price.prompt_cached_microdollars_per_million_tokens is not None
-        else None
+    (base_tier,) = _announced_customer_tier(provider_price)
+    prompt_price = base_tier.prompt_price_microdollars_per_million_tokens
+    completion_price = base_tier.completion_price_microdollars_per_million_tokens
+    tiers: tuple[PriceTier, ...] = (base_tier,)
+    long_context = provider_long_context_price(
+        endpoint.provider,
+        endpoint.model_id,
+        at=at,
     )
-    tiers = _flat_tier(
-        prompt_price,
-        completion_price,
-        prompt_cached=cached_prompt_price,
-    )
+    if long_context is not None:
+        # Keep the provider's context tiers: a long prompt must not be
+        # billed at the short-context rate just because a price is pinned.
+        tiers = (
+            replace(base_tier, max_prompt_tokens=long_context.above_prompt_tokens),
+            *_announced_customer_tier(long_context.price),
+        )
     return replace(
         endpoint,
         prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -414,6 +420,15 @@ def effective_endpoint(
         published_completion_price_microdollars_per_million_tokens=completion_price,
         price_tiers=tiers,
         published_price_tiers=tiers,
+    )
+
+
+def _announced_customer_tier(price: ProviderPrice) -> tuple[PriceTier, ...]:
+    cached = price.prompt_cached_microdollars_per_million_tokens
+    return _flat_tier(
+        _customer_price(price.prompt_microdollars_per_million_tokens),
+        _customer_price(price.completion_microdollars_per_million_tokens),
+        prompt_cached=_customer_price(cached) if cached is not None else None,
     )
 
 

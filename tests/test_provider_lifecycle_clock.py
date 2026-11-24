@@ -154,6 +154,7 @@ def test_latest_scheduled_cutover_covers_every_effective_date() -> None:
         assert retirement.effective_at <= latest, retirement.provider
     assert provider_lifecycle.DEEPSEEK_V4_PRICING_EFFECTIVE_AT <= latest
     assert provider_lifecycle.FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT <= latest
+    assert provider_lifecycle.OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT <= latest
     assert provider_lifecycle.PHALA_JULY_2026_EFFECTIVE_AT <= latest
     assert provider_lifecycle.SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT <= latest
     # Past the latest cutover, no retirement is still pending, which is what
