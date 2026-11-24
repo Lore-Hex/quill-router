@@ -16,6 +16,7 @@ from starlette.requests import Request
 
 from tests.fakes.spanner import make_fake_store
 from tests.test_video_derived_routing import URL, payload
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -204,6 +205,7 @@ def test_chat_same_key_replays_across_the_field(
 # --- video authorize and read-only lookup over HTTP ---------------------------
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 @pytest.mark.parametrize(("first", "retry"), [(None, "gateway"), ("gateway", None), (None, "x" * 99)])
 def test_video_same_key_replays_across_the_field(
     client: TestClient, inference_key: str, first: str | None, retry: str | None,
