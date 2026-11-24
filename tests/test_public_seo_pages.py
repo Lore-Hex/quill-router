@@ -2367,3 +2367,44 @@ def test_legacy_routing_guide_preserves_search_query(client: TestClient) -> None
     assert response.status_code == 301
     assert response.headers["location"] == "/docs/provider-routing?ref=article"
     assert client.get(response.headers["location"]).status_code == 200
+
+
+def test_free_llm_api_page_lists_live_cheapest_models(client: TestClient) -> None:
+    from trusted_router.dashboard import free_llm_api_models
+
+    response = client.get("/free-llm-api")
+    assert response.status_code == 200
+    body = response.text
+    models = free_llm_api_models()
+    assert models
+    for model in models:
+        assert f'href="/models/{model["id"]}"' in body
+    assert '"trustedrouter/cheap"' in body
+    assert "<loc>https://trustedrouter.com/free-llm-api</loc>" in client.get("/sitemap-core.xml").text
+    assert "/free-llm-api" in client.get("/llms.txt").text
+
+
+def test_free_llm_api_offer_tag_ends_with_the_launch_offer(client: TestClient, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    from trusted_router import fortanix_launch
+
+    window = fortanix_launch._offer_window_open
+    monkeypatch.setattr(
+        fortanix_launch, "_offer_window_open", lambda: window(datetime(2026, 11, 20, tzinfo=UTC))
+    )
+    assert "Launch offer, ends" in client.get("/free-llm-api").text
+    monkeypatch.setattr(
+        fortanix_launch, "_offer_window_open", lambda: window(datetime(2026, 11, 28, 8, tzinfo=UTC))
+    )
+    assert "Launch offer, ends" not in client.get("/free-llm-api").text
+
+
+@pytest.mark.parametrize(
+    ("microdollars", "label"),
+    [(10_000, "1¢"), (47_000, "4.7¢"), (123_000, "12¢"), (1_000_000, "$1.00"), (2_500_000, "$2.50")],
+)
+def test_free_llm_api_cents_labels(microdollars: int, label: str) -> None:
+    from trusted_router.dashboard import _cents_per_million
+
+    assert _cents_per_million(microdollars) == label

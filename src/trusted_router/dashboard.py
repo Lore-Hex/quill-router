@@ -144,6 +144,7 @@ from trusted_router.provider_locations import (
     provider_model_locations,
 )
 from trusted_router.provider_precision import endpoint_precision_metadata
+from trusted_router.routing_candidates import cheap_candidate_models
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
@@ -3289,11 +3290,7 @@ def _cents_per_million(microdollars_per_million: int) -> str:
 
 def free_llm_api_models(limit: int = 6) -> list[dict[str, Any]]:
     """The trustedrouter/cheap pool, cheapest first, priced from the live catalog."""
-    from trusted_router import fortanix_launch
-    from trusted_router.routing_candidates import cheap_candidate_models
-
-    offer_end = fortanix_launch.OFFER_END_DATE
-    offer_label = f"{offer_end:%b} {offer_end.day}" if fortanix_launch.fortanix_launch_offer() else None
+    offer_label = LaunchOfferFacts.end_label if fortanix_launch_offer() else None
     rows: list[tuple[int, dict[str, Any]]] = []
     for model in cheap_candidate_models():
         if model.internal_only:
@@ -3307,7 +3304,7 @@ def free_llm_api_models(limit: int = 6) -> list[dict[str, Any]]:
             "id": model.id,
             "input": _cents_per_million(prompt),
             "output": _cents_per_million(completion),
-            "offer": offer_label if model.id == fortanix_launch.MODEL_ID else None,
+            "offer": offer_label if model.id == LAUNCH_OFFER_MODEL_ID else None,
         }))
     rows.sort(key=lambda row: (row[0], row[1]["id"]))
     return [row for _, row in rows[:limit]]
