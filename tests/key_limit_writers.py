@@ -42,8 +42,11 @@ parser.
 A scope is an outermost function with every function, lambda, comprehension
 and class body nested in it (_Module.outer), or a module statement or class
 body outside any function, or a text file. getattr(obj, "name") with a
-literal name, through any alias of getattr, and obj.__getattribute__("name")
-are read as obj.name before either layer runs (_Fetches).
+literal name, where getattr is the builtin (through any alias of it the
+module binds to nothing else, or builtins.getattr), and
+obj.__getattribute__("name") are read as obj.name before either layer runs
+(_Fetches). A function's defaults, decorators and annotations belong to the
+scope around it.
 
 The escape rule (_escape_routes) decides where SQL text naming the table may
 go. A value whose rendering may name the table (a string constant, f-string,
@@ -60,9 +63,11 @@ may leave its scope only by:
   and of each name it is bound to or put into, is one of these routes, so
   a helper that returns it, or a method result holding it, is not clean).
 
-The steps it may take on the way never let code the scanner cannot see
-receive it. Every other operand, receiver, callee and class it meets must
-be provably builtin (_builtin_value, below). The steps:
+The steps it allows are chosen so that, in the code shapes it models, no
+code the scanner cannot see receives it: every other operand, receiver,
+callee and class it meets must be provably builtin (_builtin_value, below).
+This is a best-effort guard, not a soundness guarantee for arbitrary
+Python (see the threat model). The steps:
 
 - built on: concatenated or %-formatted with a provably builtin operand; an
   f-string part (a format spec only for a provably builtin value); a
@@ -115,7 +120,8 @@ walks) for any name. A reader counts reached through builtins too
 (builtins.locals(), __builtins__["eval"]), and passed on uncalled it is a
 frame read. (A plain class is itself only ever read for an attribute.)
 
-Provably builtin (_builtin_value) is syntactic and fails closed: only a
+Provably builtin (_builtin_value) is syntactic and meant to fail closed:
+only a
 literal; an f-string with a literal part or two fields; a container
 display, comprehension, concatenation, % or conditional of such; an
 element or slice of such; a str method's result on such a str; str, repr,
@@ -134,7 +140,7 @@ binding, and a builtin type's name used as a value are not provably
 builtin; a builtin's name means the builtin only where nothing binds it
 (_is_builtin_name).
 
-User code an allowed step could reach, and how each is closed:
+User code an allowed step could reach, and how each is handled:
 
 - implicit dunder calls of the other operand (__radd__, __rmod__, __eq__,
   __lt__, __contains__, __getitem__, __iadd__): every other operand of an
@@ -213,9 +219,10 @@ writes to the table is understood.
   part not resolved to literals (a helper's result, an interpolation, a % or
   .format argument, a str method's result, a nested function's parameter)
   fails closed whatever is known around it. A statement given to a helper
-  that may change it (one that builds on the parameter, is decorated, holds
-  exec, eval or compile, or calls by a computed name) fails closed in such a
-  scope or wherever it names the table. The one form that clears is
+  that may change it (one that builds on the parameter, is decorated other
+  than by a decorator resolved to the builtin or stdlib one of its name
+  (_plain_decorator), holds exec, eval or compile, or calls by a computed
+  name) fails closed in such a scope or wherever it names the table. The one form that clears is
   f"SET LOCAL statement_timeout = {<int>}", its value provably an int.
 - In a scope that mentions the table, these fail closed (key_limit.indirect,
   every column): getattr, attrgetter, methodcaller or __getattribute__ given
@@ -243,57 +250,46 @@ writes to the table is understood.
   for a comment, and a table from a command substitution or a psql variable
   is one filled in at run time.
 
-Threat model. The inventory guards against accidental limit writers in
-reviewed code: a new statement, mutation or script that writes
-tr_key_limit's limit columns outside the guarded functions. Any scope
-that names the table, a limit column and a write is a limit writer unless
-it is a listed, behavior-pinned exception, and the parser fails closed, as
-listed above, on SQL or a mutation it cannot resolve within the module
-that executes it.
+Threat model. The inventory is a regression guard against accidental
+limit writers in reviewed code: a new statement, mutation or script that
+writes tr_key_limit's limit columns outside the guarded functions. Any
+scope that names the table, a limit column and a write is a limit writer
+unless it is a listed, behavior-pinned exception, and the parser fails
+closed, as listed above, on SQL or a mutation it cannot resolve within
+the module that executes it.
 
-What the escape rule claims, exactly. Within a module, it models the
-ordinary data flow of SQL text naming the table: names, containers,
-augmented assignment, the module's own helpers, method results and
-namespaces. Wherever the value meets an operand, a receiver, a callee or a
-class it cannot prove builtin, it fails closed. Its inference of provably
-builtin is syntactic and fails closed. A user-defined type whose dunder
-methods run SQL (__radd__, __eq__, __lt__, __getitem__, __set_name__, ...)
-is caught where it meets the value, but only where the scanner can see
-that meeting: in a scanned module, through the data flow above. Code
-review covers adapters beyond that.
+The escape rule is best effort, for common code shapes. It models the data
+flow of SQL text naming the table through names, containers, augmented
+assignment, the module's own helpers, method results and common builtins,
+and it fails closed (key_limit.escape) wherever it sees the value meet an
+operand, a receiver, a callee or a class it cannot prove builtin. It is not
+a soundness guarantee for arbitrary Python: twelve review rounds each found
+another corner, most of them in the inference of provably builtin, and each
+was closed; others surely remain.
 
-Known limits, none of them a route the rule sees and allows:
+Not modelled (code review covers these):
 
-- namespaces reached from another module: a module or class name read or
-  rebound through the module object elsewhere (vars(module),
-  module.__dict__, getattr or setattr with a computed name, sys.modules),
-  and a builtin rebound so (builtins.len = ... by a literal name is seen:
-  the index records it). The same read or write in the module that holds
-  the value or owns the name is caught, globals()["name"] = ... included;
-- frames reached from another module: a callee, tracer, profiler,
-  debugger or error reporter elsewhere reading a caller's locals
-  (sys._getframe, inspect, the tb_frame of the traceback every exception
-  carries to its handler), or writing them (f_locals writes through from
-  Python 3.13). A frame read in the module holding the value is caught;
-- a callee is taken for an executor by its name (execute, execute_sql,
-  ...): what a user-defined method of that name does with the statement is
-  judged where the method is written, by the rules there;
-- the interpreter beyond Python source: C extensions, ctypes, import and
-  audit hooks, gc's object walks from another module (in the module
-  holding the value they are frame reads), and code the scan does not
-  include (tests, dependencies) reaching into a scanned module's objects;
-- SQL whose table only arrives from another module or from data at run
-  time: a statement built in one module from text that does not name the
-  table and completed in another, or an interpolated value carrying SQL. A
-  module constant naming the table (such as KEY_LIMIT_TABLE) is followed
-  into every scanned module that reads it, and a cross-module helper whose
-  result runs in a scope that mentions the table fails closed
-  (test_a_cross_module_helpers_statement_fails_closed).
-
-list[sql] (a type's __class_getitem__ keeps the value) and rebinding a
-module constant through globals() in its own module are no longer limits:
-the first is an escape (a value is never a key), the second makes every
-name of that module not provably builtin (_Index.exposed).
+- user-defined special-method adapters (__eq__, __radd__, __getitem__,
+  __set_name__, a codec, a descriptor, ...) that meet the value where the
+  scanner does not see the meeting, or that it wrongly takes for builtin;
+- namespaces and frames reached from another module: a module's or a
+  class's names read or rebound through the module object there
+  (vars(module), module.__dict__, a computed getattr or setattr,
+  sys.modules), a builtin rebound so, and a callee, tracer, debugger or
+  error reporter reading a caller's locals (sys._getframe, inspect, the
+  tb_frame of a traceback; f_locals writes through from Python 3.13);
+- callees taken for executors by their names (execute, execute_sql, ...):
+  what a user-defined method of that name does with the statement is
+  judged only where the method is written;
+- code outside the scan: tests, dependencies, C extensions, ctypes, gc,
+  import and audit hooks reaching into a scanned module's objects;
+- SQL whose table or limit column arrives from another module or from
+  data at run time: a statement built in one module from text that does
+  not name the table and completed in another, or an interpolated value
+  carrying SQL. A module constant naming the table (such as
+  KEY_LIMIT_TABLE) is followed into every scanned module that reads it,
+  and a cross-module helper whose result runs in a scope that mentions the
+  table fails closed (test_a_cross_module_helpers_statement_fails_closed).
 
 api_key entity writers are out of scope by design: whatever writes an entity,
 the mirror changes only through the guarded functions above.
@@ -1017,6 +1013,21 @@ class _Module:
         self.outer_of: dict[str, str] = {}
         self.outer_nodes: dict[str, ast.AST] = {}
         self._qualify(tree, "", [], "")
+        # A function's defaults, decorators and annotations run in the scope
+        # around it, not in its own (outer functions first: ast.walk is
+        # breadth first).
+        for function in ast.walk(tree):
+            if isinstance(function, _FUNCTIONS):
+                arguments = function.args
+                outside: list[ast.AST | None] = [*arguments.defaults, *arguments.kw_defaults]
+                if not isinstance(function, ast.Lambda):
+                    outside += [*function.decorator_list, function.returns, *(
+                        arg.annotation for arg in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+                                                   *([arguments.vararg] if arguments.vararg else []),
+                                                   *([arguments.kwarg] if arguments.kwarg else [])])]
+                for expression in outside:
+                    for sub in ast.walk(expression) if expression is not None else []:
+                        self.functions[id(sub)] = [f for f in self.functions.get(id(sub), []) if f is not function]
         self._memo: dict[int, list[str] | None] = {}
         self.callees: dict[int, set[str]] = {}
         #: The module's helpers that run a statement they are given, and
@@ -1040,6 +1051,11 @@ class _Module:
         #: class too), and whether it imports *: they shadow a builtin.
         self.shadowed: set[str] = set()
         self.star = False
+        #: Whether the module may write its own namespace (globals(), eval,
+        #: exec, a frame, setattr by a computed name): globals()["len"] = ...
+        #: rebinds a builtin's name with no assignment the rule sees.
+        self.rewrites_names = False
+        self.imports_only: dict[tuple[str, tuple[str, ...], bool], bool] = {}
         #: Every node reading a namespace (_namespace_kind), and its kind.
         self.namespace_reads: list[tuple[ast.AST, str]] = []
         for node in ast.walk(tree):
@@ -1085,6 +1101,7 @@ class _Module:
         #: (locals(), vars(), eval, exec in them or in a function nested in
         #: them): their names are never provably builtin.
         self.frames = any(kind == "frame" for _node, kind in self.namespace_reads)
+        self.rewrites_names = any(kind in ("globals", "scope", "frame", "rebind") for _node, kind in self.namespace_reads)
         self.exposed_scopes = {id(function) for node, kind in self.namespace_reads if kind in ("locals", "scope")
                                for function in self.functions.get(id(node), [])}
 
@@ -1154,7 +1171,7 @@ class _Module:
                 if isinstance(node, (ast.Global, ast.Nonlocal)):
                     for name in node.names:
                         declared[name] = "global" if isinstance(node, ast.Global) else "nonlocal"
-                if isinstance(node, _FUNCTIONS):
+                if isinstance(node, (*_FUNCTIONS, ast.ClassDef)):
                     nested.append(node)
             if isinstance(function, _FUNCTIONS):
                 arguments = function.args
@@ -1177,13 +1194,32 @@ class _Module:
                 if kind == "nonlocal" and values:
                     outward.setdefault(name, []).extend(values)  # rebinds an enclosing function's name
             for inner in nested:
-                for name, values in self._scope(inner).outward.items():
+                rebound = self._class_outward(inner) if isinstance(inner, ast.ClassDef) else self._scope(inner).outward
+                for name, values in rebound.items():
                     if name in found:
                         found[name].extend(values)
                     elif declared.get(name) != "global":
                         outward.setdefault(name, []).extend(values)
             self._scopes[id(function)] = _Scope(found, declared, outward)
         return self._scopes[id(function)]
+
+    def _class_outward(self, cls: ast.ClassDef) -> dict[str, list[ast.AST]]:
+        """What a class body, and every function and class in it, rebinds in
+        an enclosing function through nonlocal."""
+        outward: dict[str, list[ast.AST]] = {}
+        found: dict[str, list[ast.AST]] = {}
+        declared: set[str] = set()
+        for node in _scope_nodes(cls.body):
+            _collect(node, found, found, self.index.local)
+            if isinstance(node, ast.Nonlocal):
+                declared.update(node.names)
+            inner = (self._class_outward(node) if isinstance(node, ast.ClassDef)
+                     else self._scope(node).outward if isinstance(node, _FUNCTIONS) else {})
+            for name, values in inner.items():
+                outward.setdefault(name, []).extend(values)
+        for name in declared:
+            outward.setdefault(name, []).extend(found.get(name, [ast.Name(id="<parameter>")]))
+        return outward
 
     def _class_scope(self, cls: ast.ClassDef) -> dict[str, list[ast.AST]]:
         """What each name a class body binds may be bound to."""
@@ -1939,17 +1975,77 @@ class _Sink(NamedTuple):
 
 
 #: Decorators that do not wrap the function they are applied to.
-_PLAIN_DECORATORS = frozenset({"staticmethod", "classmethod", "property", "cached_property", "abstractmethod",
-                               "cache", "lru_cache", "overload", "override", "setter", "getter", "deleter"})
+#: Decorators that do not change the arguments a function is called with,
+#: and the module each is from (builtins: by its builtin name).
+_PLAIN_DECORATORS = {"staticmethod": ("builtins",), "classmethod": ("builtins",), "property": ("builtins",),
+                     "cached_property": ("functools",), "cache": ("functools",), "lru_cache": ("functools",),
+                     "abstractmethod": ("abc",), "overload": ("typing", "typing_extensions"),
+                     "override": ("typing", "typing_extensions")}
 
 
-def _decorated(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    for decorator in function.decorator_list:
-        target = decorator.func if isinstance(decorator, ast.Call) else decorator
-        name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
-        if name not in _PLAIN_DECORATORS:
-            return True
-    return False
+def _only_imported(m: _Module, name: str, modules: tuple[str, ...], as_module: bool) -> bool:
+    """Whether every binding of a name anywhere in the module is an import
+    of it from one of those modules (as_module: import of that module), with
+    no other binding and no import *."""
+    key = (name, modules, as_module)
+    if key not in m.imports_only:
+        sites = 0
+        clean = not m.star
+        for node in ast.walk(m.tree):
+            if isinstance(node, ast.arg):
+                clean = clean and node.arg != name
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    if (alias.asname or alias.name.split(".")[0]) != name:
+                        continue
+                    sites += 1
+                    clean = clean and alias.asname in (None, name) and (
+                        (isinstance(node, ast.Import) and as_module and alias.name in modules) or (
+                            isinstance(node, ast.ImportFrom) and not as_module and node.module in modules))
+            else:
+                found: dict[str, list[ast.AST]] = {}
+                _collect(node, found, found, set())
+                clean = clean and name not in found
+        m.imports_only[key] = clean and sites > 0
+    return m.imports_only[key]
+
+
+def _plain_decorator(m: _Module, function: ast.AST, decorator: ast.expr) -> bool:
+    """A decorator provably one of _PLAIN_DECORATORS (resolved: a builtin's
+    name nothing binds, a name only imported from its module, or an
+    attribute of that module only imported as itself), or a property's
+    setter, getter or deleter in the class that defines the property."""
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    if isinstance(target, ast.Name):
+        modules = _PLAIN_DECORATORS.get(target.id)
+        if modules is None:
+            return False
+        return _is_builtin_name(m, target) if modules == ("builtins",) else _only_imported(m, target.id, modules, False)
+    if not (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)):
+        return False
+    receiver = target.value.id
+    if target.attr in ("setter", "getter", "deleter"):
+        cls = m.parents.get(id(function))
+        if not isinstance(cls, ast.ClassDef):
+            return False
+        sites = [item for item in cls.body if receiver in _class_bindings(item)]
+        return bool(sites) and all(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) for item in sites) and any(
+            any(isinstance(d, ast.Name) and d.id == "property" and _is_builtin_name(m, d)
+                for d in cast(ast.FunctionDef, item).decorator_list) for item in sites)
+    modules = _PLAIN_DECORATORS.get(target.attr)
+    return modules is not None and modules != ("builtins",) and receiver in modules and _only_imported(
+        m, receiver, (receiver,), True)
+
+
+def _class_bindings(item: ast.AST) -> set[str]:
+    found: dict[str, list[ast.AST]] = {}
+    for node in _scope_nodes([item]):
+        _collect(node, found, found, set())
+    return set(found)
+
+
+def _decorated(m: _Module, function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    return not all(_plain_decorator(m, function, decorator) for decorator in function.decorator_list)
 
 
 def _parameters(m: _Module, function: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, _Sink]:
@@ -2044,7 +2140,7 @@ def derived_sinks(m: _Module) -> dict[str, list[_Sink]]:
 def _sink_entries(entry: _Calls, sinks: dict[str, list[_Sink]]) -> set[_Sink]:
     m, function = entry.module, entry.function
     parameters = _parameters(m, function)
-    decorated = _decorated(function)
+    decorated = _decorated(m, function)
     found: set[_Sink] = set()
     for call, verbs, special in entry.calls:
         if special and _builtin(m, call.func) in _EVALUATORS:
@@ -2212,6 +2308,10 @@ _STR_TEXT_METHODS = frozenset(name for name in dir(str) if not name.startswith("
 #: name up in the codec registry, which user code may extend).
 _STANDARD_CODECS = frozenset({"utf-8", "utf8", "ascii", "latin-1", "latin1", "utf-16", "utf-32", "strict", "ignore",
                               "replace", "backslashreplace", "xmlcharrefreplace", "surrogateescape"})
+#: str methods whose result may hold an argument object itself.
+_ARGUMENT_KEEPING = frozenset({"format", "format_map", "partition", "rpartition", "maketrans"})
+#: str methods whose result is mutable (a list, maketrans's dict).
+_MUTABLE_RESULTS = frozenset({"split", "rsplit", "splitlines", "maketrans"})
 #: Error handlers with which encode and decode never raise.
 _QUIET_HANDLERS = frozenset({"ignore", "replace", "backslashreplace"})
 #: Methods that put a value into the local container they are called on.
@@ -2268,10 +2368,10 @@ def _is_unknown(value: ast.AST) -> bool:
 
 def _is_builtin_name(m: _Module, node: ast.AST) -> bool:
     """A name read where nothing binds it (no assignment, parameter, import,
-    def or class in any scope it may resolve to, no import *): the
-    builtin of that name."""
+    def or class in any scope it may resolve to, no import *, and a module
+    that never writes its own namespace): the builtin of that name."""
     return (isinstance(node, ast.Name) and not m.bindings(node, node.id) and node.id not in m.shadowed
-            and not m.star)
+            and not m.star and not m.rewrites_names)
 
 
 def _builtin_type(m: _Module, node: ast.AST) -> bool:
@@ -2349,7 +2449,12 @@ def _builtin_value(m: _Module, node: ast.AST, seen: frozenset[int] = frozenset()
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr in _STR_TEXT_METHODS | _STR_PREDICATES and _builtin_str(
                 m, func.value, seen):
-            return func.attr not in ("format", "format_map") or all(_builtin_value(m, a, seen) for a in arguments)
+            if func.attr in ("encode", "decode"):
+                # Another codec may return a bytes or str subclass.
+                return all(isinstance(a, ast.Constant) and a.value in _STANDARD_CODECS for a in arguments)
+            # partition returns its separator object, maketrans its values,
+            # format and format_map their arguments' __format__ results.
+            return func.attr not in _ARGUMENT_KEEPING or all(_builtin_value(m, a, seen) for a in arguments)
         if isinstance(func, ast.Name) and func.id in ("str", "repr", "format", "len") and _is_builtin_name(m, func):
             return all(_builtin_value(m, argument, seen) for argument in arguments)
         return False
@@ -2369,10 +2474,15 @@ def _builtin_value(m: _Module, node: ast.AST, seen: frozenset[int] = frozenset()
                     return False  # a metaclass's namespace (__prepare__) may answer a read with anything
             elif m.frames or scope in m.exposed_scopes:
                 return False  # a frame read, or the function's own namespace, may rebind it
-            elif not immutable and not (
-                    all(_flat(m, value) for value in bound) and _inert_name(m, (scope, node.id), seen, frozenset(), True)
-                    or _inert_name(m, (scope, node.id), seen, frozenset(), False)):
-                return False
+            elif not immutable:
+                # Every name the same container is bound to at once (x = y = [])
+                # is another way in.
+                keys = {(scope, node.id)} | {(_binding_scope(m, other, other.id), other.id)
+                                             for value in bound for other in _sharing(m, value)}
+                flat = all(_flat(m, value) for value in bound)
+                if not all(flat and _inert_name(m, key, seen, frozenset(), True)
+                           or _inert_name(m, key, seen, frozenset(), False) for key in sorted(keys)):
+                    return False
         return True
     return False
 
@@ -2407,10 +2517,11 @@ def _immutable(node: ast.AST) -> bool:
         return (isinstance(value, (ast.Tuple, ast.List, ast.Set)) and all(_immutable(e) for e in value.elts)) or (
             isinstance(value, ast.Constant)) or (
             isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
-            and value.func.attr in _STR_TEXT_METHODS)
-    # A str method's result (a str, bytes or tuple; split's list aside).
+            and value.func.attr in _STR_TEXT_METHODS - {"maketrans"})
+    # A str method's result (a str, bytes or tuple; split's list and
+    # maketrans's dict aside).
     return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            and node.func.attr in _STR_TEXT_METHODS - {"split", "rsplit", "splitlines"})
+            and node.func.attr in _STR_TEXT_METHODS - _MUTABLE_RESULTS)
 
 
 def _builtin_str(m: _Module, node: ast.AST, seen: frozenset[int] = frozenset()) -> bool:
@@ -2498,7 +2609,14 @@ def _inert_use(m: _Module, node: ast.AST, seen: frozenset[int], visiting: frozen
         return _inert_use(m, parent, seen, visiting, depth + 1, flat=False)  # its value may be it
     if isinstance(parent, ast.BinOp):
         other = parent.right if node is parent.left else parent.left
-        return _builtin_value(m, other, seen)  # else other's __radd__ receives it, and may change it
+        # Else other's __radd__ receives it, and may change it; and a result
+        # that may be a container (boxes + [], boxes * 2, a set's |) holds
+        # the same elements, so it is followed. A % result, or + with text,
+        # is a new str.
+        textual = isinstance(parent.op, ast.Mod) or (isinstance(parent.op, ast.Add) and (
+            (isinstance(other, ast.Constant) and isinstance(other.value, (str, bytes))) or _builtin_str(m, other, seen)))
+        return _builtin_value(m, other, seen) and (
+            flat or textual or _inert_use(m, parent, seen, visiting, depth + 1))
     if isinstance(parent, ast.Compare):
         return all(isinstance(op, (ast.Is, ast.IsNot)) for op in parent.ops) or all(
             _builtin_value(m, other, seen) for other in [parent.left, *parent.comparators] if other is not node)
@@ -3264,26 +3382,61 @@ def _getattr_aliases(trees: list[ast.Module]) -> set[str]:
     return aliases
 
 
-class _Fetches(ast.NodeTransformer):
-    """Reads getattr(obj, "name") (through any alias of getattr) and
-    obj.__getattribute__("name") as obj.name before any rule runs, so every
-    rule treats them exactly as the attribute."""
+def _shadowed_getattrs(tree: ast.Module, aliases: set[str]) -> set[str]:
+    """The names of getattr (and its aliases) a module binds to anything
+    else, in any scope: a parameter, an assignment of another value, a def,
+    a loop, an import not of builtins.getattr. A call through such a name is
+    not getattr's, so it is not rewritten."""
+    def alias_value(value: ast.AST) -> bool:
+        return (isinstance(value, ast.Name) and value.id in aliases) or (
+            isinstance(value, ast.Attribute) and value.attr in aliases and isinstance(value.value, ast.Name)
+            and value.value.id in _BUILTINS_MODULES)
 
-    def __init__(self, aliases: set[str]) -> None:
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.arg):
+            if node.arg in aliases:
+                shadowed.add(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                if bound in aliases and not (isinstance(node, ast.ImportFrom) and node.module == "builtins"
+                                             and alias.name in aliases):
+                    shadowed.add(bound)
+        else:
+            found: dict[str, list[ast.AST]] = {}
+            _collect(node, found, found, set())
+            shadowed.update(name for name, values in found.items()
+                            if name in aliases and not all(alias_value(value) for value in values))
+    return shadowed
+
+
+class _Fetches(ast.NodeTransformer):
+    """Reads getattr(obj, "name") (through any alias of getattr the module
+    does not also bind to something else, or builtins.getattr) and
+    obj.__getattribute__("name") (object.__getattribute__(obj, "name")) as
+    obj.name before any rule runs, so every rule treats them exactly as the
+    attribute."""
+
+    def __init__(self, aliases: set[str], shadowed: frozenset[str] | set[str] = frozenset()) -> None:
         self.aliases = aliases
+        self.shadowed = shadowed
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         func = node.func
-        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
         target: ast.expr | None = None
         attribute: ast.expr | None = None
-        if name in self.aliases and len(node.args) == 2 and not node.keywords:
+        builtin = (isinstance(func, ast.Name) and func.id in self.aliases and func.id not in self.shadowed) or (
+            isinstance(func, ast.Attribute) and func.attr in self.aliases and isinstance(func.value, ast.Name)
+            and func.value.id in _BUILTINS_MODULES)
+        if builtin and len(node.args) == 2 and not node.keywords:
             target, attribute = node.args
-        elif name == "__getattribute__" and isinstance(func, ast.Attribute) and not node.keywords:
+        elif isinstance(func, ast.Attribute) and func.attr == "__getattribute__" and not node.keywords:
             if len(node.args) == 1:
                 target, attribute = func.value, node.args[0]
-            elif len(node.args) == 2:
+            elif (len(node.args) == 2 and isinstance(func.value, ast.Name) and func.value.id == "object"
+                  and "object" not in self.shadowed):
                 target, attribute = node.args
         if target is not None and attribute is not None and _literal_name(attribute):
             fetched = ast.Attribute(value=target, attr=str(cast(ast.Constant, attribute).value), ctx=ast.Load())
@@ -3297,8 +3450,8 @@ def scan_paths_detail(python: Iterable[Path], text: Iterable[Path]) -> ScanDetai
     sources = [p.read_text(encoding="utf-8") for p in python]
     trees = [ast.parse(source) for source in sources]
     getattrs = _getattr_aliases(trees)
-    fetches = _Fetches(getattrs)
-    trees = [cast(ast.Module, fetches.visit(tree)) for tree in trees]
+    trees = [cast(ast.Module, _Fetches(getattrs, _shadowed_getattrs(tree, getattrs | {"object"})).visit(tree))
+             for tree in trees]
     index = _Index(trees, {part.removesuffix(".py") for path in python
                            for part in (path.relative_to(ROOT).parts if path.is_relative_to(ROOT)
                                         else path.parts[-2:])})

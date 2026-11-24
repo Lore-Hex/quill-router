@@ -1186,6 +1186,107 @@ KEY_LIMIT_FORMS = [
     ('a type indexed with it (list[sql])',
      _with(_R12_RUN, "def f(c):\n    alias = list['UPDATE tr_key_limit SET reserved=0']\n    run(c, alias.__args__[0])\n"),
      {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    # Review round 13: the round-12 reviewer's examples (each a SQLite limit
+    # write round 12 classified as no writer), and forms that stay allowed.
+    ('round 12 reviewer: builtin_namespace',
+     "run=lambda c,q: c.execute(q + ', day_limit_micro=1')\ndef f(c):\n    globals()['len'] = lambda q: run(c,q)\n    len('UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: class_method_nonlocal',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return False\ndef f(c):\n    runner=0\n    class Change:\n        def change(self):\n            nonlocal runner\n            runner=Runner(c)\n    Change().change()\n    'UPDATE tr_key_limit SET reserved=0' == runner\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: class_nonlocal',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return False\ndef f(c):\n    runner=0\n    class Change:\n        nonlocal runner\n        runner=Runner(c)\n    'UPDATE tr_key_limit SET reserved=0' == runner\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: codec_inference',
+     "import codecs\nclass Encoded(bytes):\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    def encoder(text,errors='strict'):\n        value=Encoded(b'x')\n        value.c=c\n        return value, len(text)\n    codecs.register(lambda name: codecs.CodecInfo(name='r12_test',encode=encoder,decode=None) if name=='r12_test' else None)\n    value='x'.encode('r12_test')\n    value == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: comprehension_target',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    values=[[] for i in [0]]\n    alias=values + []\n    alias[0].append(Runner(c))\n    values[0][0] == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: concat_alias',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    boxes=[[]]\n    copy=boxes + []\n    copy[0].append(Runner(c))\n    boxes[0][0] == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: decorator_shadow',
+     "from functools import wraps\ndef cache(func):\n    @wraps(func)\n    def wrapper(c,q):\n        return func(c,q + ', day_limit_micro=1')\n    return wrapper\n@cache\ndef run(c,q):\n    c.execute(q)\ndef f(c):\n    run(c,'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True}),
+    ('round 12 reviewer: default_locals',
+     "run=lambda c,q: c.execute(q + ', day_limit_micro=1')\nsql='UPDATE tr_key_limit SET reserved=0'\ndef f(c,q=locals()['sql']):\n    run(c,q)\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', '<module>.sql'): False}),
+    ('round 12 reviewer: getattr_shadow',
+     "def make_getattr(c):\n    return lambda q,name: lambda: c.execute(q + ', day_limit_micro=1')\ndef f(c):\n    getattr=make_getattr(c)\n    getattr('UPDATE tr_key_limit SET reserved=0','upper')()\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: maketrans_inference',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    value=''.maketrans({1:Runner(c)})[1]\n    value == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: maketrans_mutation',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q+', day_limit_micro=1')\n        return False\ndef f(c):\n    a=''.maketrans({})\n    a[65]=Runner(c)\n    'UPDATE tr_key_limit SET reserved=0' == a[65]\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: maketrans_value',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return False\ndef f(c):\n    runner=''.maketrans({65:Runner(c)})[65]\n    'UPDATE tr_key_limit SET reserved=0' == runner\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: nonlocal_class_body',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    value=''\n    class Rebind:\n        nonlocal value\n        value=Runner(c)\n    value == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: nonlocal_class_method',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    value=''\n    class Rebind:\n        def change(self):\n            nonlocal value\n            value=Runner(c)\n    Rebind().change()\n    value == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: partition_inference',
+     "class Separator(str):\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    separator=Separator(':')\n    separator.c=c\n    value='a:b'.partition(separator)[1]\n    value == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: partition_subclass',
+     "class Runner(str):\n    def __new__(cls,c):\n        obj=super().__new__(cls,'x')\n        obj.c=c\n        return obj\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return False\ndef f(c):\n    runner='x'.partition(Runner(c))[1]\n    'UPDATE tr_key_limit SET reserved=0' == runner\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: repeat_alias',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    boxes=[[]]\n    copy=boxes * 1\n    copy[0].append(Runner(c))\n    boxes[0][0] == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: shallow_add',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return False\ndef f(c):\n    boxes=[[]]\n    (boxes + [])[0].append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: shallow_multiply',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return False\ndef f(c):\n    boxes=[[]]\n    (boxes * 1)[0].append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: shared_assignment',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return True\ndef f(c):\n    values=alias=[]\n    alias.append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in values\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: shared_literal',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q+', day_limit_micro=1')\n        return False\ndef f(c):\n    a=b=[]\n    a.append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in b\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('round 12 reviewer: shared_walrus',
+     "class Runner:\n    def __init__(self,c): self.c=c\n    def __eq__(self,q):\n        self.c.execute(q+', day_limit_micro=1')\n        return False\ndef f(c):\n    a=(b:=[])\n    a.append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in b\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a flat list copied with + is allowed',
+     "def f(c):\n    names = ['a']\n    more = names + ['b']\n    if 'UPDATE tr_key_limit SET reserved=0' in names:\n        c.execute('UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): False}),
+    ('text added to an element is allowed',
+     "def f(c):\n    head = 'a:b'.partition(':')[0]\n    c.execute('UPDATE tr_key_limit SET reserved=0' + head)\n",
+     {('key_limit.sql', 'f'): True}),
+    ('the builtin getattr with a literal name is read as the attribute',
+     "def f(c):\n    c.execute(getattr('UPDATE tr_key_limit SET reserved=0', 'strip')())\n",
+     {('key_limit.sql', 'f'): False}),
+    ('a stdlib decorator imported by name is plain',
+     "from functools import cache\n@cache\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): False}),
+    ('a stdlib decorator through its module is plain',
+     "import functools\n@functools.lru_cache(maxsize=None)\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): False}),
+    ('a decorator named like a stdlib one but bound otherwise',
+     "cache = lambda func: lambda c, q: func(c, q + ', day_limit_micro=1')\n@cache\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True}),
+    ('a method named getattr is not the builtin',
+     "def f(c, obj):\n    obj.getattr('UPDATE tr_key_limit SET reserved=0', 'upper')()\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a decorator named cache imported from elsewhere',
+     "from mylib import cache\n@cache\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True}),
+    ('a stdlib decorator imported, then rebound',
+     "from functools import cache\ncache = lambda func: lambda c, q: func(c, q + ', day_limit_micro=1')\n@cache\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True}),
+    ('getattr bound by a parameter',
+     "def f(c, getattr):\n    getattr('UPDATE tr_key_limit SET reserved=0', 'upper')()\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a lambda default reading locals()',
+     "run = lambda c, q: c.execute(q + ', day_limit_micro=1')\ndef f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    g = lambda q=locals()['sql']: run(c, q)\n    g()\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
 ]
 
 
@@ -2058,3 +2159,76 @@ def test_the_round_12_injections_into_a_listed_scope_are_caught(tmp_path: Path, 
                and (where == scope or where.startswith(scope + "."))}
     assert escapes, label
     assert {("storage_postgres.py", where) for where in escapes} <= limit_column_writers(detail)
+
+
+# Review round 13: the round-12 reviewer's forms, one or more per fixed item,
+# injected into PostgresStore._release_key_hold_tx (helpers beside the
+# module). Each makes the scope, a scope nested in it, or a helper it adds,
+# a limit-column writer the inventory does not list. (In this module a
+# globals() read already escapes, since it holds module constants naming the
+# table; item 5's own check is its control.)
+_PROBE_SEPARATOR = ("class ProbeSeparator(str):\n    def __eq__(self, q):\n        return ProbeRunner(self.c).run(q)\n")
+_ROUND_13 = {
+    "1. a + copy of a nested container changed (the reviewer's)": ("""
+        probe_boxes = [[]]
+        probe_copy = probe_boxes + []
+        probe_copy[0].append(ProbeRunner(conn))
+        probe_found = 'UPDATE tr_key_limit SET reserved=0' in probe_boxes[0]
+    """, _PROBE_RUNNER_12),
+    "1. a * copy of a nested container changed (the reviewer's)": ("""
+        probe_boxes = [[]]
+        (probe_boxes * 1)[0].append(ProbeRunner(conn))
+        probe_found = 'UPDATE tr_key_limit SET reserved=0' in probe_boxes[0]
+    """, _PROBE_RUNNER_12),
+    "1. a container two names share (the reviewer's)": ("""
+        probe_values = probe_alias = []
+        probe_alias.append(ProbeRunner(conn))
+        probe_found = 'UPDATE tr_key_limit SET reserved=0' in probe_values
+    """, _PROBE_RUNNER_12),
+    "2. a partition separator kept (the reviewer's)": ("""
+        probe_part = 'a:b'.partition(ProbeSeparator(':'))[1]
+        probe_same = probe_part == 'UPDATE tr_key_limit SET reserved=0'
+    """, _PROBE_RUNNER_12 + _PROBE_SEPARATOR),
+    "2. a maketrans value kept (the reviewer's)": ("""
+        probe_value = ''.maketrans({65: ProbeRunner(conn)})[65]
+        probe_same = 'UPDATE tr_key_limit SET reserved=0' == probe_value
+    """, _PROBE_RUNNER_12),
+    "3. nonlocal from a nested class's method (the reviewer's)": ("""
+        probe_runner = 0
+        class ProbeChange:
+            def change(self):
+                nonlocal probe_runner
+                probe_runner = ProbeRunner(conn)
+        ProbeChange().change()
+        probe_same = 'UPDATE tr_key_limit SET reserved=0' == probe_runner
+    """, _PROBE_RUNNER_12),
+    "4. a local getattr (the reviewer's)": ("""
+        getattr = probe_make_getattr(conn)
+        getattr('UPDATE tr_key_limit SET reserved=0', 'upper')()
+    """, "def probe_make_getattr(c):\n    return lambda q, name: lambda: c.execute(q + ', day_limit_micro=1')\n"),
+    "5. a builtin's name rebound through globals() (the reviewer's)": ("""
+        globals()['len'] = lambda q: probe_run(conn, q)
+        len('UPDATE tr_key_limit SET reserved=0')
+    """, _PROBE_RUN),
+    "6. a module function's default reading locals() (the reviewer's)": ("""
+        probe_default(conn)
+    """, _with(_PROBE_RUN, "PROBE_SQL = 'UPDATE tr_key_limit SET reserved=0'\n"
+                           "def probe_default(c, q=locals()['PROBE_SQL']):\n    probe_run(c, q)\n")),
+    "7. a decorator named cache that changes the statement (the reviewer's)": ("""
+        probe_cached_run(conn, 'UPDATE tr_key_limit SET reserved=0')
+    """, "def cache(func):\n    def wrapper(c, q):\n        return func(c, q + ', day_limit_micro=1')\n    return wrapper\n"
+         "@cache\ndef probe_cached_run(c, q):\n    c.execute(q)\n"),
+}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_13))
+def test_the_round_13_injections_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    change, helpers = _ROUND_13[label]
+    scope = "PostgresStore._release_key_hold_tx"
+    source = (ROOT / _PG).read_text()
+    where = source.index(_RELEASE_END)
+    source = (source[:where] + "\n" + textwrap.indent(textwrap.dedent(change), "        ") + source[where:]
+              + "\n\n" + helpers)
+    writers = limit_column_writers(_injected_detail(tmp_path, _PG, source))
+    assert any(path == "storage_postgres.py" and (where == scope or where.startswith((scope + ".", "probe")))
+               for path, where in writers), label
