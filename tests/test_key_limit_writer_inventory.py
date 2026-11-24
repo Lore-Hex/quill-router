@@ -279,6 +279,47 @@ KEY_LIMIT_FORMS = [
     ("aliased positional mutation, table not known",
      "def f(txn, t, rows):\n    emit = txn.insert_or_update\n    emit(t, ('key_hash', 'shard', 'limit_micro'), rows)\n",
      {("mutation.unresolved", "f"): True}),
+    # Review round 7: SQL the scanner cannot resolve to literals.
+    ("augmented SQL", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    sql += ', day_limit_micro=1'\n"
+     "    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
+    ("augmented SQL, predicates only", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0 WHERE key_hash=%s'\n"
+     "    for p in ('day', 'week'):\n        sql += f' AND {p}_usage >= 0'\n    c.execute(sql)\n",
+     {("key_limit.sql", "f"): False}),
+    ("augmented SQL from an argument", "def f(c, sql):\n    sql += ' WHERE key_hash = %s'\n"
+     "    c.execute('UPDATE tr_key_limit SET reserved = 0')\n    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
+    ("str.replace SQL", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'.replace('reserved=0', "
+     "'day_limit_micro=1')\n    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
+    ("quoted f-string", "def f(c, fragment):\n    c.execute(f\"UPDATE tr_key_limit SET reserved=length('{fragment}')\")\n",
+     {("key_limit.sql", "f"): True}),
+    ("quoted f-string, built and returned", "def f(fragment):\n    return f\"UPDATE tr_key_limit SET "
+     "reserved=length('{fragment}')\"\n", {("key_limit.sql", "f"): True}),
+    ("% with an unknown argument", "def f(c, x):\n    c.execute('UPDATE tr_key_limit SET reserved=%s' % x)\n",
+     {("key_limit.sql", "f"): True}),
+    (".format with an unknown argument", "def f(c, x):\n    c.execute('UPDATE tr_key_limit SET reserved={}'.format(x))\n",
+     {("key_limit.sql", "f"): True}),
+    ("a join of non-literals", "def f(c, parts):\n    c.execute('UPDATE tr_key_limit SET ' + ', '.join(parts))\n",
+     {("key_limit.sql", "f"): True}),
+    ("an unknown verb before the table", "def f(c, verb):\n    c.execute(f'{verb} tr_key_limit SET limit_micro = 1')\n",
+     {("key_limit.sql", "f"): True}),
+    ("a statement from an argument, in a scope that writes the table", "def f(c, sql):\n"
+     "    c.execute('UPDATE tr_key_limit SET reserved = 0')\n    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
+    ("a session setting with an unknown value, in a scope that writes the table", "def f(c, ms):\n"
+     "    c.execute(f'SET LOCAL statement_timeout = {ms}')\n    c.execute('UPDATE tr_key_limit SET reserved = 0')\n",
+     {("key_limit.sql", "f"): False}),
+    # Spanner mutations: columns written out as literals, or every column.
+    ("mutable mutation columns", "def f(tx):\n    cols = ['key_hash', 'shard', 'reserved']\n"
+     "    cols.append('day_limit_micro')\n    tx.update('tr_key_limit', cols, [('k', 0, 0, 1)])\n",
+     {("key_limit.name", "f"): True}),
+    ("a column constant", "COLS = ('key_hash', 'shard', 'reserved')\ndef f(tx):\n"
+     "    tx.update(table='tr_key_limit', columns=COLS, values=[])\n", {("key_limit.name", "f"): True}),
+    ("a computed column list", "def f(tx, cols):\n    tx.update('tr_key_limit', tuple(cols), [])\n",
+     {("key_limit.name", "f"): True}),
+    ("a REPLACE mutation (nulls what it omits)", "def f(tx):\n    tx.replace('tr_key_limit', ('key_hash', 'shard', "
+     "'reserved'), [('k', 0, 0)])\n", {("key_limit.name", "f"): True}),
+    ("insert_or_update keeps the columns it omits", "def f(tx):\n    tx.insert_or_update('tr_key_limit', "
+     "('key_hash', 'shard', 'reserved'), [('k', 0, 0)])\n", {("key_limit.name", "f"): False}),
+    ("a REPLACE payload", "def f(rows):\n    return [{'replace': {'table': 'tr_key_limit', 'columns': ['key_hash'], "
+     "'values': rows}}]\n", {("key_limit.name", "f"): True}),
     ("dynamic dispatch",
      "def f(txn, verb, rows):\n    getattr(txn, verb)(table='tr_key_limit', columns=COLS, values=rows)\n"
      "COLS = ('key_hash', 'shard', 'month_limit_micro')\n",
@@ -355,6 +396,10 @@ NOT_WRITES = [
     ("another table's mutation",
      "def f(txn, rows):\n    txn.insert_or_update(table='tr_credit_balance', columns=('workspace_id',), values=rows)\n"),
     ("a log line", "def f(log, n):\n    log.info('could not update %s keys', n)\n"),
+    ("a message naming the table, with an unknown part",
+     "def f(m):\n    raise ValueError(f'unknown tr_key_limit mutation: {m!r}')\n"),
+    ("a read with an interpolated value (data at run time, see the threat model)",
+     "def f(c, k):\n    c.execute(f\"SELECT reserved FROM tr_key_limit WHERE key_hash = '{k}'\")\n"),
 ]
 
 
@@ -373,6 +418,15 @@ def test_reads_and_mentions_are_not_writes(tmp_path: Path, name: str, source: st
      {("key_limit.text", "<file>"): True}),
     ("shell heredoc limit", ".sh", "psql <<'SQL'\nUPDATE tr_key_limit SET reserved = 0, limit_micro = 1;\nSQL\n",
      {("key_limit.text", "<file>"): True}),
+    ("padded shell heredoc", ".sh", "psql <<'SQL'\nUPDATE\n\n\n\ntr_key_limit SET day_limit_micro=1;\nSQL\n",
+     {("key_limit.text", "<file>"): True}),
+    ("indented multiline SQL in a shell string", ".sh",
+     "gcloud spanner databases execute-sql db --sql=\"\n    UPDATE\n\n        tr_key_limit\n    SET reserved = 0\"\n",
+     {("key_limit.text", "<file>"): True}),
+    ("a DDL command beside the table", ".sh",
+     "gcloud spanner databases ddl update db --ddl='ALTER TABLE x ADD COLUMN y INT64'\n\n" + "echo ok\n" * 70
+     + "apply_ddl 'CREATE TABLE tr_key_limit (key_hash STRING(64)) PRIMARY KEY (key_hash)'\n",
+     {("key_limit.text", "<file>"): False}),
     ("SQL file delete", ".sql", "delete from tr_key_limit where key_hash = 'k';\n",
      {("key_limit.text", "<file>"): False}),
     ("SQL upsert of a limit", ".sql", "INSERT OR UPDATE tr_key_limit (key_hash, shard, day_limit_micro) "
@@ -517,6 +571,17 @@ COLUMN_FORMS = [
     ("a dollar quote, no limit", "UPDATE tr_key_limit SET reserved = length($$; where$$) WHERE key_hash = %s", False),
     ("a cleared counter update", "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit SET reserved = reserved + @est "
      "WHERE key_hash = @kh AND shard = @shard THEN RETURN reserved", False),
+    # Review round 7.
+    ("a line comment ended by a carriage return", "UPDATE tr_key_limit SET reserved=0 -- note\r, day_limit_micro=1",
+     True),
+    ("a line comment ended by CR LF, no limit", "UPDATE tr_key_limit SET reserved=0 -- note\r\n WHERE key_hash = %s",
+     False),
+    ("another line end inside a line comment", "UPDATE tr_key_limit SET reserved = 0 -- a\x0b, day_limit_micro = 1"
+     "\n WHERE key_hash = %s", True),
+    ("a doubled quote inside a doubled quote, no limit", "UPDATE tr_key_limit SET reserved=length('a''''b')", False),
+    ("padded multiline SQL", "UPDATE\n\n\n\ntr_key_limit SET day_limit_micro=1", True),
+    ("Spanner's INSERT OR UPDATE keeps the columns it omits", "INSERT OR UPDATE INTO tr_key_limit (key_hash, shard, "
+     "reserved) VALUES (@kh, 0, 0)", False),
 ]
 
 
@@ -528,6 +593,78 @@ def test_each_way_to_write_a_limit_column_is_found(tmp_path: Path, name: str, sq
     source = f"def f(conn):\n    conn.execute({sql!r})\n"
     assert _scan_sample(tmp_path, "sample.py", source) == {("key_limit.sql", "f"): writes_limit}, name
     assert _scan_sample(tmp_path, "sample.sql", sql + ";\n") == {("key_limit.text", "<file>"): writes_limit}, name
+
+
+def test_a_cross_module_helpers_statement_fails_closed(tmp_path: Path) -> None:
+    """Review round 7's "Cross-module helper" probe: a scope that writes the
+    table runs a statement an imported helper returns. The helper's text is
+    not followed across modules, so the call counts as writing every
+    column (tests/key_limit_writers.py, threat model)."""
+    helper = tmp_path / "probe_helper.py"
+    helper.write_text("def append_limit(sql):\n    return sql + ', day_limit_micro=1'\n")
+    caller = tmp_path / "caller.py"
+    caller.write_text("from probe_helper import append_limit\ndef f(c):\n"
+                      "    c.execute(append_limit('UPDATE tr_key_limit SET reserved=0'))\n")
+    detail = scan_paths_detail([helper, caller], [])
+    assert detail == {("key_limit.sql", "caller.py", "f"): True}
+
+
+_PG = "src/trusted_router/storage_postgres.py"
+_RELEASE_END = "\n    @staticmethod\n    def _recorded_key_hold"
+
+
+def _injected(tmp_path: Path, relative: str, change: str) -> set[tuple[str, str]]:
+    source = (ROOT / relative).read_text()
+    if relative == _PG:
+        assert source.count(_RELEASE_END) == 1
+        where = source.index(_RELEASE_END)
+        source = source[:where] + "\n" + textwrap.indent(textwrap.dedent(change), "        ") + source[where:]
+    elif relative.endswith(".py"):
+        needle = '        return {"keys": len(plan)}'
+        assert source.count(needle) == 1
+        source = source.replace(needle, textwrap.indent(textwrap.dedent(change), "        ") + needle)
+    else:
+        source += "\n" + change
+    injected = tmp_path / Path(relative).name
+    injected.write_text(source)
+    detail = scan_paths_detail([injected], []) if injected.suffix == ".py" else scan_paths_detail([], [injected])
+    return limit_column_writers(detail)
+
+
+@pytest.mark.parametrize(("relative", "scope", "change"), [
+    (_PG, "PostgresStore._release_key_hold_tx", """
+        sql = 'UPDATE tr_key_limit SET reserved=0'
+        sql += ', day_limit_micro=1'
+        conn.execute(sql)
+    """),
+    (_PG, "PostgresStore._release_key_hold_tx", """
+        sql = 'UPDATE tr_key_limit SET reserved=0'.replace('reserved=0', 'day_limit_micro=1')
+        conn.execute(sql)
+    """),
+    (_PG, "PostgresStore._release_key_hold_tx", """
+        fragment = str(key_hash)
+        conn.execute(f"UPDATE tr_key_limit SET reserved=length('{fragment}')")
+    """),
+    ("src/trusted_router/storage_gcp_counter_reconcile.py", "repair_typed_reserved._txn", """
+        columns = ['key_hash', 'shard', 'reserved']
+        columns.append('day_limit_micro')
+        transaction.update('tr_key_limit', columns, [('probe', 0, 0, 1)])
+    """),
+    ("src/trusted_router/storage_gcp_counter_reconcile.py", "repair_typed_reserved._txn", """
+        transaction.replace('tr_key_limit', ('key_hash', 'shard', 'usage', 'reserved'), [('probe', 0, 0, 0)])
+    """),
+    ("scripts/deploy/migrate_typed_counters.sh", "<file>",
+     "psql <<'SQL'\nUPDATE\n\n\n\ntr_key_limit SET day_limit_micro=1;\nSQL\n"),
+], ids=["augmented SQL", "str.replace SQL", "quoted f-string", "mutable mutation columns", "REPLACE mutation",
+        "padded heredoc"])
+def test_the_round_7_probes_injected_into_listed_scopes_are_caught(tmp_path: Path, relative: str, scope: str,
+                                                                   change: str) -> None:
+    """Review round 7's injections, each into a scope the inventory lists:
+    the chokepoint-only check names the scope a limit-column writer."""
+    assert (Path(relative).name, scope) in _injected(tmp_path, relative, change)
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    assert (Path(relative).name, scope) not in _injected(clean, relative, "")
 
 
 def test_the_reviewers_unreadable_write_beside_a_cleared_one_is_caught(tmp_path: Path) -> None:
@@ -554,7 +691,8 @@ def test_the_reviewers_unreadable_write_beside_a_cleared_one_is_caught(tmp_path:
     '"   (reserved, day_limit_micro) = (GREATEST(reserved - %s, 0), 5000000)"',  # review round 3
     '"   reserved = GREATEST(reserved - %s, length(\';\') - 1), day_limit_micro = 5000000"',  # review round 4
     '"   reserved = GREATEST(reserved - %s, 0) /* outer /* inner */ ; */ , day_limit_micro = 5000000"',  # round 5
-], ids=["tuple assignment", "semicolon in a string", "nested block comment"])
+    '"   reserved = GREATEST(reserved - %s, 0) -- note\\r, day_limit_micro = 5000000"',  # round 7
+], ids=["tuple assignment", "semicolon in a string", "nested block comment", "carriage return"])
 def test_the_reviewers_injected_cap_write_is_caught(tmp_path: Path, assignment: str) -> None:
     """The reviewers' probes: a limit column written from a listed counter
     writer (PostgresStore._release_key_hold_tx). The column check names that

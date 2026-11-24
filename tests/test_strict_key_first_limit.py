@@ -822,3 +822,31 @@ def test_the_key_release_assigns_no_limit_column() -> None:
             assert columns is not None, (book_to_byok, windows)
             assert {"reserved", "byok_usage" if book_to_byok else "usage", "day_usage"} <= columns
             assert not columns & LIMIT_COLUMNS, (book_to_byok, windows, columns)
+
+
+def test_the_key_release_check_sees_past_a_carriage_return() -> None:
+    """Review round 7: a limit assignment after a line comment ended by a
+    bare carriage return (PostgreSQL ends it there) is one the release
+    check above reads, so it would fail."""
+    import datetime as dt
+    import inspect
+
+    from tests.fakes.spanner import _ParamTypes
+    from tests.key_limit_writers import written_columns
+    from trusted_router import storage_gcp_counter_dml as counter
+    from trusted_router.spend_windows import window_floors
+
+    source = inspect.getsource(counter.release_key_statement)
+    needle = '+ " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"'
+    assert source.count(needle) == 2
+    scope = dict(vars(counter))
+    probe = source.replace(needle, '+ " -- note\\r, day_limit_micro=1 WHERE key_hash=@kh AND shard=@shard AND '
+                                   'reserved >= @hold"')
+    exec(compile(probe, counter.__file__, "exec"), scope)  # noqa: S102 - the real function, rebuilt with the probe
+    floors = window_floors(dt.datetime(2026, 11, 24, tzinfo=dt.UTC))
+    sql, _params, _types = scope["release_key_statement"](_ParamTypes(), "kh", 1, 1, book_to_byok=False,
+                                                         window_floors=floors, windows="current")
+    assert "\r" in sql
+    columns = written_columns(sql)
+    assert columns is None or "day_limit_micro" in columns
+

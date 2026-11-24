@@ -32,8 +32,40 @@ table are not findings. A finding is (style, path, qualified name):
   sql.dynamic          DML whose table is filled in at run time
 
 limit_column_writers() narrows them to the scopes that may write a limit
-column: a mutation or payload whose columns include one or are not known, or
-DML assigning one or a column filled in at run time.
+column. It fails closed: a scope is cleared only when everything it writes
+to the table is understood, and anything else counts as writing every limit
+column until it is listed:
+
+- SQL must tokenize under a lexicon PostgreSQL and GoogleSQL read alike
+  (sql_tokens) and each statement mentioning the table must be one of a
+  small grammar (_cleared_columns); a ``--`` comment ends at a line feed or
+  a carriage return, and any other line end inside one, any block comment,
+  ``#``, a backslash in a quote, a tripled quote or a prefixed literal fails
+  closed.
+- Python SQL must resolve to literals. ``x += piece`` is modelled as
+  concatenation; a part it cannot resolve (an f-string interpolation, a %
+  or .format argument, a str method's result, a join of non-literals)
+  fails closed when the statement names the table and is shaped as SQL, and
+  a statement an executor runs in a scope that writes the table must be
+  resolved there (one from a helper, an import or an argument fails closed).
+- A Spanner mutation's columns must be written out at the call as a tuple or
+  list of string literals. Insert, Update and InsertOrUpdate keep the
+  columns they omit, so only a listed limit column is written; Replace nulls
+  what it omits, so it, and any other write call, counts as every column.
+- Only a .sql file is read as SQL. In other text (a shell argument or
+  heredoc, YAML, Terraform, Go), a DML word followed by the table before a
+  ``;`` within sixty words, whitespace collapsed, counts as every column.
+
+Threat model. The inventory guards against accidental limit writers in
+reviewed code: a new statement, mutation or script that writes
+tr_key_limit's limit columns outside the guarded functions. It fails closed
+on any SQL or mutation it cannot resolve within the module that executes
+it. It is not a defense against SQL deliberately split across modules (a
+helper in one module that edits a statement another module builds and runs,
+where the running scope never names the table) or built from data at run
+time (an interpolated value that breaks out of a literal); code review
+covers those. A cross-module helper whose result is run in a scope that
+writes the table does fail closed (test_a_cross_module_helpers_statement_fails_closed).
 
 api_key entity writers are out of scope by design: whatever writes an entity,
 the mirror changes only through the guarded functions above.
@@ -46,7 +78,7 @@ import itertools
 import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,7 +93,7 @@ _READ_WORD = re.compile(r"\bselect\b|\b(?:create|alter|drop)\s+(?:table|index|un
 _DML = (r"(?:insert\s+or\s+update(?:\s+into)?|insert\s+or\s+ignore(?:\s+into)?|insert\s+into|insert|"
         r"update|merge(?:\s+into)?|upsert(?:\s+into)?|replace\s+into|delete\s+from|delete)")
 _HINT = r"(?:@\{[^}]*\}\s*)?"
-_PLACEHOLDER = r"""["'`]?(?:\{[^}]*\}|%s|%\(\w+\)s|\$\{?\w+\}?)["'`]?"""
+_PLACEHOLDER = r"""["'`]?(?:\{[^}]*\}|%s|%\(\w+\)s|\$\{?\w+\}?|\x00)["'`]?"""
 # DML whose table is filled in at run time, shaped as SQL (so a message such
 # as "could not update %s" is not one).
 _DYNAMIC = re.compile(
@@ -84,6 +116,9 @@ MUTATION_VERBS = frozenset({"insert_or_update", "insert_or_update_map", "insert_
 AMBIGUOUS_VERBS = {"insert": 3, "update": 3, "replace": 3, "delete": 2}
 MUTATION_KEYWORDS = frozenset({"table", "columns", "values", "keyset"})
 MAX_RENDERINGS = 32
+#: Stands for a part of a string the scanner cannot resolve to literals (an
+#: f-string interpolation, a % or .format argument, a str method's result).
+UNKNOWN = "\x00"
 
 PY_EXCLUDED = ("tests", "tests-e2e", ".venv", "node_modules", ".git", "docs", "frontend")
 TEXT_SUFFIXES = (".sh", ".sql", ".tf", ".yaml", ".yml", ".go")
@@ -126,6 +161,7 @@ class _Token(NamedTuple):
 
 
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_OTHER_LINE_ENDS = "\v\f\x85\u2028\u2029"
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 _PUNCT = frozenset("(),;=.<>+-*/%:@{}[]!|&~^?0123456789")
 
@@ -168,8 +204,17 @@ def sql_tokens(sql: str) -> list[_Token] | None:
         if char.isspace():
             i += 1
         elif sql.startswith("--", i):
-            newline = sql.find("\n", i)
-            i = len(sql) if newline < 0 else newline
+            # Both dialects end a line comment at \n or \r. Any other
+            # line-like character in one (\v, \f, NEL, LS, PS) is not read
+            # alike, so it fails closed.
+            stop = len(sql)
+            for terminator in "\n\r":
+                found = sql.find(terminator, i)
+                if found >= 0:
+                    stop = min(stop, found)
+            if any(char in sql[i:stop] for char in _OTHER_LINE_ENDS):
+                return None
+            i = stop
         elif sql.startswith("/*", i) or sql.startswith("*/", i):
             return None
         elif char in "'\"`":
@@ -391,6 +436,8 @@ def written_columns(text: str) -> set[str] | None:
     the grammar clears (_cleared_columns), whatever the other statements
     are; a text that does not tokenize under the lexicon (sql_tokens) fails
     closed whole."""
+    if UNKNOWN in text:
+        return None  # a part not known at scan time could be any SQL, even inside quotes
     tokens = sql_tokens(text)
     if tokens is None:
         return None
@@ -433,7 +480,9 @@ class _Index:
         self.globals: dict[str, list[ast.AST]] = {}
         for tree in trees:
             for node in ast.walk(tree):
-                if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Attribute):
+                    self.globals.setdefault(node.target.attr, []).append(ast.Name(id="<parameter>"))
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                     for target in targets:
                         if isinstance(target, ast.Attribute):
@@ -445,7 +494,9 @@ class _Index:
                         self._module_assign(item)
 
     def _module_assign(self, node: ast.AST) -> None:
-        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            self.globals.setdefault(node.target.id, []).append(ast.Name(id="<parameter>"))
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 if isinstance(target, ast.Name):
@@ -495,8 +546,14 @@ class _Module:
     def _scope_locals(self, function: ast.AST) -> dict[str, list[ast.AST]]:
         if id(function) not in self._locals:
             found: dict[str, list[ast.AST]] = {}
+            appended: dict[str, list[ast.AST]] = {}
             for node in ast.walk(function):
-                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+                if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+                    if isinstance(node.op, ast.Add):
+                        appended.setdefault(node.target.id, []).append(node.value)
+                    else:
+                        found.setdefault(node.target.id, []).append(ast.Name(id="<parameter>"))
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                     for target in targets:
                         for name in ast.walk(target):
@@ -515,6 +572,13 @@ class _Module:
                             *([arguments.vararg] if arguments.vararg else []),
                             *([arguments.kwarg] if arguments.kwarg else [])]:
                     found.setdefault(arg.arg, []).append(ast.Name(id="<parameter>"))
+            for appended_name, pieces in appended.items():
+                tail = cast(ast.expr, pieces[0])
+                for piece in pieces[1:]:
+                    tail = ast.BinOp(left=tail, op=ast.Add(), right=cast(ast.expr, piece))
+                bases = found.get(appended_name) or [ast.Name(id="<parameter>")]
+                found[appended_name] = [_augmented(ast.BinOp(left=cast(ast.expr, base), op=ast.Add(), right=tail))
+                                 for base in bases]
             self._locals[id(function)] = found
         return self._locals[id(function)]
 
@@ -567,7 +631,7 @@ class _Module:
                 isinstance(node, ast.Call) and _callee(node) in _STRING_METHODS
                 and isinstance(node.func, ast.Attribute)):
             texts = self.texts(node, seen)
-            return None if any("{}" in text for text in texts) else texts
+            return None if any(UNKNOWN in text for text in texts) else texts
         if isinstance(node, ast.Name):
             return self._bound(self.bindings(node, node.id), seen)
         if isinstance(node, ast.Attribute):
@@ -599,13 +663,13 @@ class _Module:
         return False
 
     def texts(self, node: ast.AST, seen: frozenset[int] = frozenset()) -> list[str]:
-        """Renderings of a string expression, with ``{}`` for each part that
+        """Renderings of a string expression, with UNKNOWN for each part that
         is not known (at most MAX_RENDERINGS)."""
 
         def part(sub: ast.AST) -> list[str]:
             resolved = self.values(sub, seen)
             if not resolved or len(resolved) > MAX_RENDERINGS:
-                return ["{}"]
+                return [UNKNOWN]
             return resolved
 
         if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
@@ -622,7 +686,7 @@ class _Module:
                 for template in self.texts(node.left, seen)
                 for choice in itertools.islice(itertools.product(*(part(a) for a in arguments)), MAX_RENDERINGS)
             ]
-            return rendered[:MAX_RENDERINGS] or ["{}"]
+            return rendered[:MAX_RENDERINGS] or [UNKNOWN]
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             method = node.func.attr
             if method == "format":
@@ -632,25 +696,39 @@ class _Module:
                 for template in self.texts(node.func.value, seen):
                     for choice in itertools.islice(itertools.product(*positional), MAX_RENDERINGS):
                         rendered.append(_brace(template, list(choice), {k: v[0] for k, v in named.items()}))
-                return rendered[:MAX_RENDERINGS] or ["{}"]
+                return rendered[:MAX_RENDERINGS] or [UNKNOWN]
             if method in ("upper", "lower", "strip", "lstrip", "rstrip"):
                 return [getattr(text, method)() for text in self.texts(node.func.value, seen)]
+            if method in _CONSTRUCTION_METHODS:
+                # Not modelled: the receiver's text, then a part not known.
+                return [text + UNKNOWN for text in self.texts(node.func.value, seen)]
         resolved = self.values(node, seen)
-        return resolved if resolved else ["{}"]
+        return resolved if resolved else [UNKNOWN]
 
 
-_STRING_METHODS = frozenset({"format", "upper", "lower", "strip", "lstrip", "rstrip"})
+#: String methods whose result the scanner does not compute; a string built
+#: with one is not resolved.
+_CONSTRUCTION_METHODS = frozenset({"replace", "join", "format_map", "translate", "removeprefix", "removesuffix",
+                                   "zfill", "center", "ljust", "rjust", "expandtabs", "casefold", "swapcase",
+                                   "title", "capitalize", "partition", "rpartition", "split", "rsplit"})
+_STRING_METHODS = frozenset({"format", "upper", "lower", "strip", "lstrip", "rstrip"}) | _CONSTRUCTION_METHODS
+
+
+def _augmented(node: ast.BinOp) -> ast.BinOp:
+    """A name's value after ``+=``: its earlier value with the pieces added."""
+    node.augmented = True  # type: ignore[attr-defined]
+    return node
 
 
 def _brace(template: str, positional: list[str], named: dict[str, str]) -> str:
     def substitute(match: re.Match[str]) -> str:
         field = match.group(1)
         if field == "":
-            return positional.pop(0) if positional else "{}"
+            return positional.pop(0) if positional else UNKNOWN
         if field.isdigit():
             index = int(field)
-            return positional[index] if index < len(positional) else "{}"
-        return named.get(field, "{}")
+            return positional[index] if index < len(positional) else UNKNOWN
+        return named.get(field, UNKNOWN)
 
     return re.sub(r"\{(\w*)[^}]*\}", substitute, template)
 
@@ -666,7 +744,7 @@ def _percent(template: str, arguments: list[str]) -> str:
     def substitute(match: re.Match[str]) -> str:
         if match.group(0) == "%%":
             return "%"
-        return arguments.pop(0) if arguments else "{}"
+        return arguments.pop(0) if arguments else UNKNOWN
 
     return re.sub(r"%%|%(?:\(\w+\))?[sdr]", substitute, template)
 
@@ -681,14 +759,15 @@ def _top_level_strings(m: _Module) -> Iterator[ast.AST]:
     for node in ast.walk(m.tree):
         if not (isinstance(node, (ast.JoinedStr, ast.BinOp)) or (
                 isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes))) or (
-                isinstance(node, ast.Call) and _callee(node) == "format")):
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and _callee(node) in _STRING_METHODS)):
             continue
         parent = m.parents.get(id(node))
         grandparent = m.parents.get(id(parent)) if parent is not None else None
         if isinstance(parent, (ast.JoinedStr, ast.FormattedValue)) or (
                 isinstance(parent, ast.BinOp) and isinstance(parent.op, (ast.Add, ast.Mod))) or (
                 isinstance(parent, ast.Attribute) and isinstance(grandparent, ast.Call)
-                and _callee(grandparent) == "format"):
+                and _callee(grandparent) in _STRING_METHODS):
             continue
         if isinstance(node, ast.BinOp) and not isinstance(node.op, (ast.Add, ast.Mod)):
             continue
@@ -704,14 +783,19 @@ class _Finding:
         self.style, self.node, self.limit = style, node, limit
 
 
-def _mutation_parts(m: _Module, call: ast.Call) -> tuple[ast.AST | None, ast.AST | None, bool] | None:
-    """(table, columns, is_delete) of a call that is a mutation, else None.
-    A missing part (None) is one that is not known."""
+def _mutation_verb(m: _Module, call: ast.Call) -> str:
     name = _callee(call)
     if isinstance(call.func, ast.Name):
         for value in m.bindings(call, name) or []:
             if isinstance(value, ast.Attribute):
                 name = value.attr
+    return name
+
+
+def _mutation_parts(m: _Module, call: ast.Call) -> tuple[ast.AST | None, ast.AST | None, bool] | None:
+    """(table, columns, is_delete) of a call that is a mutation, else None.
+    A missing part (None) is one that is not known."""
+    name = _mutation_verb(m, call)
     keywords: dict[str, ast.AST] = {kw.arg: kw.value for kw in call.keywords if kw.arg}
     spread = [kw.value for kw in call.keywords if kw.arg is None]
     payloads = [_dict_fields(m, value) for value in spread]
@@ -728,6 +812,10 @@ def _mutation_parts(m: _Module, call: ast.Call) -> tuple[ast.AST | None, ast.AST
             or (len(call.args) == signature and _positional_shape(m, name, call.args))))
         or ("table" in keywords and (MUTATION_KEYWORDS - {"table"}) & keywords.keys())
     )
+    first = keywords.get("table", call.args[0] if call.args else None)
+    if not is_mutation and signature is not None and first is not None:
+        resolved = m.values(first) or []
+        is_mutation = any(names_table(value) for value in resolved)
     if not is_mutation:
         return None
     for payload in payloads:
@@ -773,22 +861,101 @@ def _dict_fields(m: _Module, node: ast.AST) -> dict[str, ast.AST]:
     return fields
 
 
+#: Mutations that keep the columns they omit (Spanner's Update, Insert of a
+#: new row, InsertOrUpdate): only a listed column is written. Replace nulls
+#: every column it omits, and a _map or any other write call is not read.
+_COLUMN_PRESERVING_VERBS = frozenset({"insert", "update", "insert_or_update"})
+
+
 def _writes_limit_columns(m: _Module, columns: ast.AST | None) -> bool:
-    if columns is None:
+    """Whether a mutation's columns may include a limit column: unless they
+    are written out at the call as a tuple or list of string literals (a
+    name, a constant, a list later extended or anything computed counts as
+    every column), they may."""
+    if not isinstance(columns, (ast.Tuple, ast.List)) or not all(
+            isinstance(c, ast.Constant) and isinstance(c.value, str) for c in columns.elts):
         return True
-    resolved = m.values(columns)
-    return resolved is None or any(c.lower() in LIMIT_COLUMNS for c in resolved)
+    return any(str(c.value).lower() in LIMIT_COLUMNS for c in columns.elts if isinstance(c, ast.Constant))
+
+
+#: Calls that run SQL: their statement must be resolved to literals in a scope
+#: that writes the table.
+_EXECUTORS = frozenset({"execute", "executemany", "executescript", "execute_sql", "execute_update",
+                        "execute_partitioned_dml", "batch_update", "execute_batch_dml"})
 
 
 def _python_findings(m: _Module) -> Iterator[_Finding]:
+    found = list(_string_findings(m))
+    yield from found
+    # A statement run in a scope that writes the table must be resolved to
+    # literals there: one built by a helper, from an import, or by anything
+    # the scanner does not model counts as writing every column.
+    writing = {m.where(f.node) for f in found if f.style.startswith("key_limit.")}
+    for node in ast.walk(m.tree):
+        if not (isinstance(node, ast.Call) and _callee(node) in _EXECUTORS):
+            continue
+        statement = _executed_statement(m, node)
+        texts = m.texts(statement) if statement is not None else [UNKNOWN]
+        if m.where(node) in writing and any(_unknown_could_run(text) for text in texts):
+            yield _Finding("key_limit.sql", node, True)
+        # A statement built with += is read here, where it is whole.
+        if isinstance(statement, ast.Name) and any(
+                getattr(value, "augmented", False) for value in m.bindings(statement, statement.id) or []):
+            for text in texts:
+                if classify(text) == "sql":
+                    yield _Finding("key_limit.sql", node, assigns_limit_column(text))
+
+
+def _executed_statement(m: _Module, call: ast.Call) -> ast.AST | None:
+    """The statement an executor runs: its first argument, a sql=/query=
+    keyword, or the "sql" of a request dict (the REST client's)."""
+    for keyword in call.keywords:
+        if keyword.arg in ("sql", "query", "statement"):
+            return keyword.value
+        if keyword.arg == "request" and isinstance(keyword.value, ast.Dict):
+            for key, value in zip(keyword.value.keys, keyword.value.values, strict=True):
+                if isinstance(key, ast.Constant) and key.value == "sql":
+                    return value
+    return call.args[0] if call.args else None
+
+
+def _unknown_could_run(text: str) -> bool:
+    """Whether an executed statement not resolved to literals could write
+    the table: nothing of it is known, or its known text names the table or
+    holds a write word."""
+    if UNKNOWN not in text:
+        return False
+    known = text.replace(UNKNOWN, " ")
+    return not known.strip() or names_table(known) or bool(_DML_WORD.search(known))
+
+
+_SQL_CLAUSE = re.compile(r"\b(?:set|into|from|values|where|using|join)\b", re.IGNORECASE)
+
+
+def _unknown_could_write(text: str) -> bool:
+    """Whether a string naming the table, shaped as SQL (a clause word in
+    its known text), has a part not known that could supply a write: unless
+    its known text is a SELECT, an unknown part counts as writing every
+    column. (One with a write word is held to the grammar, which fails it
+    closed on the unknown part.)"""
+    if UNKNOWN not in text or not names_table(text):
+        return False
+    known = text.replace(UNKNOWN, " ")
+    return bool(_SQL_CLAUSE.search(known)) and not known.lstrip().lower().startswith("select")
+
+
+def _string_findings(m: _Module) -> Iterator[_Finding]:
     strings = list(_top_level_strings(m))
     for node in strings:
         for text in m.texts(node):
             kind = classify(text)
             if kind is not None:
                 yield _Finding("key_limit." + kind, node, kind == "sql" and assigns_limit_column(text))
+            elif _unknown_could_write(text):
+                yield _Finding("key_limit.sql", node, True)
             if _DYNAMIC.search(text) or _DYNAMIC_HEAD.match(text):
                 yield _Finding("sql.dynamic", node, True)
+
     inside_strings = {id(sub) for node in strings for sub in ast.walk(node) if sub is not node}
     for node in ast.walk(m.tree):
         if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load) and (
@@ -801,7 +968,8 @@ def _python_findings(m: _Module) -> Iterator[_Finding]:
             if parts is not None:
                 table, columns, delete = parts
                 resolved = m.values(table) if table is not None else None
-                limit = not delete and _writes_limit_columns(m, columns)
+                limit = not delete and (_mutation_verb(m, node) not in _COLUMN_PRESERVING_VERBS
+                                        or _writes_limit_columns(m, columns))
                 if resolved is None:
                     yield _Finding("mutation.unresolved", node, limit)
                 elif any(names_table(value) for value in resolved):
@@ -814,10 +982,16 @@ def _python_findings(m: _Module) -> Iterator[_Finding]:
             table = fields.get("table")
             if table is not None and "values" in fields:
                 resolved = m.values(table)
+                # The payload's verb is its key in the dict around it.
+                outer = m.parents.get(id(node))
+                verbs = [m.values(k) for k, v in zip(outer.keys, outer.values, strict=True)
+                         if v is node and k is not None] if isinstance(outer, ast.Dict) else []
+                verb = verbs[0][0].lower() if verbs and verbs[0] else ""
+                limit = verb not in _COLUMN_PRESERVING_VERBS or _writes_limit_columns(m, fields.get("columns"))
                 if resolved is None:
-                    yield _Finding("mutation.unresolved", node, _writes_limit_columns(m, fields.get("columns")))
+                    yield _Finding("mutation.unresolved", node, limit)
                 elif any(names_table(value) for value in resolved):
-                    yield _Finding("key_limit.name", node, _writes_limit_columns(m, fields.get("columns")))
+                    yield _Finding("key_limit.name", node, limit)
 
 
 def _strip_comments(path: Path, text: str) -> str:
@@ -826,13 +1000,16 @@ def _strip_comments(path: Path, text: str) -> str:
 
 
 def _dml_near_table(text: str) -> bool:
-    """Whether a DML word stands on a line naming the table or within the
-    three lines before it (a lock's FOR UPDATE aside)."""
-    lines = text.splitlines()
-    return any(
-        names_table(line) and _DML_WORD.search(_LOCK.sub(" ", "\n".join(lines[max(0, n - 3):n + 1])))
-        for n, line in enumerate(lines)
-    )
+    """Whether a DML word is followed by the table before a ``;`` and within
+    sixty words, whitespace collapsed (so blank lines, padding and
+    indentation in a heredoc or a multiline string do not separate them); a
+    lock's FOR UPDATE aside."""
+    collapsed = " ".join(_LOCK.sub(" ", text).split())
+    for match in _DML_WORD.finditer(collapsed):
+        window = collapsed[match.end():].split(";", 1)[0]
+        if names_table(" ".join(window.split(" ")[:61])):
+            return True
+    return False
 
 
 def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
