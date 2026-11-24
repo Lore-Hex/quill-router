@@ -636,3 +636,225 @@ def test_the_step_end_to_end_fails_without_a_dispatch_on_an_unknown(tmp_path: Pa
     assert run.code != 0, run.output
     assert run.gh == [SUCCESSFUL, view(31), HEAD]
     assert "price_snapshot_deploy: unknown: main's head is not a 40-hex commit id" in run.output
+
+
+# The fast path: a snapshot that only takes routes away (a hold, a removal, a
+# retirement in effect) is dispatched at once instead of after four hours.
+
+HISTORY = "src/trusted_router/data/model_changes.jsonl"
+YOUNG = 3600  # well inside the limit
+
+
+def ci_runs(sha: str = MAIN) -> list[str]:
+    # No --limit, as deploy.yml's gate-on-ci (tests/test_deploy_ci_gate.py pins both).
+    return ["run", "list", "--repo", REPO, "--workflow", "ci.yml", "--commit", sha,
+            "--json", "databaseId,status,conclusion,event"]
+
+
+GREEN = [{"databaseId": 501, "status": "completed", "conclusion": "success", "event": "workflow_dispatch"}]
+FAST = [*TO_ACTIVE, ci_runs()]
+
+
+def event(kind: str, model: str = "google/gemma-3-27b-it", *, endpoint: str | None = "google/gemma-3-27b-it@nextbit-eu/prepaid",
+          at: float = NOW - YOUNG, effective: float | None = None, event_id: str | None = None,
+          before: object = None) -> dict:
+    row: dict[str, object] = {"type": kind, "model": model, "before": before, "after": None,
+                              "effective_at": iso(at if effective is None else effective),
+                              "recorded_at": iso(at), "source": "catalog",
+                              "id": event_id or f"{kind}-{model}-{endpoint}-{at}"}
+    if endpoint is not None:
+        row["endpoint"] = endpoint
+    return row
+
+
+def history_file(*events: dict, removed: tuple[dict, ...] = ()) -> dict:
+    lines = [f"-{json.dumps(e, sort_keys=True)}" for e in removed] + [f"+{json.dumps(e, sort_keys=True)}" for e in events]
+    return {"filename": HISTORY, "status": "modified", "patch": "@@ -3184,0 +3185,2 @@\n" + "\n".join(lines)}
+
+
+PRICES_FILE = {"filename": "src/trusted_router/data/openrouter_snapshot.json", "status": "modified",
+               "patch": '@@ -1 +1 @@\n-  "prompt": "0.1"\n+  "prompt": "0.2"'}
+
+
+def fast_world(files: list[dict], *, age: float = YOUNG, ci: object = None, head_runs: list[dict] | None = None,
+               active: list[dict] | None = None) -> dict[str, object]:
+    commits = [CODE, snapshot(age)]
+    answers = world(commits, head_runs=head_runs, active=active)
+    answers[key(compare(DELIVERED, MAIN))] = {"status": "ahead", "total_commits": len(commits),
+                                              "commits": commits, "files": files}
+    answers[key(ci_runs())] = GREEN if ci is None else ci
+    return answers
+
+
+HOLD = event("endpoint_removed")
+
+
+def test_a_hold_only_snapshot_dispatches_at_once(decide) -> None:
+    outcome = decide(fast_world([PRICES_FILE, history_file(HOLD)]))
+    assert_dispatches(outcome, FAST)
+    assert f"snapshot {SNAPSHOT[:9]} has waited 1.0 h (limit 4 h); protective " in outcome.stderr
+    assert "google/gemma-3-27b-it@nextbit-eu/prepaid removed" in outcome.stderr
+    assert "fast path" in outcome.stderr
+
+
+def test_a_removed_model_is_protective(decide) -> None:
+    removed = event("model_removed", "mistralai/mistral-large-4-1t-a52b", endpoint=None)
+    outcome = decide(fast_world([history_file(removed)]))
+    assert_dispatches(outcome, FAST)
+    assert "mistralai/mistral-large-4-1t-a52b removed" in outcome.stderr
+
+
+def test_a_price_only_snapshot_waits_for_the_limit(decide) -> None:
+    price = event("pricing_schedule_changed", endpoint=None)
+    for files in ([PRICES_FILE], [PRICES_FILE, history_file(price)]):
+        outcome = decide(fast_world(files))
+        assert_waits(outcome, TO_COMPARE)
+        assert "not protective" in outcome.stderr
+    # At the limit the old rule dispatches it, without the fast path's CI read.
+    assert_dispatches(decide(fast_world([PRICES_FILE], age=LIMIT)), TO_ACTIVE)
+
+
+def test_a_mixed_snapshot_dispatches_at_once(decide) -> None:
+    mixed = history_file(event("endpoint_added", "z-ai/glm-5.3", endpoint="z-ai/glm-5.3@crusoe/prepaid"),
+                         event("pricing_schedule_changed", endpoint=None),
+                         event("privacy_tier_changed", endpoint=None), HOLD)
+    assert_dispatches(decide(fast_world([PRICES_FILE, mixed])), FAST)
+
+
+def test_re_admitting_or_adding_a_route_waits(decide) -> None:
+    added = event("endpoint_added")
+    model = event("model_added", "z-ai/glm-5.3", endpoint=None)
+    changed_route = event("endpoint_changed")
+    for history in (history_file(added), history_file(model), history_file(changed_route)):
+        assert_waits(decide(fast_world([history])), TO_COMPARE)
+
+
+def test_a_removal_the_range_nets_out_waits(decide) -> None:
+    # Held, then re-admitted before any rollout: production never saw a change.
+    flap = history_file(event("endpoint_removed", at=NOW - 3 * 3600), event("endpoint_added", at=NOW - YOUNG))
+    # Added after the delivered release and removed again: production never had it.
+    brief = history_file(event("endpoint_added", at=NOW - 3 * 3600), event("endpoint_removed", at=NOW - YOUNG))
+    for history in (flap, brief):
+        assert_waits(decide(fast_world([history])), TO_COMPARE)
+    # Re-admitted, then held again: the hold is what production lacks.
+    again = history_file(event("endpoint_removed", at=NOW - 3 * 3600), event("endpoint_added", at=NOW - 2 * 3600),
+                         event("endpoint_removed", at=NOW - YOUNG))
+    assert_dispatches(decide(fast_world([again])), FAST)
+
+
+def test_the_history_s_line_order_does_not_stand_in_for_its_time(decide) -> None:
+    # The re-admission is recorded later although it is listed first.
+    flap = history_file(event("endpoint_added", at=NOW - YOUNG), event("endpoint_removed", at=NOW - 3 * 3600))
+    assert_waits(decide(fast_world([flap])), TO_COMPARE)
+
+
+def test_a_retirement_in_effect_is_protective_and_a_future_or_cancelled_one_is_not(decide) -> None:
+    due = event("retirement_scheduled", "qwen/qwen3-32b", endpoint=None, effective=NOW - 60, event_id="r1")
+    outcome = decide(fast_world([history_file(due)]))
+    assert_dispatches(outcome, FAST)
+    assert "retirement of qwen/qwen3-32b in effect" in outcome.stderr
+    future = event("retirement_scheduled", "qwen/qwen3-32b", endpoint=None, effective=NOW + 3600, event_id="r2")
+    assert_waits(decide(fast_world([history_file(future)])), TO_COMPARE)
+    cancel = event("schedule_cancelled", "qwen/qwen3-32b", endpoint=None, before={"id": "r1"})
+    assert_waits(decide(fast_world([history_file(due, cancel)])), TO_COMPARE)
+
+
+def test_a_history_line_the_range_only_moved_is_not_a_new_removal(decide) -> None:
+    assert_waits(decide(fast_world([history_file(HOLD, removed=(HOLD,))])), TO_COMPARE)
+
+
+@pytest.mark.parametrize("files", [
+    None,  # no file list
+    [{"filename": HISTORY, "status": "modified"}],  # the patch was too large to include
+    [{"filename": HISTORY, "status": "modified", "patch": "@@ -1 +1 @@\n+not json"}],
+    [{"filename": HISTORY, "status": "modified", "patch": "@@ -1 +1 @@\n+[1, 2]"}],
+    [{"filename": f"src/f{n}.json", "status": "modified"} for n in range(300)],  # truncated, history may be beyond
+    ["src/trusted_router/data/model_changes.jsonl"],
+], ids=["no-files", "no-patch", "not-json", "not-an-event", "300-files", "file-not-an-object"])
+def test_a_range_the_check_cannot_classify_keeps_the_four_hour_rule(decide, files: list | None) -> None:
+    answers = fast_world([])
+    if files is None:
+        del answers[key(compare(DELIVERED, MAIN))]["files"]  # type: ignore[attr-defined]
+    else:
+        answers[key(compare(DELIVERED, MAIN))]["files"] = files  # type: ignore[index]
+    outcome = decide(answers)
+    assert_waits(outcome, TO_COMPARE)
+    assert "cannot classify it as protective" in outcome.stderr
+
+
+def test_no_fast_dispatch_while_any_deploy_run_on_main_is_in_flight(decide) -> None:
+    # Rate limit: hourly protective snapshots coalesce behind the rollout in flight, whatever its commit.
+    for run in (active_run(), active_run("1" * 40, 70, status="queued"), active_run(DELIVERED, 71, status="waiting")):
+        outcome = decide(fast_world([history_file(HOLD)], active=[run]))
+        assert_waits(outcome, TO_ACTIVE)
+        assert "coalesces into the next rollout" in outcome.stderr
+    # A completed run, or a run of another branch, holds nothing back.
+    done = [active_run(status="completed"), active_run("2" * 40, 72, branch="hotfix")]
+    assert_dispatches(decide(fast_world([history_file(HOLD)], active=done)), FAST)
+
+
+def test_no_fast_dispatch_while_a_deploy_run_of_main_s_head_is_in_flight(decide) -> None:
+    outcome = decide(fast_world([history_file(HOLD)], head_runs=[head_run("in_progress")]))
+    assert_waits(outcome, [*TO_COMPARE, of_head(MAIN)])
+    assert "is in flight (88 in_progress -): it carries it" in outcome.stderr
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "success"])
+def test_the_fast_path_keeps_one_dispatch_per_head(decide, conclusion: str) -> None:
+    # Main's head already had its deploy: no second one, now or at the limit (stuck, as before).
+    outcome = decide(fast_world([history_file(HOLD)], head_runs=[head_run("completed", conclusion)]))
+    assert_waits(outcome, [*TO_COMPARE, of_head(MAIN)])
+    assert "already had its one automatic deploy" in outcome.stderr
+    assert_stuck(decide(fast_world([history_file(HOLD)], age=LIMIT, head_runs=[head_run("completed", conclusion)])),
+                 TO_ACTIVE)
+
+
+@pytest.mark.parametrize("runs", [
+    [],
+    [{"databaseId": 501, "status": "in_progress", "conclusion": None, "event": "workflow_dispatch"}],
+    [{"databaseId": 501, "status": "queued", "conclusion": None, "event": "push"}],
+    [{"databaseId": 501, "status": "completed", "conclusion": "failure", "event": "push"}],
+    [{"databaseId": 501, "status": "completed", "conclusion": "cancelled", "event": "workflow_dispatch"}],
+    # Only push and dispatch runs gate a deploy.
+    [{"databaseId": 501, "status": "completed", "conclusion": "success", "event": "pull_request"}],
+    # The gate reads the newest gated run: an older green one does not count.
+    [{"databaseId": 502, "status": "completed", "conclusion": "failure", "event": "workflow_dispatch"},
+     {"databaseId": 501, "status": "completed", "conclusion": "success", "event": "workflow_dispatch"}],
+], ids=["none", "in-progress", "queued", "failed", "cancelled", "pull-request-only", "newest-failed"])
+def test_no_fast_dispatch_before_ci_is_green_on_main_s_head(decide, runs: list[dict]) -> None:
+    outcome = decide(fast_world([history_file(HOLD)], ci=runs))
+    assert_waits(outcome, FAST)
+    assert "no dispatch before CI is green on the same commit" in outcome.stderr
+
+
+def test_ci_green_reads_the_newest_gated_run(decide) -> None:
+    runs = [{"databaseId": 503, "status": "completed", "conclusion": "failure", "event": "pull_request"},
+            {"databaseId": 502, "status": "completed", "conclusion": "success", "event": "push"},
+            {"databaseId": 501, "status": "completed", "conclusion": "failure", "event": "workflow_dispatch"}]
+    outcome = decide(fast_world([history_file(HOLD)], ci=runs))
+    assert_dispatches(outcome, FAST)
+    assert f"ci.yml run 502 of main's head {MAIN[:9]} is completed success" in outcome.stderr
+
+
+@pytest.mark.parametrize("runs", [{"message": "Not Found"}, [501]], ids=["not-a-list", "not-runs"])
+def test_unreadable_ci_runs_are_unknown(decide, runs: object) -> None:
+    assert_unknown(decide(fast_world([history_file(HOLD)], ci=runs)))
+
+
+def test_a_ci_read_that_never_answers_is_unknown(decide) -> None:
+    outcome = decide(fast_world([history_file(HOLD)]), failures={key(ci_runs()): 3})
+    assert_unknown(outcome)
+    assert outcome.calls == [*TO_ACTIVE, ci_runs(), ci_runs(), ci_runs()]
+
+
+def test_the_step_end_to_end_dispatches_a_young_protective_snapshot(tmp_path: Path) -> None:
+    now = time.time()
+    answers = fast_world([PRICES_FILE, history_file(event("endpoint_removed", at=now - YOUNG))])
+    commits = [CODE, snapshot(YOUNG, now=now)]
+    answers[key(compare(DELIVERED, MAIN))] = {"status": "ahead", "total_commits": 2, "commits": commits,
+                                              "files": [PRICES_FILE, history_file(event("endpoint_removed",
+                                                                                        at=now - YOUNG))]}
+    run = _step_with_the_real_check(tmp_path, answers)
+    assert run.code == 0, run.output
+    assert run.gh == [*FAST, DISPATCH_ARGV]
+    assert "fast path" in run.output

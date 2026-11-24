@@ -1040,7 +1040,8 @@ jobs:
         # deploy.yml never fired for its commits. A snapshot now rides the
         # next control-plane rollout, and this step is the backstop: it
         # dispatches deploy.yml once a snapshot has waited too long for one
-        # (the rule is in scripts/deploy/price_snapshot_deploy.py). It runs on
+        # (the rule is in scripts/deploy/price_snapshot_deploy.py), or at once
+        # for a snapshot that holds or removes a route. It runs on
         # every hourly run, also when this run published nothing or an earlier
         # step failed, because the snapshot that waits was published by an
         # earlier run.
