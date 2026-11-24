@@ -3,7 +3,7 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-11-24T01:28:12Z",
+  "generated_at": "2026-11-24T02:36:58Z",
   "model_count": 50,
   "models": [
     {
@@ -894,7 +894,7 @@
       ],
       "canary_status_code": 404,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
       "cached_input_token_price_per_m": 500000,
