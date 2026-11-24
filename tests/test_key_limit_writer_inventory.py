@@ -463,6 +463,18 @@ def test_the_reviewers_forms(tmp_path: Path, name: str) -> None:
     assert _scan_sample(tmp_path, name, source) == expected
 
 
+_R12_RUNNER = ("class Runner:\n    def __init__(self, c):\n        self.c = c\n"
+               "    def run(self, q):\n        self.c.execute(q + ', day_limit_micro=1')\n        return False\n"
+               "    def __getitem__(self, q):\n        return self.run(q)\n    def __radd__(self, q):\n"
+               "        return self.run(q)\n    def __lt__(self, q):\n        return self.run(q)\n"
+               "    def __eq__(self, q):\n        return self.run(q)\n")
+_R12_RUN = "run = lambda c, q: c.execute(q + ', day_limit_micro=1')\n"
+
+
+def _with(helpers: str, source: str) -> str:
+    return helpers + source
+
+
 # The same constructions aimed at tr_key_limit, and the other ways to name it.
 KEY_LIMIT_FORMS = [
     ("positional computed table, limit columns",
@@ -534,7 +546,7 @@ KEY_LIMIT_FORMS = [
      "    sql += ', day_limit_micro=1'\n    run = c.execute\n    run(sql)\n", {("key_limit.sql", "f"): True}),
     ("aliased executor, an unknown piece", "def add_cap(sql):\n    return sql + ', usage = 0'\n"
      "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    sql += add_cap('')\n    run = c.execute\n"
-     "    run(sql)\n", {("key_limit.sql", "f"): True}),
+     "    run(sql)\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("batch DML", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    sql += ', day_limit_micro=1'\n"
      "    c.batch_update([sql])\n", {("key_limit.sql", "f"): True}),
     ("a SELECT ahead of a helper's statement", "def add_cap(sql):\n    return sql + ', usage = 0'\n"
@@ -738,7 +750,8 @@ KEY_LIMIT_FORMS = [
      "    c.execute(query + ', day_limit_micro=1')\ndef f(c):\n    run(c, query='UPDATE tr_key_limit SET reserved=0')\n",
      {("key_limit.sql", "f"): True}),
     ("a helper holding exec", "def run(c, q):\n    exec('c.execute(q)')\n"
-     "def f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n", {("key_limit.sql", "f"): True}),
+     "def f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a pass-through helper, counter only", "def run(c, q):\n    c.execute(q)\n"
      "def f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n", {("key_limit.sql", "f"): False}),
     ("an int to a helper that builds its statement", "def reserve(c, n):\n"
@@ -957,8 +970,8 @@ KEY_LIMIT_FORMS = [
      "    c.execute('UPDATE tr_key_limit SET reserved = reserved + ' + str(n))\n",
      {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     # Steps that stay allowed: every other operand provably builtin.
-    ("compared with literals, looked up in a literal dict", "KEY_LIMIT_TABLE = 'tr_key_limit'\ndef f():\n"
-     "    tables = ('tr_credit_balance', 'tr_key_limit')\n    names = {'tr_key_limit': 1}\n    found = names[KEY_LIMIT_TABLE]\n"
+    ("compared with literals, searched in a literal dict", "KEY_LIMIT_TABLE = 'tr_key_limit'\ndef f():\n"
+     "    tables = ('tr_credit_balance', 'tr_key_limit')\n    names = {'tr_key_limit': 1}\n    found = KEY_LIMIT_TABLE in names\n"
      "    if KEY_LIMIT_TABLE in tables and KEY_LIMIT_TABLE == 'tr_key_limit' and isinstance(KEY_LIMIT_TABLE, str):\n"
      "        return len(KEY_LIMIT_TABLE) + len(tables)\n    return 0\n",
      {("key_limit.name", "<module>.KEY_LIMIT_TABLE"): False, ("key_limit.name", "f"): False}),
@@ -969,6 +982,210 @@ KEY_LIMIT_FORMS = [
      "    c.execute(d.setdefault('q', 'UPDATE tr_key_limit SET reserved=0'))\n", {("key_limit.sql", "f"): True}),
     ("an f-string with a parameter, run", "def f(c, k):\n    t = 'tr_key_limit'\n"
      "    c.execute(f'UPDATE {t} SET reserved=0 WHERE key_hash={k!r}')\n", {("key_limit.name", "f"): False, ("key_limit.sql", "f"): True}),
+    # Review round 12: the inference of provably builtin fails closed by
+    # construction (a binding that is not a value, a nested container, the
+    # value before +=), and so do element-comparing methods, namespaces and
+    # class bodies. Each item's forms, the reviewer's marked, then the
+    # author's own pass (exception routes, spreads, scopes), and controls
+    # that stay allowed.
+    ("an unpacked operand (the reviewer's)",
+     _with(_R12_RUNNER, "def f(c):\n    runner, = [Runner(c)]\n    runner['UPDATE tr_key_limit SET reserved=0']\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('an unpacked operand compared',
+     _with(_R12_RUNNER, "def f(c):\n    runner, = [Runner(c)]\n    runner == 'UPDATE tr_key_limit SET reserved=0'\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a starred target compared',
+     _with(_R12_RUNNER, "def f(c):\n    first, *rest = [1, Runner(c)]\n    rest[0] == 'UPDATE tr_key_limit SET reserved=0'\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a with target compared',
+     "def f(open_runner):\n    with open_runner() as runner:\n        runner == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('an except name compared',
+     "def f(c):\n    try:\n        c.go()\n    except Exception as error:\n        error == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('an imported name compared',
+     "suffix = ''\ndef f(c):\n    from elsewhere import suffix\n    suffix == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a module name bound in a loop compared',
+     "suffix = ''\nfor suffix in [{}, 1]:\n    pass\ndef f(c):\n    suffix == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a module name beside import *',
+     "from elsewhere import *\nsuffix = ''\ndef f(c):\n    suffix == 'UPDATE tr_key_limit SET reserved=0'\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("a builtin's name imported",
+     "from elsewhere import len\ndef f(c):\n    len('UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a comprehension over builtin text as an operand is allowed',
+     "def f(c):\n    c.execute(' '.join(['UPDATE tr_key_limit SET reserved=0' + s for s in ('', ' WHERE a = 1')]))\n",
+     {('key_limit.sql', 'f'): True}),
+    ('a loop over builtin text as an operand is allowed',
+     "def f(c):\n    for suffix in (' WHERE a = 1', ''):\n        c.execute('UPDATE tr_key_limit SET reserved=0' + suffix)\n",
+     {('key_limit.sql', 'f'): False}),
+    ("an element of a nested container changed (the reviewer's)",
+     _with(_R12_RUNNER, "def f(c):\n    boxes = [[]]\n    boxes[0].append(Runner(c))\n    boxes[0][0]['UPDATE tr_key_limit SET reserved=0']\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("an alias of a nested container changed (the reviewer's)",
+     _with(_R12_RUNNER, "def f(c):\n    boxes = [[]]\n    inner = boxes[0]\n    inner.append(Runner(c))\n    boxes[0][0]['UPDATE tr_key_limit SET reserved=0']\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a nested container changed through a loop',
+     _with(_R12_RUNNER, "def f(c):\n    boxes = [[]]\n    for inner in boxes:\n        inner.append(Runner(c))\n    boxes[0][0]['UPDATE tr_key_limit SET reserved=0']\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a nested container changed through setdefault',
+     _with(_R12_RUNNER, "def f(c):\n    boxes = {}\n    boxes.setdefault('k', []).append(Runner(c))\n    boxes['k'][0]['UPDATE tr_key_limit SET reserved=0']\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('searched in a nested container changed',
+     _with(_R12_RUNNER, "def f(c):\n    boxes = [[]]\n    boxes[0].append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('searched in a nested container changed through an alias',
+     _with(_R12_RUNNER, "def f(c):\n    boxes = [[]]\n    inner = boxes[0]\n    inner.append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('searched in a nested container changed through a loop',
+     _with(_R12_RUNNER, "def f(c):\n    boxes = [[]]\n    for inner in boxes:\n        inner.append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('searched in a nested container changed through setdefault',
+     _with(_R12_RUNNER, "def f(c):\n    boxes = {}\n    boxes.setdefault('k', []).append(Runner(c))\n    'UPDATE tr_key_limit SET reserved=0' in boxes['k']\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('searched in a container given an object',
+     _with(_R12_RUNNER, "def f(c):\n    boxes = [[], []]\n    boxes[0] = [Runner(c)]\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("searched in a container handed to an object's __radd__",
+     "def f(runner):\n    boxes = [[]]\n    boxes + runner\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('searched in a container compared with an object (its __eq__ receives it)',
+     "def f(runner):\n    boxes = [[]]\n    boxes == runner\n    'UPDATE tr_key_limit SET reserved=0' in boxes[0]\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('searched in a nested container of builtins is allowed',
+     "def f(c):\n    boxes = [['x']]\n    boxes[0].append('y')\n    if 'UPDATE tr_key_limit SET reserved=0' in boxes[0]:\n        c.execute('UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): False}),
+    ('a nested container of builtins is allowed',
+     "def f(c):\n    boxes = [[' WHERE a = 1']]\n    boxes[0].append('')\n    c.execute('UPDATE tr_key_limit SET reserved=0' + boxes[0][0])\n",
+     {('key_limit.sql', 'f'): True}),
+    ('a container two names share (x = y = [])',
+     _with(_R12_RUN, "def f(c):\n    x = y = []\n    y.append('UPDATE tr_key_limit SET reserved=0')\n    run(c, x[0])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("appended to a class body's list",
+     "class Queries:\n    names = []\n    names.append('UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.escape', 'Queries'): True, ('key_limit.sql', 'Queries'): False}),
+    ("the value before += meets the other operand (the reviewer's)",
+     _with(_R12_RUNNER, "def f(c):\n    q = 'UPDATE tr_key_limit SET reserved=0'\n    q += Runner(c)\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('an element before += meets the other operand',
+     _with(_R12_RUNNER, "def f(c):\n    queries = {'q': 'UPDATE tr_key_limit SET reserved=0'}\n    queries['q'] += Runner(c)\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('+= with builtin text is allowed',
+     "def f(c):\n    q = 'UPDATE tr_key_limit SET reserved=0'\n    q += ' WHERE a = 1'\n    c.execute(q)\n",
+     {('key_limit.sql', 'f'): False}),
+    ("sort beside an object (the reviewer's)",
+     _with(_R12_RUNNER, "def f(c):\n    values = ['UPDATE tr_key_limit SET reserved=0', Runner(c)]\n    values.sort()\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('index beside an object',
+     _with(_R12_RUNNER, "def f(c):\n    values = ['UPDATE tr_key_limit SET reserved=0', Runner(c)]\n    values.index('x')\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('count, remove beside an object',
+     _with(_R12_RUNNER, "def f(c):\n    values = ['UPDATE tr_key_limit SET reserved=0', Runner(c)]\n    values.count('x')\n    values.remove('x')\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a method of a parameter holding it',
+     "def f(c, values):\n    values.append('UPDATE tr_key_limit SET reserved=0')\n    values.sort()\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('sort of builtin text is allowed',
+     "def f(c):\n    values = ['UPDATE tr_key_limit SET reserved=0', 'x']\n    values.sort()\n    c.execute(values[0])\n",
+     {('key_limit.sql', 'f'): True}),
+    ("locals() (the reviewer's)",
+     _with(_R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    run(c, locals()['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("globals() (the reviewer's)",
+     _with(_R12_RUN, "sql = 'UPDATE tr_key_limit SET reserved=0'\ndef f(c):\n    run(c, globals()['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', '<module>.sql'): False}),
+    ('vars() and eval',
+     _with(_R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    run(c, vars()['sql'])\n    run(c, eval('sql'))\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.indirect', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("a frame's locals",
+     _with('import sys\n' + _R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    g(c)\ndef g(c):\n    run(c, sys._getframe(1).f_locals['sql'])\n"),
+     {('key_limit.escape', 'g'): True, ('key_limit.sql', 'f'): False}),
+    ("a module's namespace through sys.modules",
+     _with('import sys\n' + _R12_RUN, "sql = 'UPDATE tr_key_limit SET reserved=0'\ndef f(c):\n    run(c, vars(sys.modules[__name__])['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', '<module>.sql'): False}),
+    ("a module constant rebound through globals() (the reviewer's)",
+     _with(_R12_RUNNER, "suffix = ''\ndef f(c):\n    globals()['suffix'] = Runner(c)\n    'UPDATE tr_key_limit SET reserved=0' + suffix\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("a traceback's frame",
+     _with(_R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    try:\n        c.go()\n    except Exception as error:\n        run(c, error.__traceback__.tb_frame.f_locals['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("inspect's current frame",
+     _with('import inspect\n' + _R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    run(c, inspect.getargvalues(inspect.currentframe()).locals['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a local a frame may rebind',
+     "import sys\ndef f(runner):\n    suffix = ''\n    sys._getframe(0).f_locals['suffix'] = runner\n    'UPDATE tr_key_limit SET reserved=0' + suffix\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a name read in a class body a metaclass makes',
+     "class Meta(type):\n    pass\nclass Queries(metaclass=Meta):\n    suffix = ''\n    'UPDATE tr_key_limit SET reserved=0' + suffix\n",
+     {('key_limit.escape', 'Queries'): True, ('key_limit.sql', 'Queries'): False}),
+    ("a name rebound by a nested function's nonlocal",
+     "def f(runner):\n    suffix = ''\n    def g():\n        nonlocal suffix\n        suffix = runner\n    g()\n    'UPDATE tr_key_limit SET reserved=0' + suffix\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): True}),
+    ('a global read where a class body binds the name',
+     "from elsewhere import suffix\ndef f(c):\n    class Queries:\n        suffix = ''\n    'UPDATE tr_key_limit SET reserved=0' + suffix\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): True}),
+    ('builtins.locals()',
+     _with('import builtins\n' + _R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    run(c, builtins.locals()['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('a namespace reader passed on through builtins',
+     _with('import builtins\n' + _R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    read = builtins.locals\n    run(c, read()['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('traceback summaries keeping locals',
+     _with('import traceback\n' + _R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    try:\n        c.go()\n    except Exception as error:\n        report = traceback.TracebackException.from_exception(error, capture_locals=True)\n        run(c, report.stack[0].locals['sql'])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("gc's objects",
+     _with('import gc\n' + _R12_RUN, "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    g(c)\ndef g(c):\n    run(c, [o for o in gc.get_objects() if isinstance(o, str)][0])\n"),
+     {('key_limit.escape', 'g'): True, ('key_limit.sql', 'f'): False}),
+    ("a module's own object by import, read by a computed getattr",
+     _with('import probe as me\n' + _R12_RUN, "SQL = 'UPDATE tr_key_limit SET reserved=0'\ndef f(c, name):\n    run(c, getattr(me, name))\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', '<module>.SQL'): False}),
+    ('locals() where no value naming the table lives is allowed',
+     "def f(c):\n    c.execute('UPDATE tr_key_limit SET reserved=0')\ndef g():\n    return locals()\n",
+     {('key_limit.sql', 'f'): False}),
+    ("a descriptor in a plain class (the reviewer's)",
+     "class RunOnBind:\n    def __init__(self, c):\n        self.c = c\n    def __set_name__(self, owner, name):\n        self.c.execute(vars(owner)['sql'] + ', day_limit_micro=1')\ndef f(c):\n    class Queries:\n        sql = 'UPDATE tr_key_limit SET reserved=0'\n        on_bind = RunOnBind(c)\n",
+     {('key_limit.escape', 'f.Queries'): True, ('key_limit.sql', 'f.Queries'): False}),
+    ("a class's namespace passed on (the reviewer's)",
+     _with(_R12_RUN, "def f(c):\n    class Queries:\n        sql = 'UPDATE tr_key_limit SET reserved=0'\n    run(c, vars(Queries)['sql'])\n"),
+     {('key_limit.escape', 'f.Queries'): True, ('key_limit.sql', 'f.Queries'): False}),
+    ('a plain class instantiated',
+     _with(_R12_RUN, "class Queries:\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    def go(self, c):\n        run(c, vars(type(self))['sql'])\ndef f(c):\n    Queries().go(c)\n"),
+     {('key_limit.escape', 'Queries'): True, ('key_limit.sql', 'Queries'): False}),
+    ("a plain class's attribute given on",
+     _with(_R12_RUN, "class Queries:\n    sql = 'UPDATE tr_key_limit SET reserved=0'\ndef f(c):\n    run(c, Queries.sql)\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'Queries'): False, ('key_limit.sql', 'f'): False}),
+    ("a nested plain class's attribute given on",
+     _with(_R12_RUN, "def f(c):\n    class Queries:\n        sql = 'UPDATE tr_key_limit SET reserved=0'\n    run(c, Queries.sql)\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f.Queries'): False}),
+    ("a plain class's attribute executed is allowed",
+     "class Queries:\n    sql = 'UPDATE tr_key_limit SET reserved=0'\ndef f(c):\n    c.execute(Queries.sql)\n",
+     {('key_limit.sql', 'Queries'): False, ('key_limit.sql', 'f'): False}),
+    ('a key looked up: its KeyError',
+     _with(_R12_RUN, "def f(c):\n    try:\n        {}['UPDATE tr_key_limit SET reserved=0']\n    except KeyError as error:\n        run(c, error.args[0])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ('encoded strictly: its UnicodeError',
+     "def f(c):\n    c.execute('UPDATE tr_key_limit SET reserved=0'.encode('utf-8'))\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): True}),
+    ('encoded with a quiet handler is allowed',
+     "def f(c):\n    c.execute('UPDATE tr_key_limit SET reserved=0'.encode('utf-8', 'replace'))\n",
+     {('key_limit.sql', 'f'): True}),
+    ('decoded by str()',
+     "def f(c):\n    c.execute(str('UPDATE tr_key_limit SET reserved=0'.encode('utf-8', 'ignore'), 'utf-8'))\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): True}),
+    ("spread beside an object's key",
+     _with(_R12_RUNNER, "def f(c):\n    {**{'UPDATE tr_key_limit SET reserved=0': 1}, Runner(c): 2}\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    ("a nonlocal's uses in a nested function",
+     _with(_R12_RUNNER, "def f(c):\n    q = 'UPDATE tr_key_limit SET reserved=0'\n    def h():\n        nonlocal q\n        q += ' WHERE a = 1'\n        Runner(c) + q\n    h()\n"),
+     {('key_limit.escape', 'f.h'): True, ('key_limit.sql', 'f'): False, ('key_limit.sql', 'f.h'): True}),
+    ('a global read where a nested function binds the name',
+     _with(_R12_RUN, "sql = 'UPDATE tr_key_limit SET reserved=0'\ndef f(c):\n    def g():\n        sql = 1\n    run(c, sql)\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', '<module>.sql'): False, ('key_limit.sql', 'f'): False}),
+    ('a type indexed with it (list[sql])',
+     _with(_R12_RUN, "def f(c):\n    alias = list['UPDATE tr_key_limit SET reserved=0']\n    run(c, alias.__args__[0])\n"),
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
 ]
 
 
@@ -1257,6 +1474,19 @@ def test_the_escape_rule_follows_a_constant_from_another_module(tmp_path: Path) 
     assert detail.get(("key_limit.escape", "probe_caller.py", "f")) is True
     assert detail.get(("key_limit.escape", "probe_caller.py", "h")) is True
     assert ("key_limit.escape", "probe_caller.py", "g") not in detail
+
+
+def test_the_escape_rule_follows_an_attribute_any_binding_of_which_names_the_table(tmp_path: Path) -> None:
+    """Review round 12: an attribute read in another module is followed when
+    any binding of it names the table, not only when every binding resolves
+    (here another module binds the same attribute name to a parameter)."""
+    constants = tmp_path / "probe_queries.py"
+    constants.write_text("class ProbeQueries:\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n")
+    caller = tmp_path / "probe_reader.py"
+    caller.write_text("from probe_queries import ProbeQueries\ndef set_sql(obj, text):\n    obj.sql = text\n"
+                      "def f(store):\n    store.run_later(ProbeQueries.sql)\n")
+    detail = scan_paths_detail([constants, caller], [])
+    assert detail.get(("key_limit.escape", "probe_reader.py", "f")) is True
 
 
 _PG = "src/trusted_router/storage_postgres.py"
@@ -1723,3 +1953,108 @@ def test_the_round_11_injections_into_a_listed_scope_are_caught(tmp_path: Path, 
     detail = _injected_detail(tmp_path, _PG, source)
     assert detail.get(("key_limit.escape", "storage_postgres.py", scope)) is True, label
     assert ("storage_postgres.py", scope) in limit_column_writers(detail)
+
+
+# Review round 12: the reviewer's forms (and the other bindings, routes and
+# namespaces of each of the six items), each injected into
+# PostgresStore._release_key_hold_tx (helpers beside the module). A class
+# body nested in the scope is a scope of its own: the class's escape makes
+# it a new limit-column scope, which the inventory fails on too.
+_PROBE_RUNNER_12 = _PROBE_RUNNER + "    def __lt__(self, q):\n        return self.run(q)\n"
+_PROBE_RUN = "probe_run = lambda c, q: c.execute(q + ', day_limit_micro=1')\n"
+_PROBE_ON_BIND = ("class ProbeOnBind:\n    def __init__(self, c):\n        self.c = c\n"
+                  "    def __set_name__(self, owner, name):\n"
+                  "        self.c.execute(vars(owner)['sql'] + ', day_limit_micro=1')\n")
+_ROUND_12 = {
+    "1. an unpacked operand (the reviewer's)": ("""
+        probe_runner, = [ProbeRunner(conn)]
+        probe_runner['UPDATE tr_key_limit SET reserved=0']
+    """, _PROBE_RUNNER_12),
+    "1. an unpacked operand compared": ("""
+        probe_runner, = [ProbeRunner(conn)]
+        probe_same = probe_runner == 'UPDATE tr_key_limit SET reserved=0'
+    """, _PROBE_RUNNER_12),
+    "1. a with target as an operand": ("""
+        with probe_open(conn) as probe_runner:
+            probe_runner['UPDATE tr_key_limit SET reserved=0']
+    """, _PROBE_RUNNER_12 + "probe_open = ProbeRunner\n"),
+    "2. an element of a nested container changed (the reviewer's)": ("""
+        probe_boxes = [[]]
+        probe_boxes[0].append(ProbeRunner(conn))
+        probe_boxes[0][0]['UPDATE tr_key_limit SET reserved=0']
+    """, _PROBE_RUNNER_12),
+    "2. an alias of a nested container changed (the reviewer's)": ("""
+        probe_boxes = [[]]
+        probe_inner = probe_boxes[0]
+        probe_inner.append(ProbeRunner(conn))
+        probe_boxes[0][0]['UPDATE tr_key_limit SET reserved=0']
+    """, _PROBE_RUNNER_12),
+    "2. searched in a nested container changed": ("""
+        probe_boxes = [[]]
+        probe_boxes[0].append(ProbeRunner(conn))
+        probe_found = 'UPDATE tr_key_limit SET reserved=0' in probe_boxes[0]
+    """, _PROBE_RUNNER_12),
+    "3. the value before += (the reviewer's)": ("""
+        probe_q = 'UPDATE tr_key_limit SET reserved=0'
+        probe_q += ProbeRunner(conn)
+    """, _PROBE_RUNNER_12),
+    "3. an element before +=": ("""
+        probe_queries = {'q': 'UPDATE tr_key_limit SET reserved=0'}
+        probe_queries['q'] += ProbeRunner(conn)
+    """, _PROBE_RUNNER_12),
+    "4. sort beside an object (the reviewer's)": ("""
+        probe_values = ['UPDATE tr_key_limit SET reserved=0', ProbeRunner(conn)]
+        probe_values.sort()
+    """, _PROBE_RUNNER_12),
+    "4. index beside an object": ("""
+        probe_values = ['UPDATE tr_key_limit SET reserved=0', ProbeRunner(conn)]
+        probe_values.index('x')
+    """, _PROBE_RUNNER_12),
+    "5. locals() (the reviewer's)": ("""
+        probe_sql = 'UPDATE tr_key_limit SET reserved=0'
+        probe_run(conn, locals()['probe_sql'])
+    """, _PROBE_RUN),
+    "5. a frame's locals": ("""
+        probe_sql = 'UPDATE tr_key_limit SET reserved=0'
+        probe_run(conn, sys._getframe(0).f_locals['probe_sql'])
+    """, "import sys\n" + _PROBE_RUN),
+    "5. a module constant rebound through globals() (the reviewer's)": ("""
+        globals()['probe_suffix'] = ProbeRunner(conn)
+        probe_sum = 'UPDATE tr_key_limit SET reserved=0' + probe_suffix
+    """, _PROBE_RUNNER_12 + "probe_suffix = ''\n"),
+    "6. a descriptor in a plain class (the reviewer's)": ("""
+        class ProbeQueries:
+            sql = 'UPDATE tr_key_limit SET reserved=0'
+            on_bind = ProbeOnBind(conn)
+    """, _PROBE_ON_BIND),
+    "6. a class's namespace passed on (the reviewer's)": ("""
+        class ProbeQueries:
+            sql = 'UPDATE tr_key_limit SET reserved=0'
+        probe_run(conn, vars(ProbeQueries)['sql'])
+    """, _PROBE_RUN),
+    "a type indexed with it (list[sql])": ("""
+        probe_alias = list['UPDATE tr_key_limit SET reserved=0']
+        probe_run(conn, probe_alias.__args__[0])
+    """, _PROBE_RUN),
+    "a key's KeyError": ("""
+        try:
+            {}['UPDATE tr_key_limit SET reserved=0']
+        except KeyError as probe_error:
+            probe_run(conn, probe_error.args[0])
+    """, _PROBE_RUN),
+}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_12))
+def test_the_round_12_injections_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    change, helpers = _ROUND_12[label]
+    scope = "PostgresStore._release_key_hold_tx"
+    source = (ROOT / _PG).read_text()
+    where = source.index(_RELEASE_END)
+    source = (source[:where] + "\n" + textwrap.indent(textwrap.dedent(change), "        ") + source[where:]
+              + "\n\n" + helpers)
+    detail = _injected_detail(tmp_path, _PG, source)
+    escapes = {where for style, path, where in detail if style == "key_limit.escape" and path == "storage_postgres.py"
+               and (where == scope or where.startswith(scope + "."))}
+    assert escapes, label
+    assert {("storage_postgres.py", where) for where in escapes} <= limit_column_writers(detail)

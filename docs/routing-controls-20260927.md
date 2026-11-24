@@ -113,11 +113,20 @@ listed, and holds the writers of the limit columns to the two guarded functions
 and the documented exceptions, each pinned by a test and by a fingerprint of
 its reviewed source. In Python, text naming `tr_key_limit` may reach an
 executor only directly or through a helper of the same module that the scan
-follows; any other route it takes out of its scope (another callee, a return,
-an attribute, a subscript or a global), and any step on the way that could
-hand it to code the scan cannot see (an operator, comparison or lookup whose
-other operand is not provably a builtin value, a callback, a stream),
-counts as writing every limit column.
+follows. Within a module, the scan models the ordinary data flow of that
+text: names, containers, augmented assignment, helpers, method results and
+namespaces. Wherever the text meets an operand, a receiver, a callee or a
+class the scan cannot prove builtin, and wherever it leaves by any other
+route (another callee, a return, an attribute, a key, a global, a namespace
+read such as `locals()`, `globals()` or a frame), it counts as writing every
+limit column. The inference of "provably builtin" is syntactic and fails
+closed. A user-defined type whose dunder methods run SQL is caught where it
+meets the text, but only where the scan can see that meeting; code review
+covers adapters beyond that. The known limits are listed in the scanner's
+docstring: namespaces and frames reached from another module, callees
+taken for executors by their names, the interpreter beyond Python source,
+and SQL whose table only arrives from another module or from data at run
+time.
 
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the
