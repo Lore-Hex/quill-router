@@ -18,11 +18,17 @@ manifests:
 
 * each listed route that is routable in its provider's manifest is held with
   ``routable_reason: provider-route-unserved`` and ``unserved_held_at``;
-* a hold expires after ``HOLD_HOURS``. The route becomes routable again, the
-  configured-route probes resume on the real serving path, and if the provider
-  still refuses it the next streak holds it again. A route that recovered
-  stays lifted. Expiry runs even when evidence is unavailable, because lifting
-  only restores what discovery published;
+* a first hold expires after ``HOLD_HOURS``. The route becomes routable again,
+  the configured-route probes resume on the real serving path, and if the
+  provider still refuses it the next streak holds it again. A route that
+  recovered stays lifted. Expiry runs even when evidence is unavailable,
+  because lifting only restores what discovery published;
+* a repeat hold escalates: a route held again within ``REQUALIFY_WINDOW`` of
+  its last hold lifting is held twice as long as last time (24h, 48h, 96h,
+  capped at ``MAX_HOLD_HOURS``). The row keeps ``unserved_hold_count`` and
+  ``unserved_lifted_at`` after a lift so the count survives refreshes; a route
+  that stays out of the hold for the whole window starts over at 24h. The
+  route-health alert asks a human to consider a permanent operator hold;
 * when the evidence cannot be read, is malformed or stale, nothing is held;
 * a provider is never held wholesale: a run that would leave more than half
   of a provider's rows held by this step (counting earlier holds), or would
@@ -50,23 +56,32 @@ import httpx
 
 from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HELD_AT_FIELD,
+    UNSERVED_ROUTE_HOLD_COUNT_FIELD,
     UNSERVED_ROUTE_HOLD_REASON,
+    UNSERVED_ROUTE_LIFTED_AT_FIELD,
 )
 from trusted_router.unserved_route_hold_plan import (
     HOLD_HOURS,
     MAX_CLOCK_SKEW,
+    MAX_HOLD_HOURS,
     MAX_PROVIDER_FRACTION,
     MAX_ROUTES,
+    REQUALIFY_WINDOW,
     lift_expired_unserved_holds,
+    next_unserved_hold_count,
     plan_unserved_route_holds,
+    unserved_hold_hours,
 )
 
 SOURCE = "https://trustedrouter.com/route-health/unserved.json"
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "src/trusted_router/data/provider_models"
 HELD_AT_FIELD = UNSERVED_ROUTE_HELD_AT_FIELD
+HOLD_COUNT_FIELD = UNSERVED_ROUTE_HOLD_COUNT_FIELD
+LIFTED_AT_FIELD = UNSERVED_ROUTE_LIFTED_AT_FIELD
 MAX_EVIDENCE_AGE = timedelta(hours=2)
 __all__ = [
-    "HOLD_HOURS", "MAX_CLOCK_SKEW", "MAX_PROVIDER_FRACTION", "MAX_ROUTES",
+    "HOLD_HOURS", "MAX_CLOCK_SKEW", "MAX_HOLD_HOURS", "MAX_PROVIDER_FRACTION", "MAX_ROUTES",
+    "REQUALIFY_WINDOW",
     "apply_unserved_route_holds", "parse_evidence",
 ]
 
@@ -154,10 +169,12 @@ def apply_unserved_route_holds(
             continue
         if raw is None:
             continue
+        before = json.dumps(raw["models"], sort_keys=True)
         lifted = lift_expired_unserved_holds(raw["models"], now=now)
         if lifted:
             notes.append(f"{path.stem}: lifted expired unserved-route hold on {', '.join(sorted(lifted))}")
-        manifests.append((path, raw, bool(lifted)))
+        # A lift, or clearing a stale repeat-hold record, changes the file.
+        manifests.append((path, raw, json.dumps(raw["models"], sort_keys=True) != before))
 
     planned, plan_notes = plan_unserved_route_holds(
         evidence,
@@ -169,11 +186,20 @@ def apply_unserved_route_holds(
 
     changed = {index for index, (_, _, lifted) in enumerate(manifests) if lifted}
     for index, row in planned:
+        count = next_unserved_hold_count(row, now=now)
         row["routable"] = False
         row["routable_reason"] = UNSERVED_ROUTE_HOLD_REASON
         row[HELD_AT_FIELD] = _iso(now)
+        row[HOLD_COUNT_FIELD] = count
+        row.pop(LIFTED_AT_FIELD, None)
         changed.add(index)
-        notes.append(f"{manifests[index][0].stem}: held {row['id']} ({UNSERVED_ROUTE_HOLD_REASON}) for {HOLD_HOURS}h")
+        note = (
+            f"{manifests[index][0].stem}: held {row['id']} ({UNSERVED_ROUTE_HOLD_REASON}) "
+            f"for {unserved_hold_hours(count)}h"
+        )
+        if count > 1:
+            note += f" (repeat hold {count}; consider a permanent operator hold)"
+        notes.append(note)
     for index in sorted(changed):
         path, raw, _ = manifests[index]
         path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
