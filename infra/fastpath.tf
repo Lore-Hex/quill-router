@@ -185,8 +185,10 @@ locals {
   # the size cap (#2671). Every copy carries the same owner sequence numbers,
   # so the auditor skips a duplicate as it skips a republish's. The
   # nodes' startup script is not replaced on running nodes
-  # (ignore_changes), so on 15 and 16 the off switch is pinning b1d3dbcf9
-  # again. The other fastpath/ changes since b1d3dbcf9 are tests and test
+  # (ignore_changes), so on 15 and 16, from before #2671, the off switch was
+  # pinning b1d3dbcf9 again; 17 and 18 run the script that passes the flag,
+  # so on them "0" turns it off (local.fastpath_settle_hedge, below). The
+  # other fastpath/ changes since b1d3dbcf9 are tests and test
   # data (#2670, #2677, #2661). The nodes take it one at a time in either
   # order.
   # fab9cd893: the edge decides authorize requests that carry
@@ -468,7 +470,8 @@ locals {
   # allowance times 250 per workspace. They land with the pin of the first
   # release that takes -allowance-tier2 and -allowance-tier1 (#2542), and
   # the required tier is lowered to 1 in the same change. Only a node
-  # created from the script that reads them takes them (15 and 16 below);
+  # created from the script that reads them takes them (15 and 16 were the
+  # first; every node below runs it);
   # docs/runbooks/fastpath-deploy.md, "Lowering the required tier".
   # The enabler's tier is lowered after every node runs them.
   fastpath_allowance_tier2 = "250000000"
@@ -788,16 +791,14 @@ resource "google_compute_instance" "fastpath_node" {
   # attributes. The same release and metadata; 13 and 14 were drained, left
   # the edge backend one apply before their removal, then were removed.
   #
-  # 17 and 18 take the places of 15 and 16 the same way, for the settle
+  # 17 and 18 took the places of 15 and 16 the same way, for the settle
   # log's hedge (#2671), starved leases (#2906) and the decide cache's wait
-  # (#2903): the script 15 and 16 run, from before them, passes none of
+  # (#2903): the script 15 and 16 ran, from before them, passed none of
   # -settle-hedge, -starved-leases or -edge-decide-cache-wait from their
-  # attributes, and checks no release against its pinned digests (#2668).
-  # The same release and metadata; 15 and 16 are drained, leave the edge
-  # backend one apply before their removal, then are removed.
+  # attributes, and checked no release against its pinned digests (#2668).
+  # The same release and metadata; 15 and 16 were drained, left the edge
+  # backend one apply before their removal, then were removed.
   for_each = {
-    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
-    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
     "tr-fastpath-17" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-18" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }

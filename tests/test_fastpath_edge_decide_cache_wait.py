@@ -103,15 +103,15 @@ def test_the_script_that_reads_the_wait_reaches_the_fleet_on_new_nodes() -> None
     """A node keeps the script it was created with, so the script that reads
     fastpath-edge-decide-cache-wait, fastpath-starved-leases and
     fastpath-settle-hedge reaches the fleet only on nodes added under new
-    names; 15 and 16 (from before #2671, #2906 and #2903) stay until 17 and
-    18 serve."""
+    names: every node is 17 or later, 15 and 16 (from before #2671, #2906
+    and #2903) having been removed once 17 and 18 served."""
     script = SCRIPT.read_text(encoding="utf-8")
     for attribute in ("fastpath-edge-decide-cache-wait", "fastpath-starved-leases", "fastpath-settle-hedge"):
         assert f"$(attribute {attribute})" in script, attribute
     tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
     assert "ignore_changes = [metadata_startup_script]" in tf
-    for node in ("tr-fastpath-17", "tr-fastpath-18"):
-        assert re.search(rf'^\s*"{node}"\s*=\s*{{ zone = "us-central1-[ab]"', tf, re.M), node
+    nodes = re.findall(r'^\s*"tr-fastpath-(\d+)"\s*=\s*{ zone = "us-central1-[ab]"', tf, re.M)
+    assert nodes and all(int(node) >= 17 for node in nodes), nodes
 
 
 def test_the_runbook_names_the_switch_and_its_counts() -> None:
