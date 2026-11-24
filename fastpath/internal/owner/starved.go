@@ -119,7 +119,7 @@ func (o *Owner) starved(key ShardKey, short []*Lease, estimate, need int64) {
 		o.mu.Unlock()
 		return
 	}
-	headroom := sh.refusedHeadroom
+	headroom, refused, asked := sh.refusedHeadroom, sh.refused, sh.refusedAsk
 	o.mu.Unlock()
 	// Then the leases, each under its own lock and none under the owner's:
 	// free is what their next checkpoints would return now, kept what they
@@ -144,7 +144,7 @@ func (o *Owner) starved(key ShardKey, short []*Lease, estimate, need int64) {
 	}
 	o.mu.Lock()
 	sh.starvedN++
-	refused, count, asked := sh.refused, sh.starvedN, sh.refusedAsk
+	count := sh.starvedN
 	line := sh.starvedAt.IsZero() || now.Sub(sh.starvedAt) >= starvedLogEvery
 	if line {
 		sh.starvedAt, sh.starvedN = now, 0

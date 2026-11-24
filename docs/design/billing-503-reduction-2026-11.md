@@ -104,8 +104,10 @@ store now returns the headroom it read with those two refusals,
 alone: there Python answers 402 and the leases keep admitting what fits.
 A close helps even when the first checkpoint returns too little, since a
 closing lease returns its free room again at every checkpoint as its holds
-end. (Python also counts other shards' and nodes' leases, and its floor;
-the owner sees only its own shard's, so it is a little stricter.)
+end. (Python also counts other shards' and nodes' leases, so the owner is a
+little stricter there; and Python answers 402 rather than 503 under the
+nodes' floor, which the owner does not know, so it is looser there: such a
+close only returns money to a workspace that is nearly spent.)
 The closed leases' next checkpoint (every renewal round, 5 s in production)
 returns their free room, the auditor credits it, and the synchronous path,
 or a later lease, takes the request.
