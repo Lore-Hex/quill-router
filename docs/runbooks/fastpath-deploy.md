@@ -619,7 +619,8 @@ unit. The attribute is set only with a pinned release that takes
 A shard is starved when a request finds no room under any lease that still
 admits, just after the store refused the shard a top-up for the floor or the
 allowance, that refusal read a headroom outside leases under the
-request's hold, and the leases' free room would make up the difference. The
+request's hold, and what the leases hold beyond what they consumed would
+make up the difference. The
 money it needs is split between a lease
 too small for it and the headroom outside leases, so the synchronous path
 answers it the
@@ -632,8 +633,10 @@ any admission that still fits restarts, or an hour old
 
 - `log`, the release default: closes nothing, and writes
   `fastpath: owner starved shard workspace=... region=... shard=... mode=log
-  leases=N free=F need=E headroom=H asked=A refused="..." admissions=K` at
-  most once a minute per shard: `free` what the leases would return, `need`
+  leases=N free=F kept=P need=E headroom=H asked=A refused="..." admissions=K`
+  at most once a minute per shard: `free` what the leases would return now,
+  `kept` their allocation less what they consumed (open holds included),
+  `need`
   the request's estimate and buffer, `headroom` what the refusal read outside
   leases, `asked` the refused top-up, and `admissions` the starved requests
   since the shard's last line.

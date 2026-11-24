@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -86,7 +87,7 @@ func TestAStarvedShardClosesItsLease(t *testing.T) {
 	}
 	got := logged.all()
 	if len(got) != 1 || !strings.Contains(got[0], "fastpath: owner starved shard workspace=ws-1 region=us-central1 shard=2 "+
-		"mode=close leases=1 free=2 need=5 headroom=3 asked=13 refused=\""+string(store.RefusedFloor)+"\" admissions=1") {
+		"mode=close leases=1 free=2 kept=10 need=5 headroom=3 asked=13 refused=\""+string(store.RefusedFloor)+"\" admissions=1") {
 		t.Fatalf("the starved line: %q", got)
 	}
 	ctx := context.Background()
@@ -131,14 +132,16 @@ func TestAStarvedShardClosesItsLease(t *testing.T) {
 // recent spend, so the store may refuse it for the floor though the
 // headroom outside leases still covers the request. The synchronous path
 // takes that request; nothing is closed or logged. A headroom one short of
-// the request's hold is starvation, while the lease's free room of 2 makes
-// up the rest; under that the workspace is spent (Python's 402), and
-// closing would return too little to help.
+// the request's hold is starvation, as is any headroom the lease's 10
+// (8 held, 2 free) brings to the hold, as Python counts the lease's
+// allocation less its consumption; under that the workspace is spent
+// (Python's 402), and the lease keeps admitting what fits.
 func TestARefusalOfALargerAskIsNotStarvation(t *testing.T) {
 	for _, c := range []struct {
 		headroom int64
 		starved  bool
-	}{{5, false}, {1 << 40, false}, {4, true}, {3, true}, {2, false}, {-3, false}} {
+	}{{5, false}, {1 << 40, false}, {4, true}, {3, true}, {2, true}, {-3, true}, {-5, true}, {-6, false},
+		{math.MinInt64, false}} {
 		f, sp, a, _, logged := starvedFixture(t, StarvedClose, store.RefusedFloor, func(sp *fakeSpanner) {
 			sp.grantHeadroom = c.headroom
 		})
@@ -247,7 +250,7 @@ func TestAStarvedShardIsLoggedOnlyInLogMode(t *testing.T) {
 	}
 	starvedAgain(t, f) // free 1 now
 	got := logged.all()
-	if len(got) != 1 || !strings.Contains(got[0], "mode=log leases=1 free=2 need=5") ||
+	if len(got) != 1 || !strings.Contains(got[0], "mode=log leases=1 free=2 kept=10 need=5") ||
 		!strings.HasSuffix(got[0], "admissions=1") {
 		t.Fatalf("the first starved line: %q", got)
 	}
@@ -266,7 +269,7 @@ func TestAStarvedShardIsLoggedOnlyInLogMode(t *testing.T) {
 	f.clock.advance(30 * time.Second)
 	starvedAgain(t, f)
 	got = logged.all()
-	if len(got) != 2 || !strings.Contains(got[1], "free=1 need=5") || !strings.HasSuffix(got[1], "admissions=5") {
+	if len(got) != 2 || !strings.Contains(got[1], "free=1 kept=10 need=5") || !strings.HasSuffix(got[1], "admissions=5") {
 		t.Fatalf("the second starved line: %q", got)
 	}
 }

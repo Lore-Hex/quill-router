@@ -16,8 +16,8 @@ import (
 // the workspace's headroom outside leases is under the floor plus the amount
 // asked (store.RefusedFloor), or because its leases already hold its
 // allowance (store.RefusedAllowance), the headroom that refusal read is
-// under the request's hold, and the free room of the leases too small for
-// it would make up the difference. An ask is sized for the shard's
+// under the request's hold, and what the leases too small for it hold
+// beyond what they consumed would make up the difference. An ask is sized for the shard's
 // recent spend, not the request, so a refusal alone does not mean the
 // synchronous path cannot take the request; the headroom does. The money the
 // request needs is then split: part is the free room of a lease too small
@@ -97,8 +97,8 @@ func starvingRefusal(r store.Refusal) bool {
 // room (ErrNoRoom), estimate being its hold and need its hold and buffer: if the store's last
 // answer to the shard's ask, within starvedFresh, was a starving refusal
 // that read a headroom under estimate, the request's hold, and that
-// headroom with the leases' free room would cover it, it logs the shard
-// (rate-limited) and, under StarvedClose, closes them.
+// headroom with what the leases hold beyond what they consumed would cover
+// it, it closes them under StarvedClose and logs the shard (rate-limited).
 // Nothing is done while the owner stops, retires or hands off: each of
 // those closes its leases itself.
 func (o *Owner) starved(key ShardKey, short []*Lease, estimate, need int64) {
@@ -106,43 +106,64 @@ func (o *Owner) starved(key ShardKey, short []*Lease, estimate, need int64) {
 	if len(short) == 0 || (mode != StarvedLog && mode != StarvedClose) {
 		return
 	}
-	// free is what the leases' next checkpoints would return, read before
-	// any is closed, each under its own lock and none under the owner's.
-	var free int64
-	for _, l := range short {
-		free = sat(free, max(l.Books().Free(), 0))
-	}
+	// The cheap checks first, under the owner's lock alone. Python's
+	// synchronous hold is the estimate (the front door sends the reservation
+	// as it), so the refusal's headroom is weighed against that, not the
+	// owner's buffer: the synchronous path answers the 503 only while the
+	// headroom is under it.
 	o.mu.Lock()
 	sh := o.shardLocked(key)
 	now := o.cfg.Clock()
-	// Python's synchronous hold is the estimate (the front door sends the
-	// reservation as it), so the refusal's headroom is weighed against
-	// that, not the owner's buffer: the synchronous path answers the 503
-	// only while the headroom is under it. And a close helps only if what
-	// it returns brings the headroom to it; under that the workspace is
-	// spent, Python answers 402, and the leases keep admitting what fits.
 	if o.stopped || o.retiring || o.handoff != nil || sh.refusedAt.IsZero() || now.Sub(sh.refusedAt) > starvedFresh ||
-		sh.refusedHeadroom >= estimate || sat(max(sh.refusedHeadroom, 0), free) < estimate {
+		sh.refusedHeadroom >= estimate {
 		o.mu.Unlock()
 		return
 	}
-	sh.starvedN++
-	refused, count, asked, headroom := sh.refused, sh.starvedN, sh.refusedAsk, sh.refusedHeadroom
-	line := sh.starvedAt.IsZero() || now.Sub(sh.starvedAt) >= starvedLogEvery
-	if line {
-		sh.starvedAt, sh.starvedN = now, 0
-	}
+	headroom := sh.refusedHeadroom
 	o.mu.Unlock()
+	// Then the leases, each under its own lock and none under the owner's:
+	// free is what their next checkpoints would return now, kept what they
+	// hold beyond what they consumed, open holds included, which Python
+	// counts as the leases' (fastpath_lease_held_of) and which comes back
+	// at later checkpoints as the holds end. A workspace whose headroom
+	// with that is still under the hold is spent: Python answers 402, and
+	// the leases keep admitting what fits.
+	var free, kept int64
+	for _, l := range short {
+		b := l.Books()
+		free = sat(free, max(b.Free(), 0))
+		kept = sat(kept, max(b.Allocation-b.Consumed, 0))
+	}
+	if signedSum(headroom, kept) < estimate {
+		return
+	}
 	if mode == StarvedClose {
 		for _, l := range short {
 			l.Close()
 		}
 	}
+	o.mu.Lock()
+	sh.starvedN++
+	refused, count, asked := sh.refused, sh.starvedN, sh.refusedAsk
+	line := sh.starvedAt.IsZero() || now.Sub(sh.starvedAt) >= starvedLogEvery
 	if line {
-		o.logf("fastpath: owner starved shard workspace=%s region=%s shard=%d mode=%s leases=%d free=%d need=%d "+
-			"headroom=%d asked=%d refused=%q admissions=%d", key.Workspace, key.Region, key.Shard, mode, len(short),
-			free, need, headroom, asked, refused, count)
+		sh.starvedAt, sh.starvedN = now, 0
 	}
+	o.mu.Unlock()
+	if line {
+		o.logf("fastpath: owner starved shard workspace=%s region=%s shard=%d mode=%s leases=%d free=%d kept=%d "+
+			"need=%d headroom=%d asked=%d refused=%q admissions=%d", key.Workspace, key.Region, key.Shard, mode,
+			len(short), free, kept, need, headroom, asked, refused, count)
+	}
+}
+
+// signedSum is a headroom, which may be negative, plus an amount at least 0,
+// saturating at the largest.
+func signedSum(headroom, amount int64) int64 {
+	if headroom < 0 {
+		return headroom + amount // opposite signs: no overflow
+	}
+	return sat(headroom, amount)
 }
 
 // noteGrant keeps the store's answer to the shard's ask of asked, with o.mu
