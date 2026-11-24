@@ -132,4 +132,18 @@ func TestTheCacheAgainstTheStore(t *testing.T) {
 	if keys, credits := cache.Len(); keys != 0 || credits != 0 {
 		t.Fatalf("evicted: %d keys, %d credit entries", keys, credits)
 	}
+
+	// The read-through: the key back, enabled, is read by the store's own
+	// reads while the lookup waits, and the lookup's first answer is the
+	// key and its workspace's credit rows as the store holds them now.
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{
+		entity("api_key_lookup", lookup, `{"key_id":"`+keyHash+`"}`), entity("api_key", keyHash, keyBody("")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = cache.LookupWithin(lookup, c.Now(), 10*time.Second)
+	if got.Key != Fresh || !got.Found || !got.Facts.Key.Eligible || got.Credit != Fresh || !got.CreditState.Paused ||
+		got.KeyMiss != MissEvicted || got.Wait != WaitFilled {
+		t.Fatalf("read through: %+v", got)
+	}
 }

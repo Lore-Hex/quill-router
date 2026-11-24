@@ -480,12 +480,13 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
         for_each.group(1), re.M)
     assert nodes and len(placed) == len(nodes), (nodes, placed)
     metadata = re.search(r"^\s*metadata\s*=\s*merge\(\{[^}]*\},\s*([^\n]*)\)$", resource, re.M)
-    # The starved-leases and settle log's hedge attributes merge in after it,
-    # as unconditionally (each empty unless set, test_fastpath_starved_leases.py
-    # and test_fastpath_settle_hedge.py).
+    # The starved-leases, decide cache wait and settle log's hedge
+    # attributes merge in after it, as unconditionally (each empty unless
+    # set, test_fastpath_starved_leases.py,
+    # test_fastpath_edge_decide_cache_wait.py and test_fastpath_settle_hedge.py).
     assert metadata and metadata.group(1).split(", ") == [
         "local.fastpath_edge_snapshot", "local.fastpath_starved_leases_metadata",
-        "local.fastpath_settle_hedge_metadata"], metadata
+        "local.fastpath_edge_decide_cache_wait_metadata", "local.fastpath_settle_hedge_metadata"], metadata
 
 
 def test_the_snapshot_flags_are_found() -> None:

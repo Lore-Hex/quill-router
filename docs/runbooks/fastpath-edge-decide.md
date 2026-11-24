@@ -617,8 +617,9 @@ only (widening §8.1): a node up since before the step carries keys from
 before it, so while every line is excluded `distinct_keys` is 0 and the
 bar cannot be read until a node's shadow restarts after the step's start
 (the next node cycle, or a deploy).
-The decide line ends with its pass mix, counted beside `passed`, each pass
-once, and changing nothing the edge answers or passes. `float_at={...}`
+The decide line carries its pass mix, counted beside `passed`, each pass
+once, and after it the key cache's counts; neither changes anything the
+edge answers or passes. `float_at={...}`
 counts the `body.float` passes by where the first float is
 (`gwauth/float_at.go`): `provider.max_price` (only a float inside a limit's
 list or object: a limit itself is no `body.float`, the evaluator reads it
@@ -655,6 +656,20 @@ the edge cannot tell apart, so while the switch cannot be read
 `passed_enabled` falls to 0 without `passed_unknown` rising.
 `fastpathwatch edge` sums the three maps under `decide.by_name`, and
 `enabled_unknown` and `mix_dropped` under `decide.counts`.
+After the pass mix come the key cache's counts: `cache_miss={...}`, the
+lookups that found the key's cache entry cold or stale, by why (`cold.new`
+the key's first sighting on the node since its process started,
+`cold.evicted` dropped by Python's refusal of the key or of a key of its
+workspace, `cold.displaced` the size bound, `cold.negative` a lookup hash
+with no key past its 5 s, `cold.read_failed` and `cold.read_timeout` a
+first read that failed, `stale.idle` unused for more than a minute so not
+refreshed, `stale.unrefreshed` in use but no refresh reached it,
+`stale.read_failed` and `stale.read_timeout` its last read failed); with no
+wait each is a `cache.key` pass, so the map says why those passed.
+`cache_wait={...}` counts the read-through's waits (`-edge-decide-cache-wait`,
+`fastpath-deploy.md`, "The decide cache's wait") by what they came to
+(`filled`, `unfilled`, `timed_out`), and `cache_wait_ms_sum` and
+`cache_wait_ms_max` their time; all are empty with the wait off.
 A row is per cloud and region: another region's row waits on `rollout.sh`
 rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves

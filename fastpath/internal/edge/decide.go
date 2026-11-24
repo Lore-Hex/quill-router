@@ -534,7 +534,9 @@ func Decide(in DecideInputs) Decided {
 	}
 	read := in.Lookup(r.APIKeyLookupHash, at)
 	out.Read = read
-	if read.Key != gwstate.Fresh {
+	// A read-through wait that timed out (gwstate.WaitTimedOut) vouches for
+	// nothing it holds, fresh or not: none of its facts is read.
+	if read.Key != gwstate.Fresh || read.Wait == gwstate.WaitTimedOut {
 		return pass(PassCacheKey)
 	}
 	if !read.Found {

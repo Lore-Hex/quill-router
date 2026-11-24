@@ -38,7 +38,9 @@ The flow, per request, in this order:
    doubt passes.
 3. Look up the cached facts: key by `api_key_lookup_hash`, workspace,
    edge policy, routing snapshot, decide copy. Any cold or stale cache
-   passes and fills in the background.
+   passes and fills in the background; with the read-through on (decision
+   2), a cold or stale key or credit entry first waits a bounded time for
+   that fill, and passes only if it does not land in time.
 4. Gate on the facts (§3).
 5. `Snapshot.Evaluate`: `Answered`, every candidate priced in credits, no
    estimated-usage model.
@@ -67,6 +69,37 @@ The flow, per request, in this order:
    last minute, 15 s maximum age, a cold miss passes, and a Python 401, 402
    or 403 (or a pause 503) for a cached lookup hash evicts the key and its
    workspace. No per-key publisher and no new signing key.
+   **Read-through (2026-11, `-edge-decide-cache-wait`, off by default).**
+   An entry unused for a minute is not refreshed and is stale 15 s later,
+   so a key whose requests reach a node more than about 75 s apart finds
+   it stale on every request and passes (`cache.key`); with two nodes
+   behind the balancer each sees about half of a key's requests, which
+   widens its gaps. Most misses are this expiry between sparse requests;
+   Python's refusals evicting a workspace's keys (`cold.evicted`) are the
+   next cause. The decide line names each miss (`cache_miss`). With the wait
+   set, a miss waits up to it (at most 250 ms, `edge.MaxCacheWait`, out of
+   the decide budget) for the strong read it starts anyway
+   (`gwstate.Cache.LookupWithin`), and is decided on what that read found;
+   a read slower than the wait passes as before, and nothing seen at or
+   past the wait's monotonic deadline is taken, on every path (the first
+   look, a read done then, the last look): such a wait is timed out, and a
+   timed-out wait is never usable and none of its facts is read.
+   What it returns is judged at the request's instant, never the cache's
+   clock, exactly as a lookup without a wait is. It adds no read, and
+   decides on nothing a fresh hit would not: the read began after the
+   request arrived or within the 15 s maximum age of it, a revoked key or
+   paused workspace reads as such, a lookup hash with no key is a fresh
+   negative entry (`key.missing`), and an eviction during the wait
+   discards the read. Decision 17's bound is unchanged. The decide shadow
+   never waits. Two alternatives were set aside. Keeping idle entries
+   refreshed longer works only up to the window kept, costs a strong read
+   every 5 s for each key kept whether it is used again or not, and so
+   grows with the number of sparse keys rather than with the misses, and
+   it does nothing for an evicted or new key. A longer maximum age would
+   need another way to honour a revocation within decision 17's bound,
+   such as a key-status version the edge could check cheaply on each
+   request; no such version exists (a revocation feed is E4's), so it is
+   not done.
 3. **Flow.** Gate on cached cohort facts, then the evaluator (`Answered`,
    all candidates Credits, no estimated-usage model), then compose, then
    `FrontDoor.Authorize` (non-`Admitted` passes), then the insert with a
