@@ -134,7 +134,8 @@ def test_the_node_check_refuses_a_bad_value_an_early_node_and_the_decide_path_of
         f"{early}: created before the script that reads the attribute"]
     decide_off = re.sub(r'(fastpath-edge-decide\s*=\s*)"true"', r'\1"false"', tf)
     assert decide_off != tf
-    assert _node_wait_problems(decide_off, script) == [f"{late}: the decide path is off"]
+    assert _node_wait_problems(decide_off, script) == [
+        f"{name}: the decide path is off" for name, wait in waits.items() if wait]
     cleared = decide_off
     for name in waits:
         cleared = _with_wait(cleared, name, "")
@@ -155,9 +156,9 @@ def test_a_nodes_own_wait_is_only_on_a_node_from_17_on() -> None:
     assert "ignore_changes = [metadata_startup_script]" in tf
     waits = _node_cache_waits(tf)
     assert [name for name, wait in waits.items() if wait and int(name.rsplit("-", 1)[1]) < FIRST_READING_NODE] == []
-    # The canary: 17 alone, at the runbook's value; 18 stays as it was, to
-    # be read beside it.
-    assert {name: wait for name, wait in waits.items() if wait} == {"tr-fastpath-17": "100ms"}
+    # 17 was the canary, read beside 18 for an hour (the runbook's step 3);
+    # both now carry the runbook's value.
+    assert {name: wait for name, wait in waits.items() if wait} == {"tr-fastpath-17": "100ms", "tr-fastpath-18": "100ms"}
 
 
 def test_a_nodes_own_wait_needs_the_decide_path() -> None:
@@ -350,8 +351,17 @@ def test_a_nodes_own_wait_wins_over_the_fleets() -> None:
     fleet value, so the fleet at "0" leaves a node at "100ms" carrying
     100ms; only every node's "" with the fleet's "" leaves the attribute
     absent. The control: with the node's map first, the fleet's would win."""
-    tf = TF.read_text(encoding="utf-8")
-    waits = _node_cache_waits(tf)
+    real = TF.read_text(encoding="utf-8")
+    waits = _node_cache_waits(real)
+    assert {name: _merged_cache_wait(real, name) for name, wait in waits.items() if wait} == {
+        name: wait for name, wait in waits.items() if wait
+    }
+    assert [name for name, wait in waits.items() if not wait and _merged_cache_wait(real, name) is not None] == []
+    # The precedence is read on a copy where 17 alone carries a wait and 18
+    # carries none, so the fleet value's reach to a node without one shows.
+    tf = real
+    for name in waits:
+        tf = _with_wait(tf, name, "100ms" if name == "tr-fastpath-17" else "")
     assert _merged_cache_wait(tf, "tr-fastpath-17") == "100ms"
     assert [name for name in waits if name != "tr-fastpath-17" and _merged_cache_wait(tf, name) is not None] == []
     fleet_zero = re.sub(r'^(\s*fastpath_edge_decide_cache_wait\s*=\s*)""$', r'\1"0"', tf, flags=re.M)

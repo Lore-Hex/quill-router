@@ -807,14 +807,14 @@ resource "google_compute_instance" "fastpath_node" {
   # fleet value's place. Only a node from 17 on runs the script that reads
   # the attribute, so only such a node carries one, and the decide path must
   # be on (tests/test_fastpath_edge_decide_cache_wait.py). Every entry names
-  # cache_wait, so the entries share one shape. 17 carries 100ms, the canary
-  # of docs/runbooks/fastpath-deploy.md, "The decide cache's wait" step 2,
-  # read beside 18 for an hour.
+  # cache_wait, so the entries share one shape. 17 carried 100ms first, the
+  # canary of docs/runbooks/fastpath-deploy.md, "The decide cache's wait"
+  # step 2, read beside 18 for an hour (step 3); 18 carries it since.
   for_each = {
     "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4", cache_wait = "" }
     "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4", cache_wait = "" }
     "tr-fastpath-17" = { zone = "us-central1-a", machine_type = "e2-standard-4", cache_wait = "100ms" }
-    "tr-fastpath-18" = { zone = "us-central1-b", machine_type = "e2-standard-4", cache_wait = "" }
+    "tr-fastpath-18" = { zone = "us-central1-b", machine_type = "e2-standard-4", cache_wait = "100ms" }
   }
 
   project      = local.gcp_project_id
