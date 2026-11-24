@@ -147,6 +147,47 @@ func TestTheReadThroughReadsALookupHashWithNoKey(t *testing.T) {
 	}
 }
 
+// timedOutCache answers every wait as timed out over what a warm cache
+// holds, its facts changed as a test asks.
+type timedOutCache struct {
+	*gwstate.Cache
+	change func(*gwstate.Read)
+}
+
+func (c timedOutCache) LookupWithin(lookupHash string, now time.Time, _ time.Duration) gwstate.Read {
+	r := c.Cache.Lookup(lookupHash, now)
+	r.Wait = gwstate.WaitTimedOut
+	if c.change != nil {
+		c.change(&r)
+	}
+	return r
+}
+
+// TestATimedOutWaitIsNeverDecidedOn: a read-through wait that timed out
+// passes as cache.key whatever it holds: fresh facts the edge would answer
+// on are not answered, and facts that would pass for a reason of their own
+// (a disabled key) are not read either.
+func TestATimedOutWaitIsNeverDecidedOn(t *testing.T) {
+	for name, change := range map[string]func(*gwstate.Read){
+		"fresh and usable facts": nil,
+		"a disabled key's facts": func(r *gwstate.Read) {
+			r.Facts.Key.Eligible, r.Facts.Key.Reason = false, gwstate.ReasonKeyDisabled
+		},
+	} {
+		h, c := baseDecide(t)
+		warm := warmCache(t, &fakeWorld{c: c}, c.Facts.Key.LookupHash, c.at())
+		h.edge.decider.cfg.Cache = timedOutCache{Cache: warm, change: change}
+		h.edge.decider.cfg.CacheWait = MaxCacheWait
+		rec := h.send(t, c)
+		got := h.edge.DecideCounts()
+		if rec.Code != http.StatusTeapot || got.Answered != 0 || h.python.hits.Load() != 1 ||
+			!maps.Equal(got.Passed, map[string]int64{PassCacheKey: 1}) ||
+			!maps.Equal(got.CacheWait, map[string]int64{gwstate.WaitTimedOut: 1}) {
+			t.Fatalf("%s: %d %+v", name, rec.Code, got)
+		}
+	}
+}
+
 // TestTheCacheWaitIsBounded: New takes a wait of 0 to MaxCacheWait, and a
 // wait only with a cache that can wait for a read.
 func TestTheCacheWaitIsBounded(t *testing.T) {

@@ -180,13 +180,15 @@ type Read struct {
 
 // Usable is whether the cache lets the request be decided: the key fresh
 // and found, its facts and its workspace's eligible, and its workspace's
-// credit entry fresh with complete rows. It is necessary, not sufficient:
-// the key's expiry at the request's instant (KeyFacts.At) and what the
-// credit rows say (CreditState's pause, latch, debt, tier and refusal) are
-// the gate's to read.
+// credit entry fresh with complete rows, and no LookupWithin wait that
+// timed out (what it holds was seen at or past the wait's deadline, or not
+// at all). It is necessary, not sufficient: the key's expiry at the
+// request's instant (KeyFacts.At) and what the credit rows say
+// (CreditState's pause, latch, debt, tier and refusal) are the gate's to
+// read.
 func (r Read) Usable() bool {
-	return r.Key == Fresh && r.Found && r.Facts.Key.Eligible && r.Facts.Workspace.Eligible &&
-		r.Credit == Fresh && r.CreditRows
+	return r.Wait != WaitTimedOut && r.Key == Fresh && r.Found && r.Facts.Key.Eligible &&
+		r.Facts.Workspace.Eligible && r.Credit == Fresh && r.CreditRows
 }
 
 // Counters are a cache's counts since it was made.
@@ -389,10 +391,13 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 // A miss that finds every read busy, or a fresh entry, waits for nothing.
 //
 // The wait ends at a deadline, wait after the call, and nothing seen at or
-// past it is taken: a read that answers then (a select with the read done
-// and the timer fired may take either) returns the first look, timed out,
-// as one that answered later would. The deadline is checked again after the
-// last look, so the answer returned was read before it.
+// past it is taken, on every path: a first look that ends at or past it
+// (the lookup kept waiting for the cache's lock while a read landed, say),
+// a read that answers then (a select with the read done and the timer
+// fired may take either) and a last look that ends then each return the
+// first look, timed out, which is never usable (Read.Usable). A first look
+// that ends before the deadline and finds every entry fresh, or no read it
+// can wait for, is returned as Lookup's, with no wait.
 //
 // The wait holds no lock and no read: other lookups go on, and a lookup of
 // the same key waits on the same read. Its time is the process's monotonic
@@ -401,12 +406,18 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 func (c *Cache) LookupWithin(lookupHash string, now time.Time, wait time.Duration) Read {
 	began := c.monotonic()
 	r, flights := c.lookup(lookupHash, now, true)
-	if wait <= 0 || len(flights) == 0 {
+	if wait <= 0 {
 		return r
 	}
 	deadline := began.Add(wait)
 	late := func() Read {
 		r.Wait, r.Waited = WaitTimedOut, c.monotonic().Sub(began)
+		return r
+	}
+	if !c.monotonic().Before(deadline) {
+		return late()
+	}
+	if len(flights) == 0 {
 		return r
 	}
 	timer := time.NewTimer(wait)

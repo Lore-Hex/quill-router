@@ -81,7 +81,9 @@ The flow, per request, in this order:
    the decide budget) for the strong read it starts anyway
    (`gwstate.Cache.LookupWithin`), and is decided on what that read found;
    a read slower than the wait passes as before, and nothing seen at or
-   past the wait's monotonic deadline is taken, a read done then included.
+   past the wait's monotonic deadline is taken, on every path (the first
+   look, a read done then, the last look): such a wait is timed out, and a
+   timed-out wait is never usable and none of its facts is read.
    What it returns is judged at the request's instant, never the cache's
    clock, exactly as a lookup without a wait is. It adds no read, and
    decides on nothing a fresh hit would not: the read began after the

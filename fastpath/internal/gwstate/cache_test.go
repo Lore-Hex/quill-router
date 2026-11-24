@@ -766,6 +766,7 @@ func TestUsable(t *testing.T) {
 		"credit cold":          func(r *Read) { r.Credit = Cold },
 		"credit unneeded":      func(r *Read) { r.Credit = Unneeded },
 		"no credit rows":       func(r *Read) { r.CreditRows = false },
+		"a wait timed out":     func(r *Read) { r.Wait = WaitTimedOut },
 	} {
 		r := usable
 		change(&r)

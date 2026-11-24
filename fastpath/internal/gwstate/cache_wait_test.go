@@ -132,18 +132,19 @@ func (s *scriptedClock) now() time.Time {
 // wait's deadline has passed is not taken, though the wait saw it done (a
 // select with the read done and the timer fired may take either): the
 // request gets the first look, timed out, and passes. The deadline is
-// checked once the reads are done and again after the last look; a read
-// done before it is taken. The wait itself is an hour, so its timer never
-// decides.
+// checked after the first look, once the reads are done and again after
+// the last look; a read done before it is taken. The wait itself is an
+// hour, so its timer never decides.
 func TestLookupWithinTakesNothingPastItsDeadline(t *testing.T) {
 	for name, tc := range map[string]struct {
 		jump int64
 		want string
 	}{
-		// Readings: 1 the wait's start, 2 once the reads are done, 3 after
-		// the last look.
-		"past it once the reads are done": {2, WaitTimedOut},
-		"past it after the last look":     {3, WaitTimedOut},
+		// Readings: 1 the wait's start, 2 after the first look, 3 once the
+		// reads are done, 4 after the last look.
+		"past it after the first look":    {2, WaitTimedOut},
+		"past it once the reads are done": {3, WaitTimedOut},
+		"past it after the last look":     {4, WaitTimedOut},
 		"before it":                       {100, WaitFilled},
 	} {
 		r, c := newFakeReader(), start()
@@ -163,6 +164,54 @@ func TestLookupWithinTakesNothingPastItsDeadline(t *testing.T) {
 		// The read it did not take filled the entry for the next request.
 		if got := cache.Lookup("lh", c.Now()); !got.Usable() {
 			t.Fatalf("%s: not filled behind the wait: %+v", name, got)
+		}
+	}
+}
+
+// TestAReadLandingBeforeTheFirstLookIsHeldToTheDeadline: a read running
+// when the wait begins that lands before the first look (the lookup kept
+// waiting for the cache's lock, say) leaves that look fresh with no read to
+// wait for. Ended at or past the deadline, the look is timed out and never
+// usable, however fresh; ended before it, it is a hit, returned as Lookup's
+// with no wait. The read lands inside the clock's first reading, the
+// wait's start, so the case does not hang on the scheduler.
+func TestAReadLandingBeforeTheFirstLookIsHeldToTheDeadline(t *testing.T) {
+	for name, tc := range map[string]struct {
+		jump   int64
+		want   string
+		usable bool
+	}{
+		"the first look ends past the deadline":   {2, WaitTimedOut, false},
+		"the first look ends before the deadline": {100, "", true},
+	} {
+		r, c := newFakeReader(), start()
+		r.keys["lh"], r.credits["ws"] = keyContext("lh", "ws", ""), funded
+		cache := newTestCache(t, r, c)
+		cache.Lookup("lh", c.Now())
+		cache.settle()
+		// Stale at the request's instant, its reads running and held.
+		now := c.advance(2 * time.Minute)
+		gate, started := make(chan struct{}), make(chan string, 4)
+		r.set(func(r *fakeReader) { r.gate, r.started = gate, started })
+		if got := cache.Lookup("lh", now); got.Key != Stale {
+			t.Fatalf("%s: not stale: %+v", name, got)
+		}
+		receive(t, started)
+		receive(t, started)
+		clock := &scriptedClock{base: time.Now(), jump: tc.jump}
+		landed := false
+		cache.monotonic = func() time.Time {
+			if !landed {
+				// The wait's start: the reads land now, before the first look.
+				landed = true
+				close(gate)
+				cache.settle()
+			}
+			return clock.now()
+		}
+		got := cache.LookupWithin("lh", now, 10*time.Millisecond)
+		if got.Key != Fresh || got.Wait != tc.want || got.Usable() != tc.usable || got.KeyMiss != "" {
+			t.Fatalf("%s: %+v", name, got)
 		}
 	}
 }
