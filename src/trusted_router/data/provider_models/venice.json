@@ -1359,7 +1359,7 @@
         "chat/completions"
       ],
       "status": 1,
-      "id": "deepseek/deepseek-v4-1-flash-1017-uncensored",
+      "id": "dealignai/deepseek-v4.1-flash-1017-uncensored",
       "upstream_id": "deepseek-v4-1-flash-1017-uncensored",
       "features": [
         "function-calling",

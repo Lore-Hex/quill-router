@@ -6299,6 +6299,15 @@ def _endpoint_for_id_compat(endpoint_id: str) -> ModelEndpoint | None:
     if held_endpoint is not None:
         return held_endpoint
 
+    # Old authorizations retained Venice's original endpoint ID. Never resolve
+    # one against a different host, usage type, or a newly preferred route.
+    legacy, sep, tier = endpoint_id.partition("@venice/")
+    if sep and legacy == _provider_contracts.VENICE_1017_LEGACY_ID and tier in {"prepaid", "byok"}:
+        route = endpoint_for_id(f"{_provider_contracts.MAPLE_MODEL_ID}@venice/{tier}")
+        if route is not None and route.upstream_id == _provider_contracts.MAPLE_NATIVE_ID:
+            return replace(route, id=endpoint_id, model_id=legacy)
+        return None
+
     model_id, separator, usage_suffix = endpoint_id.partition("@gemini/")
     if not separator or usage_suffix not in {"prepaid", "byok"}:
         return None
