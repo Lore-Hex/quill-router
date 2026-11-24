@@ -7,12 +7,20 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from trusted_router.authorize_candidates import endpoint_cost_microdollars
 from trusted_router.catalog import MODEL_ENDPOINTS, effective_endpoint
+from trusted_router.money import token_cost_microdollars
+from trusted_router.openai_service_tiers import (
+    OpenAIPriorityPricing,
+    openai_priority_cost_microdollars,
+    openai_priority_pricing,
+)
 from trusted_router.pricing import PriceTier, _flat_tier, select_price_tier
 from trusted_router.provider_lifecycle import (
     OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT,
     ProviderLongContextPrice,
     ProviderPrice,
+    openai_gpt56_sol_pricing_period,
     provider_long_context_price,
     provider_price_microdollars,
     provider_pricing_schedule,
@@ -150,3 +158,100 @@ def test_only_first_party_openai_sol_is_pinned() -> None:
         assert provider_long_context_price(provider, MODEL_ID, at=SWITCH) is None
     for model_id in ("openai/gpt-5.6-terra", "openai/gpt-5.6-luna"):
         assert provider_price_microdollars("openai", model_id, at=SWITCH) is None
+
+
+# Fast (Priority) customer rates: upstream x 1.055; cache writes 1.25x input.
+# Promotion upstream $8 / $0.80 / $40; Standard upstream $10 / $1 / $60.
+FAST_PROMOTION = OpenAIPriorityPricing(8_440_000, 844_000, 42_200_000, 10_550_000)
+FAST_STANDARD = OpenAIPriorityPricing(10_550_000, 1_055_000, 63_300_000, 13_187_500)
+
+
+def test_fast_and_standard_tiers_share_one_period() -> None:
+    assert openai_gpt56_sol_pricing_period(BEFORE) == "promotion"
+    assert openai_gpt56_sol_pricing_period(SWITCH) == "standard"
+    assert openai_gpt56_sol_pricing_period("2026-11-30T23:59:59Z") == "promotion"
+    assert openai_gpt56_sol_pricing_period("2026-12-01T00:00:00Z") == "standard"
+
+
+@pytest.mark.parametrize(
+    ("at", "expected"), [(BEFORE, FAST_PROMOTION), (SWITCH, FAST_STANDARD)]
+)
+def test_fast_customer_rates_change_exactly_at_switch(
+    at: datetime, expected: OpenAIPriorityPricing
+) -> None:
+    assert openai_priority_pricing(MODEL_ID, at=at) == expected
+
+
+@pytest.mark.parametrize(
+    ("at", "token_class", "rate"),
+    [
+        (BEFORE, "input", 8_440_000),
+        (BEFORE, "cached_input", 844_000),
+        (BEFORE, "cache_write", 10_550_000),
+        (BEFORE, "output", 42_200_000),
+        (SWITCH, "input", 10_550_000),
+        (SWITCH, "cached_input", 1_055_000),
+        (SWITCH, "cache_write", 13_187_500),
+        (SWITCH, "output", 63_300_000),
+    ],
+)
+@pytest.mark.parametrize("endpoint_id", ENDPOINT_IDS)
+@pytest.mark.parametrize("service_tier", ["priority", "auto"])
+def test_fast_cost_per_token_class_is_locked_to_the_authorization_time(
+    endpoint_id: str, service_tier: str, at: datetime, token_class: str, rate: int
+) -> None:
+    tokens = 1_000_000
+    counts = {
+        "input": (tokens, 0, 0, 0),
+        "cached_input": (0, 0, tokens, 0),
+        "cache_write": (0, 0, 0, tokens),
+        "output": (0, tokens, 0, 0),
+    }[token_class]
+    input_tokens, output_tokens, cache_read, cache_creation = counts
+
+    # Settlement prices at authorization.created_at, so a request authorized
+    # one second before the switch keeps the promotion whenever it settles.
+    assert endpoint_cost_microdollars(
+        MODEL_ENDPOINTS[endpoint_id],
+        input_tokens,
+        output_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
+        effective_at=at,
+        service_tier=service_tier,
+        reserve_auto=True,
+    ) == token_cost_microdollars(tokens, rate)
+    assert openai_priority_cost_microdollars(
+        MODEL_ID,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
+        effective_at=at,
+    ) == token_cost_microdollars(tokens, rate)
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        (
+            "openai/gpt-5.6-terra",
+            OpenAIPriorityPricing(5_275_000, 527_500, 31_650_000, 6_593_750),
+        ),
+        (
+            "openai/gpt-5.6-luna",
+            OpenAIPriorityPricing(2_110_000, 211_000, 12_660_000, 2_637_500),
+        ),
+    ],
+)
+def test_other_models_fast_prices_do_not_move_at_the_switch(
+    model_id: str, expected: OpenAIPriorityPricing
+) -> None:
+    assert openai_priority_pricing(model_id, at=BEFORE) == expected
+    assert openai_priority_pricing(model_id, at=SWITCH) == expected
+
+
+def test_models_without_fast_pricing_stay_unpriced() -> None:
+    for model_id in ("openai/gpt-4o-mini", "anthropic/claude-haiku-4.5"):
+        assert openai_priority_pricing(model_id, at=BEFORE) is None
+        assert openai_priority_pricing(model_id, at=SWITCH) is None
