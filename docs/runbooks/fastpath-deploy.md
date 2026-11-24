@@ -713,20 +713,41 @@ Turning it on, one node first:
    still off: a week of it says how many `cache.key` passes the wait could
    take.
 2. On a node created from the script that reads
-   `fastpath-edge-decide-cache-wait` (check: `gcloud compute instances
-   describe NODE --zone=ZONE --project=quill-cloud-proxy
+   `fastpath-edge-decide-cache-wait` (17 and later; check: `gcloud compute
+   instances describe NODE --zone=ZONE --project=quill-cloud-proxy
    --format='value(metadata.items.startup-script)' | grep -c
-   decide-cache-wait` is not 0), set the attribute for that node alone, or
-   `fastpath_edge_decide_cache_wait = "100ms"` in `infra/fastpath.tf` for
-   all, apply (metadata, in place), and take the node by the unit rewrite
-   as for the settle log's hedge above; read `-edge-decide-cache-wait
-   100ms` back from the running process.
+   decide-cache-wait` is not 0), set it for that node alone: in
+   `infra/fastpath.tf`, the node's `for_each` entry takes
+   `cache_wait = "100ms"`, every other entry keeps `cache_wait = ""`, and
+   `fastpath_edge_decide_cache_wait` stays `""`.
+   `tests/test_fastpath_edge_decide_cache_wait.py` holds the value to the
+   script's rule, to a node from 17 on and to the decide path being on.
+   Apply: the plan is one change, that node's metadata, in place. Then take
+   the node by the unit rewrite, the other nodes serving:
+   1. Mark it leaving: `sudo systemctl kill -s USR1 fastpath`.
+   2. Wait for its leases (`fastpathctl node` exits 0, "For each node
+      replaced" step 3) and for the balancer: `UNHEALTHY` for it in
+      `gcloud compute backend-services get-health tr-fastpath-edge-backend --global`,
+      then the authorize route's 24 s ("Turning the edge on").
+   3. Stop the unit: `sudo systemctl stop fastpath`.
+   4. Run the startup script again, which writes and starts the unit with
+      the flag: `sudo google_metadata_script_runner startup`.
+   5. Read `-edge-decide-cache-wait 100ms` back from the running process
+      (`tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`),
+      and check `fastpathctl node` says it serves again.
+
+   A reset is not enough: systemd starts the unit from disk with its old
+   arguments before the script runs. For every node at once, set
+   `fastpath_edge_decide_cache_wait = "100ms"` instead and take each node
+   the same way, one at a time.
 3. Over an hour, compare the node's `passed["cache.key"]` share of its
    authorizes with the other node's, and check `cache_wait_ms_max` (at most
    the wait), `slow` (no new `at_edge.decide`) and `unavailable`.
 
-Turning it off: `fastpath_edge_decide_cache_wait = "0"` (or `""`), applied,
-and each node taken by the unit rewrite; or pin the release before it. The
+Turning it off: the node's `cache_wait = "0"` (or `""`), or
+`fastpath_edge_decide_cache_wait = "0"` (or `""`) for every node, applied,
+and each node that carried it taken by the unit rewrite; or pin the release
+before it. The
 script refuses any value but `0` or `1ms` to `250ms`, and the attribute
 without `fastpath-edge-decide` `"true"`, before writing the unit.
 
