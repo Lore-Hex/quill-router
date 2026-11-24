@@ -92,12 +92,17 @@ modes, rollout.
 When a request finds no room under any lease of its shard that still admits,
 and the store's last answer to that shard's top-up, within a minute, was a
 refusal for the floor or the allowance whose headroom outside leases was
-under this request's estimate and buffer, the owner closes those leases
-(`fastpath/internal/owner/starved.go`). The headroom condition is the
-lease-headroom 503's own: an ask is sized for the shard's last minute of
-spend plus its open holds, not for the request, so a refusal alone does not
-mean the synchronous path cannot take the request (the store now returns
-the headroom it read with those two refusals, `store.GrantResult.Headroom`).
+under this request's hold (its estimate, what Python would hold), and that
+headroom plus those leases' free room covers the hold, the owner closes
+those leases (`fastpath/internal/owner/starved.go`). The first half is the
+lease-headroom 503's own condition: an ask is sized for the shard's last
+minute of spend plus its open holds, not for the request, so a refusal
+alone does not mean the synchronous path cannot take the request (the
+store now returns the headroom it read with those two refusals,
+`store.GrantResult.Headroom`). The second half leaves a spent workspace
+alone: there Python answers 402, and closing would return too little to
+help. (Python's own 503 also counts the leases' held amounts and the
+floor; the owner sees only its shard's free room, so it is stricter.)
 The closed leases' next checkpoint (every renewal round, 5 s in production)
 returns their free room, the auditor credits it, and the synchronous path,
 or a later lease, takes the request.

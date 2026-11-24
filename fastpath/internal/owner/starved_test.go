@@ -31,7 +31,8 @@ func (l *lines) all() []string {
 }
 
 // starvedFixture is a shard with one lease of 10 holding 8, so 2 is free,
-// whose next ask the store refuses for refusal: the request of 5 that
+// whose next ask the store refuses for refusal, reading a headroom of 3: the
+// request of 5 that
 // follows finds no room and asks, and the store's refusal is in before the
 // function returns. The shard asks only for requests no lease takes.
 func starvedFixture(t *testing.T, mode Starved, refusal store.Refusal, tweaks ...func(*fakeSpanner)) (*fixture, *fakeSpanner, *Lease, Admitted, *lines) {
@@ -44,7 +45,8 @@ func starvedFixture(t *testing.T, mode Starved, refusal store.Refusal, tweaks ..
 	held := admitTo(t, f, 8)
 	f.clock.advance(11 * time.Second) // the first ask's cooldown passes
 	sp.mu.Lock()
-	sp.refuseGrants, sp.grantRefusal = true, refusal
+	// Under the request's 5, and with the lease's 2 free enough for it.
+	sp.refuseGrants, sp.grantRefusal, sp.grantHeadroom = true, refusal, 3
 	for _, tweak := range tweaks {
 		tweak(sp)
 	}
@@ -84,7 +86,7 @@ func TestAStarvedShardClosesItsLease(t *testing.T) {
 	}
 	got := logged.all()
 	if len(got) != 1 || !strings.Contains(got[0], "fastpath: owner starved shard workspace=ws-1 region=us-central1 shard=2 "+
-		"mode=close leases=1 free=2 need=5 headroom=0 asked=13 refused=\""+string(store.RefusedFloor)+"\" admissions=1") {
+		"mode=close leases=1 free=2 need=5 headroom=3 asked=13 refused=\""+string(store.RefusedFloor)+"\" admissions=1") {
 		t.Fatalf("the starved line: %q", got)
 	}
 	ctx := context.Background()
@@ -129,12 +131,14 @@ func TestAStarvedShardClosesItsLease(t *testing.T) {
 // recent spend, so the store may refuse it for the floor though the
 // headroom outside leases still covers the request. The synchronous path
 // takes that request; nothing is closed or logged. A headroom one short of
-// the request's need is starvation.
+// the request's hold is starvation, while the lease's free room of 2 makes
+// up the rest; under that the workspace is spent (Python's 402), and
+// closing would return too little to help.
 func TestARefusalOfALargerAskIsNotStarvation(t *testing.T) {
 	for _, c := range []struct {
 		headroom int64
 		starved  bool
-	}{{5, false}, {1 << 40, false}, {4, true}, {-3, true}} {
+	}{{5, false}, {1 << 40, false}, {4, true}, {3, true}, {2, false}, {-3, false}} {
 		f, sp, a, _, logged := starvedFixture(t, StarvedClose, store.RefusedFloor, func(sp *fakeSpanner) {
 			sp.grantHeadroom = c.headroom
 		})
@@ -144,6 +148,77 @@ func TestARefusalOfALargerAskIsNotStarvation(t *testing.T) {
 		if closed := errors.Is(err, ErrClosing); closed != c.starved || (len(logged.all()) == 1) != c.starved {
 			t.Fatalf("headroom %d: closed %v (%v), logged %q; want starved %v", c.headroom, closed, err,
 				logged.all(), c.starved)
+		}
+	}
+}
+
+// TestCloseDoesNotWaitForTheLine: the line is written at most once a
+// minute, but under close every starved request closes its leases: a
+// second lease starved within the minute of the first line is closed with
+// no second line.
+func TestCloseDoesNotWaitForTheLine(t *testing.T) {
+	f, sp, a, _, logged := starvedFixture(t, StarvedClose, store.RefusedFloor)
+	starvedAgain(t, f) // closes a, the shard's first line
+	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("the first starved lease: %v", err)
+	}
+	answered := func(n int) {
+		waitFor(t, "the ask answered", func() bool {
+			f.owner.mu.Lock()
+			defer f.owner.mu.Unlock()
+			return !f.owner.shards[key].asking && len(sp.granted()) == n
+		})
+	}
+	sp.mu.Lock()
+	sp.refuseGrants = false
+	sp.mu.Unlock()
+	f.clock.advance(11 * time.Second)
+	n := len(sp.granted())
+	starvedAgain(t, f) // a is closing: nothing short, and the ask is granted
+	answered(n + 1)
+	b := f.waitLeases(t, 2)[1]
+	admitTo(t, f, 5)
+	admitTo(t, f, 5) // b: 13, 3 free
+	sp.mu.Lock()
+	sp.refuseGrants = true
+	sp.mu.Unlock()
+	f.clock.advance(11 * time.Second)
+	starvedAgain(t, f) // refusal forgotten by the grant: not starved, asks, refused
+	answered(n + 2)
+	if _, err := b.Admit(Admission{Estimate: 0, Boot: boot}); err != nil {
+		t.Fatalf("b before its shard is starved again: %v", err)
+	}
+	starvedAgain(t, f) // starved within the minute of the line
+	if _, err := b.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("the second starved lease, closed with no line: %v", err)
+	}
+	if got := logged.all(); len(got) != 1 {
+		t.Fatalf("lines: %q", got)
+	}
+}
+
+// TestTheHeadroomIsWeighedAgainstTheHoldNotTheBuffer: Python's
+// synchronous hold is the request's estimate, without the owner's buffer,
+// so a headroom that covers the estimate is not starvation though it is
+// short of the estimate and buffer.
+func TestTheHeadroomIsWeighedAgainstTheHoldNotTheBuffer(t *testing.T) {
+	for _, c := range []struct {
+		headroom int64
+		starved  bool
+	}{{5, false}, {4, true}} {
+		f, _, a, _, _ := starvedFixture(t, StarvedClose, store.RefusedFloor, func(sp *fakeSpanner) {
+			sp.grantHeadroom = c.headroom
+		})
+		f.owner.cfg.Overrun = func(e int64) int64 {
+			if e == 5 {
+				return 1 // need 6 for the request of 5
+			}
+			return 0
+		}
+		starvedAgain(t, f)
+		_, err := a.Admit(Admission{Estimate: 1, Boot: boot})
+		if closed := errors.Is(err, ErrClosing); closed != c.starved {
+			t.Fatalf("headroom %d against a hold of 5 and a need of 6: closed %v (%v)", c.headroom, closed, err)
 		}
 	}
 }
@@ -162,7 +237,10 @@ func TestTheAllowanceRefusalStarvesToo(t *testing.T) {
 // admitting, the shard is logged once a minute at most, and each line
 // counts the starved admissions since the last.
 func TestAStarvedShardIsLoggedOnlyInLogMode(t *testing.T) {
-	f, sp, a, _, logged := starvedFixture(t, StarvedLog, store.RefusedFloor)
+	// A headroom of 4 stays starved once the lease's free room is 1.
+	f, sp, a, _, logged := starvedFixture(t, StarvedLog, store.RefusedFloor, func(sp *fakeSpanner) {
+		sp.grantHeadroom = 4
+	})
 	starvedAgain(t, f)
 	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); err != nil {
 		t.Fatalf("an admission under a lease log mode keeps: %v", err)

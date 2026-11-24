@@ -181,7 +181,7 @@ func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 	need := sat(a.Estimate, o.cfg.overrun(a.Estimate))
 	// Before this request's own ask, so the refusal it reads is the last
 	// ask's (starved.go).
-	o.starved(key, short, need)
+	o.starved(key, short, a.Estimate, need)
 	o.topUp(key, true, need)
 	return Admitted{}, ErrNoRoom
 }

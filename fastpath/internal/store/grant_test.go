@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"math"
+	"math/big"
 	"slices"
 	"sync"
 	"testing"
@@ -412,4 +414,22 @@ func TestGrantReadinessSaysWhyAGrantWouldBeRefused(t *testing.T) {
 		t.Fatalf("the grant above the floor: %+v %v", got, err)
 	}
 	readyAt(above, RefusedFloor, "headroom at the floor once a lease holds the rest")
+}
+
+// TestSaturatedKeepsWhatFitsAndClampsTheRest: a refusal's headroom is the
+// signed sum as an int64 when it fits, else the nearest bound, so the
+// owner never reads a huge headroom as small or a deep debt as large.
+func TestSaturatedKeepsWhatFitsAndClampsTheRest(t *testing.T) {
+	huge := new(big.Int).Lsh(big.NewInt(1), 70)
+	for _, c := range []struct {
+		v    *big.Int
+		want int64
+	}{
+		{big.NewInt(0), 0}, {big.NewInt(-5), -5}, {big.NewInt(math.MaxInt64), math.MaxInt64},
+		{big.NewInt(math.MinInt64), math.MinInt64}, {huge, math.MaxInt64}, {new(big.Int).Neg(huge), math.MinInt64},
+	} {
+		if got := saturated(c.v); got != c.want {
+			t.Errorf("saturated(%v) = %d, want %d", c.v, got, c.want)
+		}
+	}
 }

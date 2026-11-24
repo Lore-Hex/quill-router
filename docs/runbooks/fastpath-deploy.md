@@ -618,8 +618,9 @@ unit. The attribute is set only with a pinned release that takes
 
 A shard is starved when a request finds no room under any lease that still
 admits, just after the store refused the shard a top-up for the floor or the
-allowance, and that refusal read a headroom outside leases under the
-request's estimate and buffer. The money it needs is split between a lease
+allowance, that refusal read a headroom outside leases under the
+request's hold, and the leases' free room would make up the difference. The
+money it needs is split between a lease
 too small for it and the headroom outside leases, so the synchronous path
 answers it the
 lease-headroom 503 (`billing.lease_headroom_unavailable`), and every retry
