@@ -1,5 +1,69 @@
 # CI and production rollout latency
 
+## November 24 measurements
+
+The default-clock billing proof runs in eight groups of four workers. Its
+refreshed weights are the per-test medians from green main runs 45363497140,
+45375079247, 45445735259 and 45452805369. All eight timing artifacts from
+each run contained the same 1,614 distinct cases in total. To reproduce:
+download `durations-oracle-default-*` under one directory per run and use
+`merge_shard_durations.py --profile oracle-default` with that parent directory.
+Keep the xdist group suffixes; a database group's cases still run serially
+within each shard. No case, worker, gate or timeout changed.
+
+Two later runs were withheld. Replaying pytest-split's least-duration
+algorithm with the old weights reproduced the actual assignments exactly;
+1,422 cases moved with the new weights. Using each held-out run's recorded
+per-case times:
+
+| Held-out main CI run | Old busiest group | New busiest group |
+| --- | ---: | ---: |
+| [45460981383](https://github.com/Lore-Hex/quill-router/actions/runs/45460981383) | 4,330 test-seconds | 3,535 test-seconds |
+| [45465786675](https://github.com/Lore-Hex/quill-router/actions/runs/45465786675) | 2,792 test-seconds | 2,622 test-seconds |
+
+These are sums of test time, not wall time. A slow host can make *every* case
+on its shard look expensive. Compare the slowest proof job and end-to-end CI
+p50/p95 over 20 green main runs that actually execute all eight groups;
+report queued time and retries separately from test time.
+
+### Where production releases wait
+
+Five completed GCP releases actually moved traffic: 45183533023, 45324503100,
+45457186924, 45465786712 and [45494956262](https://github.com/Lore-Hex/quill-router/actions/runs/45494956262).
+Exclude prepared runs that yield to another release. Measured job wall time:
+
+| Phase | Range | Interpretation |
+| --- | ---: | --- |
+| Image build | 2.0–2.4 min | Already starts alongside CI; usually not the critical path. |
+| Schema job | 3.7–5.1 min | Overlaps regional readiness and secret sync. |
+| Primary rollout | 28.9–34.6 min | Includes 19.9–25.3 min in the staged traffic step. |
+| Secondary rollout | 24.3–24.5 min | Three supervised drains already overlap. |
+| Public service rollout | 6.2–7.6 min | Starts after secondary convergence. |
+
+The first optimization to trial is in the public service, not the canary.
+Its routed preflight reads the same service twice per region: once for its
+serving revision and once for ingress and probe tags. Use one fresh snapshot
+per region for those three fields, then fetch the immutable revision. Time
+that read-only phase separately; it cannot save the entire public rollout.
+An independent next experiment is to fetch those four snapshots concurrently
+under the release lock. Before enabling it, test a split-traffic region, a
+denied read, and a stale snapshot; no region should be changed on failure.
+
+Keep traffic changes serial on the public service: ingress is service-wide
+even for a no-traffic deployment, and the recovery marker tracks one
+in-flight promotion. Keep the full primary observation and rollback windows.
+For a larger saving on backend-only releases, build the public service as a
+separate immutable artifact. First run the proposed skip decision in report-only
+mode: compare its digest, public docs/source, runtime configuration and traffic
+state in every region, including operator pins. Unknown or different means
+the existing rollout. Only exact matches could skip the writes and retain
+the public smoke. The ceiling on an eligible release is the 6–8 minute public
+job minus verification and whichever parallel finalization gate finishes
+last. We have not measured how many releases would qualify.
+Measure time to primary serving and time to four-region plus public
+convergence separately; users can already be on the new revision while its
+predecessor is retained. Don't add overlapping job times to claim savings.
+
 ## Baseline (2026-10-27)
 
 Three successful main CI runs were profiled: 40599396957, 40623176778 and
