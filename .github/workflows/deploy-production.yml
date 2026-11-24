@@ -280,6 +280,13 @@ jobs:
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_receipt_key_versions.sh
       - name: Backfill legacy receipt attestation version projections
+        # Bounded. Once every legacy row is backfilled this is one empty page
+        # and finishes in under a minute, uv sync included. Without a bound,
+        # a run that never exits holds the production deploy lease until the
+        # job's six-hour default, and every later deploy queues behind it.
+        # Ten minutes is far above a real backfill page loop and fails the job
+        # early, so the retained lease is visible and recoverable.
+        timeout-minutes: 10
         env:
           TR_STORAGE_BACKEND: spanner-clickhouse
           TR_GCP_PROJECT_ID: quill-cloud-proxy

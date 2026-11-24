@@ -11,6 +11,7 @@ from typing import Any
 
 import psycopg
 import pytest
+import yaml
 
 from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture
 from tests.migration_ddl import recorded_ddls as _ddls
@@ -596,6 +597,20 @@ def test_deploy_applies_receipt_version_schema_before_router_rollout() -> None:
 
     assert migrate < backfill < deploy
     assert "TR_STORAGE_BACKEND: spanner-clickhouse" in workflow[migrate:backfill]
+
+
+def test_receipt_key_backfill_step_is_time_bounded() -> None:
+    """A backfill that never exits must not hold the deploy lease for six hours."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    steps = workflow["jobs"]["migrate-schema"]["steps"]
+    backfill = [
+        step for step in steps
+        if "trusted_router.receipt_key_backfill_cli" in str(step.get("run", ""))
+    ]
+    assert len(backfill) == 1
+    timeout = backfill[0].get("timeout-minutes")
+    assert isinstance(timeout, int)
+    assert 1 <= timeout <= 15
 
 
 def test_receipt_docs_require_ddl_before_the_new_writer() -> None:
