@@ -102,6 +102,9 @@ DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # DeepInfra deprecates nvidia/Nemotron-Content-Safety-3.5 on 30 Nov 2026 (date
 # only, so 00:00 UTC); its public model metadata says 02:35 UTC that day.
 DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT = datetime(2026, 11, 30, 0, 0, tzinfo=UTC)
+# Boundless's November 24 notice stops serving 18 models on Thursday 26 Nov
+# 2026 at 23:59 UTC; it names eight of them (the rest are not yet known).
+BOUNDLESS_NOV_26_RETIREMENT_AT = datetime(2026, 11, 26, 23, 59, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -1499,6 +1502,59 @@ _RETIREMENTS = (
         model_ids=frozenset({"nvidia/nemotron-content-safety-3.5"}),
         upstream_ids=frozenset({"nvidia/Nemotron-Content-Safety-3.5"}),
         effective_at=DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT,
+    ),
+    # Boundless's November 24 notice: these models stop serving on Thursday
+    # 26 November 2026 at 23:59 UTC. The notice names eight of the 18 retiring
+    # models by Boundless short name (mapped here through each manifest row's
+    # title to its upstream_id); the other ten are not listed, and Boundless's
+    # public /api/catalog, /models and /openapi.json still show every model as
+    # serving with no Deprecation or Sunset marker (checked 2026-11-24 17:47
+    # UTC), so only the eight named routes are retired. Only Boundless's
+    # routes; every one of these models stays on other providers.
+    # Replacements are Boundless's suggestions where they are a like-for-like
+    # or newer model; replacements are quoted, never substituted.
+    _Retirement(
+        provider="boundless",
+        model_ids=frozenset({"moonshotai/kimi-k3"}),
+        upstream_ids=frozenset({"moonshotai/kimi-k3"}),
+        effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3.1-pro",),
+    ),
+    _Retirement(
+        provider="boundless",
+        model_ids=frozenset({
+            "deepseek/deepseek-v4-flash-0731",
+            "deepseek/deepseek-v4.1-flash",
+            "qwen/qwen3.6-35b-a3b",
+        }),
+        upstream_ids=frozenset({
+            "deepseek/deepseek-v4-flash-0731",
+            "deepseek/deepseek-v4.1-flash",
+            "qwen/qwen3.6-35b-a3b",
+        }),
+        effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    # Boundless suggests a Flash model for these full-size models (MiMo-V2.6
+    # Flash for MiMo-V2.6 Pro, GLM-5.3 Flash for GLM-5.2 and GLM-5.3, DeepSeek
+    # V4.1 Flash 1017 for MiniMax M3). A smaller Flash tier is not a
+    # like-for-like swap (the Azure precedent above), so none is quoted; the
+    # same model IDs remain routable on other providers.
+    _Retirement(
+        provider="boundless",
+        model_ids=frozenset({
+            "xiaomi/mimo-v2.6-pro",
+            "z-ai/glm-5.2",
+            "z-ai/glm-5.3",
+            "minimax/minimax-m3",
+        }),
+        upstream_ids=frozenset({
+            "xiaomi/mimo-v2.6-pro",
+            "z-ai/glm-5.2",
+            "z-ai/glm-5.3",
+            "minimax/minimax-m3",
+        }),
+        effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
     ),
     # Databricks' November 10 Foundation Model retirement notice: "The GLM 5.2
     # model will be retired on February 4th, 2027" (Foundation Model APIs and
