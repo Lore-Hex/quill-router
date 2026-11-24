@@ -646,8 +646,9 @@ YOUNG = 3600  # well inside the limit
 
 
 def ci_runs(sha: str = MAIN) -> list[str]:
+    # No --limit, as deploy.yml's gate-on-ci (tests/test_deploy_ci_gate.py pins both).
     return ["run", "list", "--repo", REPO, "--workflow", "ci.yml", "--commit", sha,
-            "--limit", "20", "--json", "databaseId,status,conclusion,event"]
+            "--json", "databaseId,status,conclusion,event"]
 
 
 GREEN = [{"databaseId": 501, "status": "completed", "conclusion": "success", "event": "workflow_dispatch"}]

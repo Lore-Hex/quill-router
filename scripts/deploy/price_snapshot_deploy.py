@@ -387,7 +387,7 @@ def fast_path(repo: str, main_sha: str, waited: str, changes: list[str] | None, 
         return WAIT, (f"{protective}, and deploy run(s) of {', '.join(head[:9] for head in in_flight)} are in "
                       "flight: it coalesces into the next rollout")
     green, ci_state = ci_green(_gh(["run", "list", "--repo", repo, "--workflow", CI_WORKFLOW, "--commit", main_sha,
-                                    "--limit", "20", "--json", "databaseId,status,conclusion,event"]), main_sha)
+                                    "--json", "databaseId,status,conclusion,event"]), main_sha)
     if not green:
         return WAIT, f"{protective}, but {ci_state}: no dispatch before CI is green on the same commit"
     return DISPATCH, f"{protective}; fast path: no deploy run in flight and {ci_state}"
