@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-11-24T19:28:16Z",
+  "generated_at": "2026-11-24T21:28:20Z",
   "model_count": 132,
   "models": [
     {
@@ -317,7 +317,8 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "routable_reason": "provider-canary-failed",
+      "missing_since": "2026-11-24"
     },
     {
       "id": "google/recurrentgemma-2b",
@@ -2077,7 +2078,8 @@
       "routable": false,
       "routable_reason": "unsupported-chat-endpoint",
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-24"
     },
     {
       "display_name": "minimaxai/minimax-m3",
@@ -2285,10 +2287,9 @@
       "status": 1,
       "id": "nvidia/nemotron-3.5-super-vl-120b-a12b",
       "upstream_id": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "display_name": "minimaxai/minimax-m3.1-flash",
@@ -2306,10 +2307,9 @@
       "status": 1,
       "id": "minimax/minimax-m3.1-flash",
       "upstream_id": "minimaxai/minimax-m3.1-flash",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "display_name": "nvidia/nemotron-3.5-bolt-e4b",

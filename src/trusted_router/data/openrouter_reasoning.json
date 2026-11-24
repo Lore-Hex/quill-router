@@ -3002,12 +3002,6 @@
       ],
       "default_effort": "high"
     },
-    "xiaomi/mimo-v2.5": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "xiaomi/mimo-v2.6-flash": {
       "mandatory": false,
       "default_enabled": false,
