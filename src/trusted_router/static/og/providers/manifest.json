@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -631,10 +631,10 @@
   },
   "nextbit-eu": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 4,
     "name": "NextBit (EU)",
     "privacy": "Zero retention",
-    "route_count": 3,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "nextbit-eu"
   },

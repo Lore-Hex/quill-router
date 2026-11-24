@@ -155,10 +155,7 @@
       ],
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 350000,
-      "cached_input_token_price_per_m": 40000,
-      "routable": false,
-      "routable_reason": "provider-route-unserved",
-      "unserved_held_at": "2026-11-23T06:27:52Z"
+      "cached_input_token_price_per_m": 40000
     },
     {
       "display_name": "gemma4:26b-a4b",
@@ -323,7 +320,7 @@
     }
   ],
   "source": "https://eu.api.nextbit256.com/v1/models",
-  "generated_at": "2026-11-24T04:28:09Z",
+  "generated_at": "2026-11-24T06:28:10Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8
 }

@@ -947,7 +947,7 @@
   ],
   "source": "https://api.inference.boundless.network/v1/models",
   "pricing_source": "https://inference.boundless.network/models",
-  "generated_at": "2026-11-24T04:28:09Z",
+  "generated_at": "2026-11-24T06:28:10Z",
   "price_scale": "microdollars_per_million",
   "model_count": 31
 }
