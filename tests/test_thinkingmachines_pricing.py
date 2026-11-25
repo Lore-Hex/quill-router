@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS, parse
 from scripts.pricing.providers import thinkingmachines
 from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
+from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
 SERVERLESS = [
@@ -17,6 +19,18 @@ SERVERLESS = [
     {"tinker_id": "thinkingmachines/Inkling:peft:262144:sampling-nvfp4",
      "input": "$1.00", "cached_input": "$0.17", "output": "$4.05"},
 ]
+# These feed-parsing tests price first-gen Inkling, which Tinker retires on
+# 2026-12-14 (see test_thinkingmachines_december_2026_lifecycle.py for the
+# refresh past that cutoff), so they read the feeds just before it.
+_BEFORE_INKLING_RETIREMENT = (
+    provider_lifecycle.THINKINGMACHINES_DECEMBER_14_RETIREMENT_AT - timedelta(days=1)
+)
+
+
+def _before_inkling_retirement(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _BEFORE_INKLING_RETIREMENT)
+
+
 SAMPLER = [
     {"tinker_id": "zai-org/GLM-5.3:peft:262144", "prefill": "$4.86",
      "cached_prefill": "$0.972", "sample": "$12.15", "train": "$14.58",
@@ -31,6 +45,7 @@ SAMPLER = [
 def test_fetch_uses_named_json_prices_not_html_column_positions(monkeypatch):
     feeds = {thinkingmachines.SERVERLESS_URL: SERVERLESS, thinkingmachines.SAMPLER_URL: SAMPLER}
     monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    _before_inkling_retirement(monkeypatch)
     result = thinkingmachines.fetch()
     assert result.source == "api"
     assert result.prices["z-ai/glm-5.3"] == ModelPrice(4_860_000, 12_150_000, prompt_cached_micro_per_m=972_000)
@@ -78,6 +93,7 @@ def test_fetch_prices_inkling_2_models_from_their_exact_sampler_tinker_ids(monke
     # route sends, at the same published rates. Inkling 2 Mini is priced from
     # its paid 256K row.
     monkeypatch.setattr(thinkingmachines, "fetch_json", _live_feeds().__getitem__)
+    _before_inkling_retirement(monkeypatch)
     result = thinkingmachines.fetch()
 
     assert result.prices == {
@@ -627,6 +643,11 @@ def test_tinker_inkling_2_routes_are_held_out_of_routing_and_probes() -> None:
     assert "thinkingmachines/inkling-2-mini" not in probed
     for sibling in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
         assert "routable" not in rows[sibling]
+        if provider_lifecycle.provider_model_retired("thinkingmachines", sibling):
+            # First-gen Inkling retires on 2026-12-14; it is neither probed nor routed.
+            assert sibling not in probed
+            assert not any(e.provider == "thinkingmachines" for e in endpoints_for_model(sibling))
+            continue
         assert sibling in probed
         assert any(e.provider == "thinkingmachines" for e in endpoints_for_model(sibling))
 

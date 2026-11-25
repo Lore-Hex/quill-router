@@ -8,6 +8,7 @@
   "models": [
     {
       "id": "thinkingmachines/inkling",
+      "retirement_at": "2026-12-14T00:00:00Z",
       "upstream_id": "thinkingmachines/Inkling:peft:262144:sampling-nvfp4",
       "display_name": "Thinking Machines Inkling 256K",
       "context_length": 262144,

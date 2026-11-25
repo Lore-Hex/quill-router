@@ -110,6 +110,9 @@ BOUNDLESS_NOV_26_RETIREMENT_AT = datetime(2026, 11, 26, 23, 59, tzinfo=UTC)
 # December 23, 2026. Daylight saving time ended on November 1, so that is
 # 17:00 PST (UTC-8), i.e. 2026-12-24 01:00 UTC.
 BASETEN_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 24, 1, 0, tzinfo=UTC)
+# Thinking Machines' Tinker newsletter of 25 November retires six models on
+# 14 December 2026 (date only, so 00:00 UTC conservatively).
+THINKINGMACHINES_DECEMBER_14_RETIREMENT_AT = datetime(2026, 12, 14, 0, 0, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -792,6 +795,20 @@ _RETIREMENTS = (
         model_ids=frozenset({"nvidia/nemotron-3-ultra-550b-a55b"}),
         upstream_ids=frozenset({"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"}),
         effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+    ),
+    # Thinking Machines' Tinker newsletter of 25 November retires Inkling (first
+    # generation), GPT-OSS-20b, Nemotron-3-Ultra-550B-A55B-BF16, Qwen3-8B,
+    # Qwen3.5-35B-A3B-Base and Qwen3.5-9B-Base "on Dec 14" with no time given,
+    # so 00:00 UTC. TrustedRouter routes only Inkling of those through Tinker
+    # (its serverless sampler id); the other five have no Tinker route. Inkling
+    # Small, Inkling 2 Small and GLM 5.3 are not named and stay. No replacement
+    # is quoted: Inkling 2 Small is different weights, not a like-for-like swap.
+    # Tinker is Inkling's last live host, so it leaves the catalog at the cutoff.
+    _Retirement(
+        provider="thinkingmachines",
+        model_ids=frozenset({"thinkingmachines/inkling"}),
+        upstream_ids=frozenset({"thinkingmachines/Inkling:peft:262144:sampling-nvfp4"}),
+        effective_at=THINKINGMACHINES_DECEMBER_14_RETIREMENT_AT,
     ),
     # Venice's September notice replaces deepseek-v4-flash with the separate
     # deepseek-v4-1-flash model on September 15. No time zone was specified;
