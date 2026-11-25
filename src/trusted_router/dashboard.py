@@ -61,6 +61,7 @@ from trusted_router.catalog import (
     endpoint_retention_metadata,
     endpoint_zero_data_retention,
     endpoints_for_model,
+    is_publicly_listed,
     meta_candidate_models,
     model_eu_focused_provider_available,
     model_open_weights,
@@ -4215,7 +4216,7 @@ def _popular_price_bars(*, test_mode: bool) -> list[dict[str, Any]]:
             _model_view(model, test_mode=test_mode)
             for model in MODELS.values()
             if model.id in _MODEL_DISCOVERY_PRIORITY_INDEX
-            and not model.internal_only and not model.supports_rerank
+            and is_publicly_listed(model)
             and not is_listing_alias(model.id, MODELS)
         ]
     )
@@ -4224,7 +4225,7 @@ def _popular_price_bars(*, test_mode: bool) -> list[dict[str, Any]]:
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
     all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()
-                  if not model.internal_only and not model.supports_rerank and not is_listing_alias(model.id, MODELS)]
+                  if is_publicly_listed(model) and not is_listing_alias(model.id, MODELS)]
     all_models.sort(key=_model_discovery_sort_key)
     models = all_models
     normalized_filter = model_filter.strip().lower()
@@ -4799,7 +4800,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     Returns None when the model id isn't in the catalog (route handler
     converts that to a styled 404)."""
     model = MODELS.get(model_id)
-    if model is None or model.internal_only or model.supports_rerank:
+    if model is None or not is_publicly_listed(model):
         return None
     test_mode = settings.environment == "test"
     seo_name = _seo_model_name(model)
@@ -5054,7 +5055,7 @@ def public_model_compare_index_html(settings: Settings, *, page: int = 1) -> str
 
 def public_model_section_html(settings: Settings, model_id: str, section: str) -> str | None:
     model = MODELS.get(model_id)
-    if model is None or model.internal_only or model.supports_rerank or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
+    if model is None or not is_publicly_listed(model) or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
         return None
     test_mode = settings.environment == "test"
     base_model_url = f"https://{settings.trusted_domain}/models/{model_id}"
@@ -6633,7 +6634,7 @@ def _benchmark_links(model: Model, *, test_mode: bool = False) -> list[dict[str,
 def _public_models_for_seo() -> list[Model]:
     return sorted(
         [model for model in MODELS.values() if model.id not in META_MODEL_IDS
-         and not model.internal_only and not model.supports_rerank and not is_listing_alias(model.id, MODELS)],
+         and is_publicly_listed(model) and not is_listing_alias(model.id, MODELS)],
         key=lambda model: model.id,
     )
 
@@ -6642,7 +6643,7 @@ def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     """Return the complete public catalog used by the agent-facing full document."""
     models = sorted(
         (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID
-         and not model.internal_only and not model.supports_rerank and not is_listing_alias(model.id, MODELS)),
+         and is_publicly_listed(model) and not is_listing_alias(model.id, MODELS)),
         key=lambda model: model.id,
     )
     return [_model_view(model, test_mode=test_mode) for model in models]

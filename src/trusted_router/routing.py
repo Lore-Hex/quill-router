@@ -41,6 +41,7 @@ from trusted_router.catalog import (
     endpoint_meets_privacy_requirement,
     endpoint_stores_content,
     endpoints_for_model,
+    is_publicly_listed,
     meta_candidate_models,
 )
 from trusted_router.catalog_capabilities import union_supported_parameters
@@ -410,7 +411,7 @@ def catalog_endpoint_candidates(
     `supports_chat`; the OpenRouter-compatible endpoint catalog should be able
     to describe any served model while still honoring provider filters.
     """
-    if model.internal_only or model.supports_rerank:
+    if not is_publicly_listed(model):
         return []
     candidates = [(model, endpoint) for endpoint in endpoints_for_model(model.id)]
     candidates = _filter_candidates_soft_data_collection(

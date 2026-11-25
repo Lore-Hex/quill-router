@@ -38,6 +38,7 @@ from trusted_router.catalog import (
     Model,
     Provider,
     endpoints_for_model,
+    is_publicly_listed,
     meta_candidate_models,
     model_open_weights,
     model_us_provider_available,
@@ -247,7 +248,7 @@ def _directory_models() -> list[Model]:
         for model in MODELS.values()
         if model.id not in META_MODEL_IDS
         and not model.hidden_public_metadata
-        and not model.supports_rerank
+        and is_publicly_listed(model, include_internal=True)
         and not is_listing_alias(model.id, MODELS)
         and endpoints_for_model(model.id)
     ]

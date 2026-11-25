@@ -30,6 +30,7 @@ from trusted_router.pricing import (
     _customer_price,
 )
 from trusted_router.provider_manifest_policy import provider_manifest_row_price_is_valid
+from trusted_router.provider_og import all_provider_og_facts
 from trusted_router.routes.mcp import TrustedRouterMCP
 from trusted_router.routing_snapshot import (
     CatalogInputs,
@@ -361,6 +362,7 @@ def test_rerank_catalog_public_and_routing_differential(
             outputs["internal_key"] = requests_internal_model({"model": RERANK_ID})
             assert not outputs["internal_key"]
             outputs["choose"] = choose_catalog_payload(test_mode=True)
+            outputs["provider_og"] = all_provider_og_facts()
             outputs["counts"] = seo_catalog_evidence("openrouter", test_mode=True)
             for route in (routing.chat_route_endpoint_candidates, routing.embeddings_route_endpoint_candidates):
                 for model_id in sorted(set(registry["MODELS"]) | rerank_ids | {"trustedrouter/auto"}):

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from trusted_router.catalog import META_MODEL_IDS, MODEL_ENDPOINTS, MODELS, PROVIDERS
+from trusted_router.catalog import (
+    META_MODEL_IDS,
+    MODEL_ENDPOINTS,
+    MODELS,
+    PROVIDERS,
+    is_publicly_listed,
+)
 from trusted_router.catalog_privacy import provider_confidential_inference
 
 
@@ -31,7 +37,7 @@ def provider_og_facts(provider_slug: str) -> ProviderOgFacts:
         and endpoint.provider == provider_slug
         and endpoint.model_id not in META_MODEL_IDS
         and endpoint.model_id in MODELS
-        and not MODELS[endpoint.model_id].internal_only
+        and is_publicly_listed(MODELS[endpoint.model_id])
     )
     model_count = len({endpoint.model_id for endpoint in endpoints})
     has_byok = any(endpoint.is_byok for endpoint in endpoints)
