@@ -2953,6 +2953,47 @@ async def test_remediator_caller_treats_only_active_overlap_as_success(
 
 
 @pytest.mark.asyncio
+async def test_remediator_caller_accepts_a_deadline_overrun_answer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/malformed"):
+            return httpx.Response(202, json={"data": {"decisions": None}})
+        return httpx.Response(
+            202,
+            json={
+                "data": {
+                    "decisions": None,
+                    "deadline_exceeded": True,
+                    "worker": "continuing",
+                    "elapsed_seconds": 15.0,
+                    "consecutive_overruns": 1,
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        overrun = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/remediate",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+        malformed = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/malformed",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert overrun is True
+    assert malformed is False
+    assert "remediator deadline exceeded: worker=continuing" in output.out
+    assert "did not contain a decision count" in output.err
+
+
+@pytest.mark.asyncio
 async def test_primary_synthetic_job_invokes_scheduled_remediator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

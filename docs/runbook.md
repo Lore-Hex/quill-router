@@ -804,6 +804,17 @@ whitespace do not matter. Anything else (`disabled`, `false`, an empty value)
 refuses to start, so a misspelling is an error in front of you and the previous
 revision keeps serving, instead of a remediator that silently kept running.
 
+A pass that outlives `TR_SYNTHETIC_REMEDIATOR_DEADLINE_SECONDS` (15 s) answers
+202 with `"deadline_exceeded": true` and `"worker": "continuing"` (the worker
+thread finishes on its own and keeps the process's single-flight slot, so the
+next tick gets 429 "already in progress" and skips) or `"abandoned"` (it never
+started and was cancelled). One overrun logs
+`synthetic.remediator_deadline_exceeded` at WARNING; the third in a row in one
+process logs it at ERROR with `repeated=true`, which reaches Sentry. Each
+analytics read inside a pass is capped at
+`TR_SYNTHETIC_REMEDIATOR_READ_TIMEOUT_SECONDS` (5 s), so repeated overruns mean
+ClickHouse is unreachable or very slow; check the analytics cluster first.
+
 Until 2026-09-21 `off` covered only the in-process loop. Both AWS observers ran
 with it set and a scheduled pass still read about 309 MB from DSQL every two
 minutes. If a service runs a build older than that fix, `off` is not enough:
