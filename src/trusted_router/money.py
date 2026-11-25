@@ -15,7 +15,7 @@ MAX_KEY_LIMIT_DOLLARS = Decimal("9223372036854.775807")
 # Wallet-only accounts start at zero. Keep this integer-only so signup never
 # introduces float rounding into the credit ledger. Settings'
 # signup_trial_credit_microdollars defaults to this; no deploy overrides it.
-DEFAULT_SIGNUP_CREDIT_MICRODOLLARS = 30 * MICRODOLLARS_PER_CENT
+DEFAULT_SIGNUP_CREDIT_MICRODOLLARS = 3 * MICRODOLLARS_PER_CENT
 
 # Checkout credit ceiling; Stripe also caps the total INCLUDING processing fees.
 MAX_CHECKOUT_DOLLARS = 10_000

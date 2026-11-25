@@ -576,7 +576,7 @@ def test_signup_persists_attribution_and_emits_no_raw_click_id(
     assert len(record.first_touch["gclid_fingerprint"]) == 64
     assert record.last_touch["utm_campaign"] == "router_launch"
     assert record.signup_provider == "email"
-    assert record.starter_credit_microdollars == 300_000
+    assert record.starter_credit_microdollars == 30_000
     assert record.google_click_id_kind == "gclid"
     assert record.encrypted_google_click_id is not None
     assert set(record.milestones) == {"signup_completed", "api_key_created"}

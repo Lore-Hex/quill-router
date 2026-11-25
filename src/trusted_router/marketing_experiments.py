@@ -108,7 +108,7 @@ class GoogleSearchExperimentCell:
 
     @property
     def microcopy(self) -> str:
-        return "Keep your OpenAI SDK. Start with $0.30 in API credit."
+        return "Keep your OpenAI SDK. Eligible new accounts get free API credit."
 
     @property
     def terminal_label(self) -> str:

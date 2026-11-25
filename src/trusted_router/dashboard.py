@@ -151,6 +151,7 @@ from trusted_router.provider_locations import (
     provider_model_locations,
 )
 from trusted_router.provider_precision import endpoint_precision_metadata
+from trusted_router.public_price_tiers import public_token_price_tiers
 from trusted_router.routing_candidates import cheap_candidate_models
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
@@ -6427,6 +6428,33 @@ def _policy_label(value: bool | None) -> str:
     return "not claimed"
 
 
+def _long_prompt_price_lines(endpoint: ModelEndpoint, model: Model) -> list[str]:
+    tiers = public_token_price_tiers(endpoint, model)
+    lines = []
+    for previous, tier in zip(tiers, tiers[1:], strict=False):
+        maximum = tier.max_prompt_tokens
+        scope = f"Prompts over {previous.max_prompt_tokens or 0:,} tokens"
+        if maximum is not None:
+            scope += f" (up to {maximum:,})"
+        prompt = _price(tier.prompt_price_microdollars_per_million_tokens, include_zero=True)
+        completion = _price(tier.completion_price_microdollars_per_million_tokens, include_zero=True)
+        lines.append(
+            f"{scope}: {prompt.removesuffix('/1M')} in / "
+            f"{completion.removesuffix('/1M')} out per 1M"
+        )
+    return lines
+
+
+def _headline_prompt_scope(model: Model, endpoints: Sequence[ModelEndpoint]) -> str:
+    if model.id in META_MODEL_IDS or not endpoints:
+        return ""
+    headline = min(endpoints, key=lambda endpoint: endpoint.prompt_price_microdollars_per_million_tokens)
+    tiers = public_token_price_tiers(headline, model)
+    if tiers and tiers[0].max_prompt_tokens is not None:
+        return f"for prompts up to {tiers[0].max_prompt_tokens:,} tokens"
+    return ""
+
+
 def _model_detail_view(
     model: Model,
     *,
@@ -6481,6 +6509,7 @@ def _model_detail_view(
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
                 "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
                 "cached_prompt_microdollars_per_million_tokens": _cached_prompt_prices((endpoint,)),
+                "long_prompt_prices": _long_prompt_price_lines(endpoint, model),
                 "pricing_schedule": provider_pricing_schedule(
                     endpoint.provider,
                     endpoint.model_id,
@@ -6657,8 +6686,10 @@ def _model_section_description(model: Model, section: str) -> str:
     if section == "pricing":
         if model.supports_rerank:
             return f"Compare prepaid prices per million input tokens for {name} on the GCP API hosts."
+        scope = _headline_prompt_scope(model, _credits_endpoints(endpoints_for_model(model.id)))
         return (
-            f"Compare prompt and completion token prices for every {name} route on TrustedRouter, "
+            (f"Headline prices apply {scope}. " if scope else "")
+            + f"Compare prompt and completion token prices for every {name} route on TrustedRouter, "
             "including provider-specific cached-input rates."
         )
     if section == "uptime":
@@ -7042,6 +7073,8 @@ def _model_faq_items(
             f"TrustedRouter currently publishes no Credits provider route for {name}, "
             "so no public Credits price is available."
         )
+    if scope := _headline_prompt_scope(model, credits_endpoints):
+        price_answer += f" Headline prices apply {scope}."
     provider_note = ""
     offer_sentences = _launch_offer_faq_sentences(model, site_domain)
     if offer_sentences is not None:

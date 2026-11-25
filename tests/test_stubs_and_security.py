@@ -29,8 +29,8 @@ TEST_BYOK_KMS_KEY_NAME = (
 
 
 def test_signup_credit_defaults_stay_aligned() -> None:
-    assert DEFAULT_SIGNUP_CREDIT_MICRODOLLARS == 300_000
-    assert Settings(environment="test").signup_trial_credit_microdollars == 300_000
+    assert DEFAULT_SIGNUP_CREDIT_MICRODOLLARS == 30_000
+    assert Settings(environment="test").signup_trial_credit_microdollars == 30_000
 
 
 TEST_SES_SETTINGS = {
@@ -462,8 +462,8 @@ def test_signup_creates_management_key_and_rejects_duplicate_email(client: TestC
     assert data["email"] == "alpha@example.com"
     assert data["management"] is True
     assert data["user_id"] != "alpha@example.com"
-    assert data["trial_credit_microdollars"] == 300_000
-    assert live_credit_summary(data["workspace_id"])["total_credits"] == 300_000
+    assert data["trial_credit_microdollars"] == 30_000
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 30_000
 
     headers = {"authorization": f"Bearer {data['key']}"}
     workspaces = client.get("/v1/workspaces", headers=headers)
@@ -473,7 +473,7 @@ def test_signup_creates_management_key_and_rejects_duplicate_email(client: TestC
     duplicate = client.post("/v1/signup", json={"email": "alpha@example.com"})
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["type"] == "already_registered"
-    assert live_credit_summary(data["workspace_id"])["total_credits"] == 300_000
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 30_000
 
 
 def test_signup_validates_email(client: TestClient) -> None:
@@ -537,7 +537,7 @@ def test_secondary_workspace_does_not_repeat_signup_credit(
 
     assert created.status_code == 201, created.text
     second_id = created.json()["data"]["id"]
-    assert live_credit_summary(signup_data["workspace_id"])["total_credits"] == 300_000
+    assert live_credit_summary(signup_data["workspace_id"])["total_credits"] == 30_000
     assert live_credit_summary(second_id)["total_credits"] == 0
 
 

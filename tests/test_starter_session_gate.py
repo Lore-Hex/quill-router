@@ -23,7 +23,7 @@ SESSION = "ses_df6da8c96ffeDTQAdczFv5jnFd"
 def harness_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """tests/conftest.py credits every test workspace $10 of execution budget.
 
-    In production a never-funded workspace holds only the $0.30 starter grant;
+    A never-funded workspace in this fixture holds only its starter grant;
     widen the slack by the harness budget so a test workspace reads the same.
     """
     monkeypatch.setattr(

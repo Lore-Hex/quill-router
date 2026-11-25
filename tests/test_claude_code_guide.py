@@ -205,6 +205,8 @@ def test_copy_and_links(client: TestClient) -> None:
         "Set it up", "Which Claude models", "What a session costs", "Limits",
     ]
     limits = soup.select_one("#limits").get_text(" ", strip=True)
+    assert "web search, are not passed through on this path yet" in limits
+    assert "api.trustedrouter.com" in limits
     assert "budget_strict: true" in limits and "budget_alert_only: false" in limits
     assert "cache_control" in limits and "/v1/messages" in limits
     assert f'href="{PATH}"' in client.get("/docs").text

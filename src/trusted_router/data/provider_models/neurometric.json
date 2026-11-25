@@ -777,10 +777,10 @@
           "account_quota_exceeded"
         ]
       },
-      "input_token_price_per_m": 32000,
-      "output_token_price_per_m": 72000
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 90000
     }
   ],
-  "generated_at": "2026-11-25T18:09:57Z",
+  "generated_at": "2026-11-25T22:28:33Z",
   "model_count": 14
 }

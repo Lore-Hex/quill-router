@@ -42,6 +42,7 @@ export ANTHROPIC_AUTH_TOKEN="$TRUSTEDROUTER_API_KEY"</code></pre>
 <section class="content-section" id="limits">
 <h2>Limits</h2>
 <p>Claude models only: <code>POST /v1/messages</code> accepts the listed Messages-compatible Claude models. For other models in a coding agent, use <a href="/docs/opencode">OpenCode</a>.</p>
+<p>Claude Code's own tools, such as reading and editing files and running commands, work as usual. Tools that run on the provider's side, such as web search, are not passed through on this path yet. The setup above is served on the default API host, <code>api.trustedrouter.com</code>.</p>
 <p><a href="/docs/spend-controls">Cap what an agent can spend</a> with a dedicated key and daily, weekly or monthly USD limits. Set <code>budget_strict: true</code> and <code>budget_alert_only: false</code> when creating the key to include outstanding estimates in enforcement; actual charges can exceed estimates.</p>
 <p><a href="/docs/prompt-caching">Prompt caching</a> preserves Anthropic content blocks and <code>cache_control</code> on <code>/v1/messages</code>. Read <a href="/who-can-see-your-data">who can see your data</a> for the data-access boundaries.</p>
 </section>

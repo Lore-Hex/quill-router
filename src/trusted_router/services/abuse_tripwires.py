@@ -61,8 +61,7 @@ log = logging.getLogger(__name__)
 SHARED_SESSION_WINDOW = dt.timedelta(days=7)
 SHARED_SESSION_MIN_WORKSPACES = 2
 # A workspace that spent more than this in the window paid for it: the
-# signup credit is 0.30 USD, and starter-credit farms spend at most that per
-# account before moving on.
+# ordinary starter grant and the social campaign maximum are both below it.
 FUNDED_MIN_WORKSPACE_SPEND_MICRODOLLARS = 1_000_000  # 1 USD
 CONCENTRATION_WINDOW = dt.timedelta(days=7)
 CONCENTRATION_MIN_SHARE_BASIS_POINTS = 9_500  # 95 %
