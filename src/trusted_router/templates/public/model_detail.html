@@ -351,6 +351,7 @@ print(response.choices[0].message.content)
           {% if row.cheapest %}<span class="md-cheapest-tag">Cheapest</span>{% endif %}
         </span>
         {{ positive_badges(row) }}
+        {% if endpoint.long_prompt_prices %}<span class="md-tier-prices">{% for line in endpoint.long_prompt_prices %}<span>{{ line }}</span>{% endfor %}</span>{% endif %}
         {% if page.token_priced and not model.supports_rerank %}<span class="md-inout" aria-hidden="true">{{ row.input }} in · {{ row.output }} out</span>{% else %}<span class="md-inout" aria-hidden="true">{{ row.input }}</span>{% endif %}
       </th>
       <td class="md-num md-col-input">{{ row.input }}</td>
