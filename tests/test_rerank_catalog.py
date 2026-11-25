@@ -410,3 +410,37 @@ def test_rerank_writer_holds_a_row_when_its_token_price_disappears(
     monkeypatch.setitem(catalog_data.PROVIDERS, provider.SLUG,
                         replace(catalog_data.PROVIDERS[provider.SLUG], supports_rerank=True))
     assert set(catalog_ingest._rerank_models()) == {row["id"] for row in priced_rerank} - {missing_id}
+
+
+def test_rerank_prepaid_availability_follows_provider(tmp_path, monkeypatch):
+    _manifest(tmp_path, [ROW])
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    monkeypatch.setitem(catalog_data.PROVIDERS, "voyage", replace(
+        catalog_data.PROVIDERS["voyage"], supports_rerank=True, supports_prepaid=False))
+    model = catalog_ingest._rerank_models()[RERANK_ID]
+    assert not model.prepaid_available
+    assert catalog_ingest._build_endpoints({model.id: model}) == {}
+
+
+def test_rerank_registry_preserves_existing_models_and_attaches_expiry(monkeypatch):
+    baseline = runpy.run_path(catalog_registry.__file__)
+    existing = baseline["MODELS"]["voyage/voyage-3-large"]
+    added = replace(existing, id="voyage/fixture-registry-rerank", supports_chat=False,
+                    supports_embeddings=False, supports_rerank=True, byok_available=True)
+    monkeypatch.setitem(catalog_data.PROVIDERS, "voyage", replace(
+        catalog_data.PROVIDERS["voyage"], supports_rerank=True, supports_byok=True))
+    deadline = catalog_registry.CATALOG_RESOLVED_AT + timedelta(days=1)
+    monkeypatch.setattr(catalog_ingest, "provider_manifest_deadlines", lambda: {"voyage": deadline})
+    monkeypatch.setattr(catalog_ingest, "provider_manifest_model_deadlines", lambda: {})
+    monkeypatch.setattr(catalog_ingest, "_rerank_models", lambda: {
+        existing.id: replace(existing, supports_rerank=True, name="must not replace existing"),
+        added.id: added,
+    })
+    extended = runpy.run_path(catalog_registry.__file__)
+    assert extended["MODELS"][existing.id] == existing
+    assert extended["MODELS"][added.id] == added
+    endpoints = [endpoint for endpoint in extended["MODEL_ENDPOINTS"].values()
+                 if endpoint.model_id == added.id]
+    assert len(endpoints) == 1
+    assert endpoints[0].usage_type == "Credits"
+    assert endpoints[0].catalog_valid_until == deadline

@@ -353,3 +353,214 @@ def test_rerank_has_no_live_routing_and_rejects_reused_request_identity(monkeypa
     with pytest.raises(HTTPException) as caught:
         authorize(key, RERANK, "rerank", 101)
     assert caught.value.status_code == 409
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("spelling", [RERANK + "-2026-11-24", RERANK + ":floor"])
+def test_rerank_plan_checks_ids_only_revealed_by_normalization(monkeypatch, fallback, spelling):
+    from trusted_router.authorize_candidates import (
+        CandidateRequest,
+        plan_route,
+        require_rerank_route,
+    )
+
+    models(monkeypatch)
+    primary = EMBED if fallback else spelling
+    body = {"model": primary, "models": [spelling] if fallback else []}
+    # The gateway sees only the submitted spelling; normalization resolves it.
+    require_rerank_route("embeddings", (primary, *body["models"]))
+    normalized = routing.normalize_routing_inputs(body, Settings(environment="test"))
+    assert RERANK in normalized.model_ids and spelling not in normalized.model_ids
+    with pytest.raises(HTTPException) as caught:
+        plan_route(CandidateRequest(route_type="embeddings", route_model_id=primary,
+                                    routing_body=body, body_region=None),
+                   Settings(environment="test"), region="us-central1")
+    assert caught.value.status_code == 400
+    assert caught.value.detail["error"] == error(
+        f"Model does not support chat completions: {RERANK}")["error"]
+
+
+@pytest.mark.parametrize("spelling", [RERANK + "-2026-11-24", RERANK + ":floor"])
+def test_rerank_normalized_fallback_refused_by_gateway_plan(monkeypatch, spelling):
+    models(monkeypatch)
+    _, _, key = seed()
+    with pytest.raises(HTTPException) as caught:
+        authorize(key, EMBED, "embeddings", models=[spelling])
+    # Without the plan check, the embeddings resolver emits its own later error.
+    assert caught.value.status_code == 400
+    assert caught.value.detail == error(f"Model does not support chat completions: {RERANK}")
+
+
+def mixed_rerank_endpoints(monkeypatch):
+    own = replace(models(monkeypatch)[RERANK],
+                  prompt_price_microdollars_per_million_tokens=123_457,
+                  price_tiers=_flat_tier(123_457, 0))
+    monkeypatch.setitem(MODEL_ENDPOINTS, own.id, own)
+    for suffix, provider, usage, price in (
+        ("foreign", "cohere", "Credits", 9_000_000),
+        ("byok", "voyage", "BYOK", 1_000_000),
+    ):
+        endpoint = replace(own, id=f"{own.id}-{suffix}", provider=provider, usage_type=usage,
+                           prompt_price_microdollars_per_million_tokens=price,
+                           price_tiers=_flat_tier(price, 0))
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
+    return own
+
+
+def test_rerank_filters_foreign_and_byok_endpoints(monkeypatch):
+    own = mixed_rerank_endpoints(monkeypatch)
+    assert len(routing.endpoints_for_model(RERANK)) == 3
+    assert routing.rerank_route_endpoint_candidates(
+        {"model": RERANK}, Settings(environment="test"),
+    ) == [(MODELS[RERANK], own)]
+
+
+def test_rerank_mixed_endpoints_hold_and_settle_own_credits_price(monkeypatch):
+    own = mixed_rerank_endpoints(monkeypatch)
+    store, workspace, key = seed()
+    # An available customer key must not make the BYOK endpoint eligible.
+    monkeypatch.setattr(gateway, "_byok_present_providers", lambda *_a: frozenset({"voyage"}))
+    data = authorize(key, RERANK, "rerank", 1_000_000)
+    assert data["endpoint_id"] == own.id
+    assert MODELS[RERANK].prompt_price_microdollars_per_million_tokens == 52_750
+    assert data["estimated_cost_microdollars"] == 123_457
+    assert store.credit_money[workspace.id].reserved_microdollars == 123_457
+    assert [candidate["endpoint_id"] for candidate in data["route_candidates"]] == [own.id]
+    result = gateway._settle_gateway_authorization(GatewaySettleRequest(
+        authorization_id=data["authorization_id"], selected_endpoint=own.id,
+        actual_input_tokens=500_000, actual_output_tokens=0, route_type="rerank",
+    ), success=True, settings=Settings(environment="test"))["data"]
+    assert result["cost_microdollars"] == 61_729
+    assert store.credit_money[workspace.id].reserved_microdollars == 0
+    assert store.credit_money[workspace.id].total_usage_microdollars == 61_729
+    generation = store.get_generation(result["generation_id"])
+    assert generation is not None and generation.provider == "voyage"
+
+
+def test_rerank_live_state_cannot_change_authorize(monkeypatch):
+    from datetime import UTC, datetime
+
+    from trusted_router.authorize_candidates import (
+        CandidateRequest,
+        ResolvedCandidates,
+        finish_candidates,
+        plan_route,
+    )
+    from trusted_router.routing_state import RoutingState
+
+    own = models(monkeypatch)[RERANK]
+    alternate = replace(own, id=own.id + "-alternate",
+                        prompt_price_microdollars_per_million_tokens=100_000,
+                        price_tiers=_flat_tier(100_000, 0))
+    monkeypatch.setitem(MODEL_ENDPOINTS, alternate.id, alternate)
+    settings = Settings(environment="test")
+    body = {"model": RERANK, "provider": {"sort": "price"}}
+    plan = plan_route(CandidateRequest(route_type="rerank", route_model_id=RERANK,
+                                      routing_body=body, body_region=None),
+                      settings, region="us-central1")
+    assert plan.is_rerank and not plan.supports_live_routing
+    assert plan.normalized.route_type is None  # classification uses the request route type
+    candidates = routing.rerank_route_endpoint_candidates(body, settings)
+    assert [endpoint.id for _, endpoint in candidates] == [own.id, alternate.id]
+    state = RoutingState()
+    _, _, key = seed()
+    session = (key.hash, RERANK, "us-central1", "a" * 64)
+    state.remember(session, alternate.id)
+    ranked, affinity = state.rank_with_affinity(candidates, plan.preferences,
+                                               region="us-central1", session=session)
+    assert affinity == "warm_promoted"
+    assert [endpoint.id for _, endpoint in ranked] == [alternate.id, own.id]
+    resolved = ResolvedCandidates(candidates, plan.preferences)
+    arguments = dict(route_type="rerank", byok_providers=frozenset(),
+                     estimated_input_tokens=1_000_000, output_tokens=1, service_tier=None,
+                     additional_cost_reservation=0, video_resolution=None, at=datetime.now(UTC))
+    unavailable = finish_candidates(plan, resolved, **arguments)
+    available = finish_candidates(
+        plan, resolved, **arguments,
+        rerank=lambda c, p: state.rank_with_affinity(c, p, region="us-central1", session=session)[0],
+    )
+    assert available == unavailable
+    # Fresh stores make both full authorizations independent of replay.
+    outcomes = []
+    for live in (RoutingState(), state):
+        store, workspace, key = seed()
+        if live is state:
+            live.remember((key.hash, RERANK, "us-central1", "a" * 64), alternate.id)
+        monkeypatch.setattr(gateway, "ROUTING_STATE", live)
+        data = authorize(key, RERANK, "rerank", 1_000_000,
+                         provider={"sort": "price"}, region="us-central1",
+                         cache_affinity_key="a" * 64, cache_affinity_explicit=True)
+        outcomes.append((data["endpoint_id"], data["route_candidates"],
+                         data["estimated_cost_microdollars"],
+                         asdict(store.credit_money[workspace.id])))
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][0] == own.id
+    # Route-type membership alone excludes rerank even without the extra term.
+    assert "rerank" not in {"chat.completions", "responses", "messages"}
+
+
+@pytest.mark.parametrize("resolver", [routing.chat_route_candidates,
+    routing.chat_route_endpoint_candidates, routing.embeddings_route_endpoint_candidates])
+def test_rerank_cannot_enter_text_resolvers_even_with_overlapping_capabilities(monkeypatch, resolver):
+    models(monkeypatch)
+    monkeypatch.setitem(MODELS, RERANK, replace(MODELS[RERANK], supports_chat=True,
+                                              supports_embeddings=True))
+    with pytest.raises(HTTPException) as caught:
+        resolver({"model": RERANK}, Settings(environment="test"))
+    assert caught.value.status_code == 400
+
+
+def test_rerank_public_endpoint_candidates_remain_empty(monkeypatch):
+    models(monkeypatch)
+    assert not MODELS[RERANK].internal_only
+    assert routing.endpoints_for_model(RERANK)
+    assert routing.catalog_endpoint_candidates(MODELS[RERANK], routing.RoutePreferences()) == []
+
+
+@pytest.mark.parametrize("provider", [{"only": ["cohere"]}, {"usage": "BYOK"}])
+def test_rerank_provider_filters_cannot_reintroduce_excluded_endpoints(monkeypatch, provider):
+    mixed_rerank_endpoints(monkeypatch)
+    with pytest.raises(HTTPException) as caught:
+        routing.rerank_route_endpoint_candidates(
+            {"model": RERANK, "provider": provider}, Settings(environment="test"))
+    assert caught.value.status_code == 400
+    assert caught.value.detail["error"] == error(
+        "No route candidates match the requested provider filters")["error"]
+
+
+def test_rerank_missing_provider_is_refused(monkeypatch):
+    models(monkeypatch)
+    monkeypatch.setitem(MODELS, RERANK, replace(MODELS[RERANK], provider="absent-provider"))
+    with pytest.raises(HTTPException) as caught:
+        routing.rerank_route_endpoint_candidates({"model": RERANK}, Settings(environment="test"))
+    assert caught.value.detail["error"] == error(f"Model does not support rerank: {RERANK}")["error"]
+
+
+def test_rerank_sort_deduplication_and_deferred_selection(monkeypatch):
+    from datetime import UTC, datetime
+
+    from trusted_router.authorize_candidates import CandidateRequest, plan_route, resolve_candidates
+
+    endpoints = models(monkeypatch)
+    own = endpoints[RERANK]
+    cheaper = replace(own, id=own.id + "-cheaper",
+                      prompt_price_microdollars_per_million_tokens=10_000,
+                      price_tiers=_flat_tier(10_000, 0))
+    monkeypatch.setitem(MODEL_ENDPOINTS, cheaper.id, cheaper)
+    settings = Settings(environment="test")
+    body = {"model": RERANK, "models": [RERANK], "provider": {"sort": "price"}}
+    expected = [(MODELS[RERANK], cheaper), (MODELS[RERANK], own)]
+    assert routing.rerank_route_endpoint_candidates(body, settings) == expected
+    body["provider"]["allow_fallbacks"] = False
+    assert routing.rerank_route_endpoint_candidates(body, settings) == expected[:1]
+    assert routing.rerank_route_endpoint_candidates(
+        body, settings, defer_no_fallback_selection=True) == expected
+    request_ = CandidateRequest(route_type="rerank", route_model_id=RERANK,
+                                routing_body=body, body_region=None)
+    plan = plan_route(request_, settings, region="us-central1")
+    resolved = resolve_candidates(plan, request_, region="us-central1", at=datetime.now(UTC))
+    assert resolved.candidates == expected
+    # A user-model dispatch must not bypass strict rerank resolution.
+    resolved = resolve_candidates(plan, request_, region="us-central1", at=datetime.now(UTC),
+                                  user_model_candidate=(MODELS[CHAT], endpoints[CHAT]))
+    assert resolved.candidates == expected
