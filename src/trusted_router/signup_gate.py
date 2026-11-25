@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from functools import cache
+from pathlib import Path
 
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -19,6 +21,52 @@ def require_new_account_creation(settings: Settings) -> None:
             NEW_SIGNUPS_DISABLED_MESSAGE,
             ErrorType.FORBIDDEN,
         )
+
+
+DISPOSABLE_EMAIL_MESSAGE = (
+    "Accounts cannot be created with a disposable email address. "
+    "Sign in with a Google or GitHub account whose primary email is permanent."
+)
+
+_DISPOSABLE_EMAIL_DOMAINS_PATH = Path(__file__).parent / "data" / "disposable_email_domains.txt"
+
+# Domains seen in abuse that the vendored upstream list does not carry yet.
+# Upstream them when convenient; keeping them here survives a list refresh.
+LOCAL_DISPOSABLE_EMAIL_DOMAINS = frozenset({
+    # 2026-11 stolen-PayPal top-up ring.
+    "qtymail.com",
+})
+
+
+@cache
+def disposable_email_domains() -> frozenset[str]:
+    """The vendored upstream list plus the local additions, lowercased."""
+    lines = _DISPOSABLE_EMAIL_DOMAINS_PATH.read_text(encoding="utf-8").splitlines()
+    vendored = {
+        line.strip().lower() for line in lines if line.strip() and not line.startswith("#")
+    }
+    return frozenset(vendored | LOCAL_DISPOSABLE_EMAIL_DOMAINS)
+
+
+def is_disposable_email(email: str | None) -> bool:
+    """Whether the address is at a disposable domain or a subdomain of one."""
+    if not email or "@" not in email:
+        return False
+    domain = email.rsplit("@", 1)[-1].strip().lower().rstrip(".")
+    labels = domain.split(".")
+    blocked = disposable_email_domains()
+    # foo.example.com checks foo.example.com and example.com, never bare "com".
+    return any(".".join(labels[i:]) in blocked for i in range(len(labels) - 1))
+
+
+def require_non_disposable_email(email: str | None) -> None:
+    """Reject a code path that is about to create an account for this address.
+
+    Returning users are untouched: callers invoke this only on the branch that
+    creates a user, next to ``require_new_account_creation``.
+    """
+    if is_disposable_email(email):
+        raise api_error(403, DISPOSABLE_EMAIL_MESSAGE, ErrorType.FORBIDDEN)
 
 
 WALLET_SIGNUPS_DISABLED_MESSAGE = (
