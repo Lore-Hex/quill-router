@@ -9,15 +9,11 @@ from bs4 import BeautifulSoup, Tag
 
 # Exact serverless Tinker IDs, keyed to the catalog model they price. Each key
 # must equal the manifest row's upstream_id, so a price is only ever verified
-# for the ID the route sends. By 2026-11-19 Tinker's serverless table
-# (tinker-docs.thinkingmachines.ai/tinker/serverless.json) listed Inkling 2
-# Small as "thinkingmachines/Inkling-2-Small:peft:262144", without the
-# ":sampling-nvfp4" suffix it carried when the route was added; Inkling and
-# Inkling-Small keep the suffix.
+# for the ID the route sends. Inkling and Inkling-Small keep the
+# ":sampling-nvfp4" suffix. By 2026-11-25 serverless.json listed only these
+# two, and the docs say serverless inference "is available for Inkling and
+# Inkling-Small only"; Inkling 2 Small moved to the sampler table below.
 _SERVERLESS_IDS = {
-    "thinkingmachines/Inkling-2-Small:peft:262144": (
-        "thinkingmachines/inkling-2-small"
-    ),
     "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4": (
         "thinkingmachines/inkling-small"
     ),
@@ -25,7 +21,17 @@ _SERVERLESS_IDS = {
         "thinkingmachines/inkling"
     ),
 }
+# Exact sampler (models.json) Tinker IDs, priced at their paid sample rates.
+# Inkling 2 Small keeps the upstream_id its route already sends
+# ("thinkingmachines/Inkling-2-Small:peft:262144"): models.json lists that
+# exact ID at the rates serverless.json carried ($0.30 / $0.03 / $1.00).
+# Inkling 2 Mini is the paid 256K row. Its free row
+# ("thinkingmachines/Inkling-2-Mini:peft:65536:free") is deliberately absent:
+# it is rate-limited, 64K-only and needs a positive balance, so it is not a
+# route TR can sell or price.
 _SAMPLER_IDS = {
+    "thinkingmachines/Inkling-2-Mini:peft:262144": "thinkingmachines/inkling-2-mini",
+    "thinkingmachines/Inkling-2-Small:peft:262144": "thinkingmachines/inkling-2-small",
     "zai-org/GLM-5.3:peft:262144": "z-ai/glm-5.3",
 }
 _LEGACY_INKLING_256K_ID = "thinkingmachines/Inkling:peft:262144"

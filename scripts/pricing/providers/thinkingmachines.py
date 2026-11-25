@@ -21,6 +21,7 @@ SERVERLESS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/serverless.json
 SAMPLER_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
 EXPECTED_MODELS = [
     "thinkingmachines/inkling",
+    "thinkingmachines/inkling-2-mini",
     "thinkingmachines/inkling-2-small",
     "thinkingmachines/inkling-small",
     "z-ai/glm-5.3",
@@ -41,8 +42,16 @@ API_KEY_ENVS = ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY")
 # The 2026-11-08 rejections were for the earlier serverless ID
 # (":sampling-nvfp4" suffix); the canary probes the row's current upstream_id,
 # which follows the exact ID serverless.json lists.
+#
+# Inkling 2 Mini (added 2026-11-25) starts under the same hold. Tinker lists
+# its paid 256K sampler row, but TR's key has never been shown to serve it
+# (Inkling 2 Small's listing did not imply access), so it is not routed until
+# the access canary gets a 200 from its exact upstream ID.
 ACCESS_HOLD_REASON = "provider-access-unavailable"
-OPERATOR_HOLDS = {"thinkingmachines/inkling-2-small": ACCESS_HOLD_REASON}
+OPERATOR_HOLDS = {
+    "thinkingmachines/inkling-2-mini": ACCESS_HOLD_REASON,
+    "thinkingmachines/inkling-2-small": ACCESS_HOLD_REASON,
+}
 _ACCESS_CANARY_CHECKED: set[str] = set()
 _ACCESS_CANARY_HEALTHY: set[str] = set()
 MANIFEST_PATH = (

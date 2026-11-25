@@ -12,8 +12,6 @@ from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
 SERVERLESS = [
-    {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144",
-     "input": "$0.30", "cached_input": "$0.03", "output": "$1.00"},
     {"tinker_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
      "input": "$0.30", "cached_input": "$0.06", "output": "$1.20"},
     {"tinker_id": "thinkingmachines/Inkling:peft:262144:sampling-nvfp4",
@@ -23,6 +21,10 @@ SAMPLER = [
     {"tinker_id": "zai-org/GLM-5.3:peft:262144", "prefill": "$4.86",
      "cached_prefill": "$0.972", "sample": "$12.15", "train": "$14.58",
      "active_params": 40000000000, "original_sample": "$99.99"},
+    {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144", "prefill": "$0.30",
+     "cached_prefill": "$0.03", "sample": "$1.00", "train": "$3.00"},
+    {"tinker_id": "thinkingmachines/Inkling-2-Mini:peft:262144", "prefill": "$0.15",
+     "cached_prefill": "$0.015", "sample": "$0.50", "train": "$1.50"},
 ]
 
 
@@ -34,6 +36,7 @@ def test_fetch_uses_named_json_prices_not_html_column_positions(monkeypatch):
     assert result.prices["z-ai/glm-5.3"] == ModelPrice(4_860_000, 12_150_000, prompt_cached_micro_per_m=972_000)
     assert result.prices["thinkingmachines/inkling"] == ModelPrice(1_000_000, 4_050_000, prompt_cached_micro_per_m=170_000)
     assert result.prices["thinkingmachines/inkling-2-small"] == ModelPrice(300_000, 1_000_000, prompt_cached_micro_per_m=30_000)
+    assert result.prices["thinkingmachines/inkling-2-mini"] == ModelPrice(150_000, 500_000, prompt_cached_micro_per_m=15_000)
     assert set(result.prices) == set(thinkingmachines.EXPECTED_MODELS)
 
 
@@ -55,27 +58,30 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
 
 
 def _live_feeds() -> dict[str, object]:
-    # Captured 2026-11-19 from the official machine-readable feeds:
-    # serverless.json in full, models.json trimmed to Inkling 2 Small and the
-    # GLM-5.3 sampler row TR prices.
+    # Captured 2026-11-25 from the official machine-readable feeds:
+    # serverless.json in full (Inkling and Inkling-Small only), models.json
+    # trimmed to the Inkling 2 Mini and Inkling 2 Small rows and the GLM-5.3
+    # sampler row TR prices.
     return {
         thinkingmachines.SERVERLESS_URL: json.loads(
-            (FIXTURE_DIR / "thinkingmachines_serverless_2026-11-19.json").read_text(encoding="utf-8")
+            (FIXTURE_DIR / "thinkingmachines_serverless_2026-11-25.json").read_text(encoding="utf-8")
         ),
         thinkingmachines.SAMPLER_URL: json.loads(
-            (FIXTURE_DIR / "thinkingmachines_models_2026-11-19.json").read_text(encoding="utf-8")
+            (FIXTURE_DIR / "thinkingmachines_models_2026-11-25.json").read_text(encoding="utf-8")
         ),
     }
 
 
-def test_fetch_prices_inkling_2_small_from_its_current_serverless_tinker_id(monkeypatch):
-    # Tinker's serverless table now lists Inkling 2 Small as
-    # "thinkingmachines/Inkling-2-Small:peft:262144" (no ":sampling-nvfp4").
-    # The exact-ID gate prices it from that row, at the same published rates.
+def test_fetch_prices_inkling_2_models_from_their_exact_sampler_tinker_ids(monkeypatch):
+    # By 2026-11-25 serverless.json listed only Inkling and Inkling-Small, so
+    # Inkling 2 Small is priced from models.json's row for the exact ID its
+    # route sends, at the same published rates. Inkling 2 Mini is priced from
+    # its paid 256K row.
     monkeypatch.setattr(thinkingmachines, "fetch_json", _live_feeds().__getitem__)
     result = thinkingmachines.fetch()
 
     assert result.prices == {
+        "thinkingmachines/inkling-2-mini": ModelPrice(150_000, 500_000, prompt_cached_micro_per_m=15_000),
         "thinkingmachines/inkling-2-small": ModelPrice(300_000, 1_000_000, prompt_cached_micro_per_m=30_000),
         "thinkingmachines/inkling-small": ModelPrice(300_000, 1_200_000, prompt_cached_micro_per_m=60_000),
         "thinkingmachines/inkling": ModelPrice(1_000_000, 4_050_000, prompt_cached_micro_per_m=170_000),
@@ -84,21 +90,49 @@ def test_fetch_prices_inkling_2_small_from_its_current_serverless_tinker_id(monk
     assert set(result.prices) == set(thinkingmachines.EXPECTED_MODELS)
 
 
-def test_retired_nvfp4_inkling_2_small_id_does_not_price_the_route(monkeypatch):
-    # The gate stays exact: a feed that only carries the earlier
-    # ":sampling-nvfp4" ID, or only the sampler (training table) listing,
-    # leaves the serverless route unpriced and fails the provider closed.
+INKLING_2_MINI_FREE_ID = "thinkingmachines/Inkling-2-Mini:peft:65536:free"
+
+
+def test_free_inkling_2_mini_tier_is_never_priced_or_routed(monkeypatch):
+    # Tinker's free row ($0.00, 64K, rate-limited, needs a positive balance)
+    # is not a route TR can sell: it maps to no catalog model, so it can
+    # neither price Inkling 2 Mini nor stand in for the missing paid row.
     feeds = _live_feeds()
-    feeds[thinkingmachines.SERVERLESS_URL] = [
-        {**row, "tinker_id": f"{row['tinker_id']}:sampling-nvfp4"}
-        if row["tinker_id"] == "thinkingmachines/Inkling-2-Small:peft:262144"
-        else row
-        for row in feeds[thinkingmachines.SERVERLESS_URL]
+    free = [row for row in feeds[thinkingmachines.SAMPLER_URL] if row["tinker_id"] == INKLING_2_MINI_FREE_ID]
+    assert free and free[0]["sample"] == "$0.00"
+    assert INKLING_2_MINI_FREE_ID not in {**_SERVERLESS_IDS, **_SAMPLER_IDS}
+    rows = json.loads(thinkingmachines.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    assert all(":free" not in row["upstream_id"] for row in rows)
+
+    feeds[thinkingmachines.SAMPLER_URL] = [
+        row for row in feeds[thinkingmachines.SAMPLER_URL]
+        if row["tinker_id"] != "thinkingmachines/Inkling-2-Mini:peft:262144"
     ]
     monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
-
-    with pytest.raises(RuntimeError, match=r"missing exact model prices: \['thinkingmachines/inkling-2-small'\]"):
+    with pytest.raises(RuntimeError, match=r"missing exact model prices: \['thinkingmachines/inkling-2-mini'\]"):
         thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("tinker_id", [
+    "thinkingmachines/Inkling-2-Small:peft:262144",
+    "thinkingmachines/Inkling-2-Mini:peft:262144",
+])
+def test_inkling_2_routes_price_only_from_their_exact_ids(monkeypatch, tinker_id):
+    # The gate stays exact: a feed that only carries a retired
+    # ":sampling-nvfp4" spelling of the ID, or only the 64K base row, leaves
+    # the route unpriced and fails the provider closed.
+    model_id = _SAMPLER_IDS[tinker_id]
+    for replacement in (f"{tinker_id}:sampling-nvfp4", tinker_id.removesuffix(":peft:262144")):
+        feeds = _live_feeds()
+        feeds[thinkingmachines.SAMPLER_URL] = [
+            {**row, "tinker_id": replacement} if row["tinker_id"] == tinker_id else row
+            for row in feeds[thinkingmachines.SAMPLER_URL]
+            if row["tinker_id"] != replacement
+        ]
+        monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+        with pytest.raises(RuntimeError, match=rf"missing exact model prices: \['{model_id}'\]"):
+            thinkingmachines.fetch()
 
 
 def _with_extra_fields(feeds: dict[str, object], url: str, tinker_id: str, extra: dict) -> dict[str, object]:
@@ -106,6 +140,7 @@ def _with_extra_fields(feeds: dict[str, object], url: str, tinker_id: str, extra
     return feeds
 
 
+INKLING_SMALL_SERVERLESS_ID = "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4"
 TIER = {"min_prompt_tokens": 128_000, "input": "$0.60", "cached_input": "$0.06", "output": "$2.00"}
 
 
@@ -121,7 +156,7 @@ TIER = {"min_prompt_tokens": 128_000, "input": "$0.60", "cached_input": "$0.06",
 ])
 def test_serverless_row_with_a_stated_unit_tier_or_condition_is_refused(monkeypatch, extra):
     feeds = _with_extra_fields(
-        _live_feeds(), thinkingmachines.SERVERLESS_URL, "thinkingmachines/Inkling-2-Small:peft:262144", extra
+        _live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_SMALL_SERVERLESS_ID, extra
     )
     monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
 
@@ -157,7 +192,6 @@ def test_documented_discount_fields_still_price_at_the_current_rate(monkeypatch)
     )
 
 
-INKLING_2_SMALL_SERVERLESS_ID = "thinkingmachines/Inkling-2-Small:peft:262144"
 GLM_SAMPLER_ID = "zai-org/GLM-5.3:peft:262144"
 
 
@@ -181,7 +215,7 @@ GLM_SAMPLER_ID = "zai-org/GLM-5.3:peft:262144"
     {"cached_input": ["$0.03"]},
 ])
 def test_serverless_row_with_a_malformed_documented_field_is_refused(monkeypatch, bad):
-    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_2_SMALL_SERVERLESS_ID, bad)
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_SMALL_SERVERLESS_ID, bad)
     monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
 
     with pytest.raises(RuntimeError, match=r"thinkingmachines: malformed pricing field\(s\) \['"):
@@ -190,10 +224,10 @@ def test_serverless_row_with_a_malformed_documented_field_is_refused(monkeypatch
 
 def test_documented_empty_url_is_still_accepted(monkeypatch):
     # "The url field is an empty string when no model-card link is provided."
-    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_2_SMALL_SERVERLESS_ID, {"url": ""})
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_SMALL_SERVERLESS_ID, {"url": ""})
     monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
-    assert thinkingmachines.fetch().prices["thinkingmachines/inkling-2-small"] == ModelPrice(
-        300_000, 1_000_000, prompt_cached_micro_per_m=30_000
+    assert thinkingmachines.fetch().prices["thinkingmachines/inkling-small"] == ModelPrice(
+        300_000, 1_200_000, prompt_cached_micro_per_m=60_000
     )
 
 
@@ -430,6 +464,11 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                         "output_token_price_per_m": 1,
                     },
                     {
+                        "id": "thinkingmachines/inkling-2-mini",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                    {
                         "id": "z-ai/glm-5.3",
                         "input_token_price_per_m": 1,
                         "output_token_price_per_m": 1,
@@ -458,6 +497,11 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                 completion_micro_per_m=1_000_000,
                 prompt_cached_micro_per_m=30_000,
             ),
+            "thinkingmachines/inkling-2-mini": ModelPrice(
+                prompt_micro_per_m=150_000,
+                completion_micro_per_m=500_000,
+                prompt_cached_micro_per_m=15_000,
+            ),
             "z-ai/glm-5.3": ModelPrice(
                 prompt_micro_per_m=4_860_000,
                 completion_micro_per_m=12_150_000,
@@ -485,6 +529,9 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
     assert rows["thinkingmachines/inkling-2-small"]["input_token_price_per_m"] == 300_000
     assert rows["thinkingmachines/inkling-2-small"]["output_token_price_per_m"] == 1_000_000
     assert rows["thinkingmachines/inkling-2-small"]["cached_input_token_price_per_m"] == 30_000
+    assert rows["thinkingmachines/inkling-2-mini"]["input_token_price_per_m"] == 150_000
+    assert rows["thinkingmachines/inkling-2-mini"]["output_token_price_per_m"] == 500_000
+    assert rows["thinkingmachines/inkling-2-mini"]["cached_input_token_price_per_m"] == 15_000
     assert rows["z-ai/glm-5.3"]["input_token_price_per_m"] == 4_860_000
     assert rows["z-ai/glm-5.3"]["output_token_price_per_m"] == 12_150_000
     assert rows["z-ai/glm-5.3"]["cached_input_token_price_per_m"] == 972_000
@@ -552,9 +599,11 @@ def test_inkling_2_small_would_publish_with_an_open_weights_badge(
     } == {("thinkingmachines/Inkling-2-Small:peft:262144", 262_144)}
 
 
-def test_tinker_inkling_2_small_route_is_held_out_of_routing_and_probes() -> None:
-    # QUILL-ROUTER-FD: Tinker rejects TR's key for this model, so customer
-    # requests failed. Tinker's route is held; its siblings keep serving.
+def test_tinker_inkling_2_routes_are_held_out_of_routing_and_probes() -> None:
+    # QUILL-ROUTER-FD: Tinker rejects TR's key for Inkling 2 Small, so
+    # customer requests failed. Inkling 2 Mini starts under the same hold
+    # because TR's key has never been shown to serve it. Both stay out of
+    # routing until the access canary passes; the siblings keep serving.
     from trusted_router.catalog import endpoints_for_model
     from trusted_router.synthetic.probes import rotation_candidates
 
@@ -568,10 +617,14 @@ def test_tinker_inkling_2_small_route_is_held_out_of_routing_and_probes() -> Non
         # The hold is on TR's Tinker access, not on the model: other
         # providers' routes for it are admitted on their own merits.
         assert not any(e.provider == "thinkingmachines" for e in endpoints_for_model(model_id))
-    assert thinkingmachines.OPERATOR_HOLDS.keys() == {"thinkingmachines/inkling-2-small"}
+    assert thinkingmachines.OPERATOR_HOLDS.keys() == {
+        "thinkingmachines/inkling-2-mini",
+        "thinkingmachines/inkling-2-small",
+    }
 
     probed = rotation_candidates().get("thinkingmachines", [])
     assert "thinkingmachines/inkling-2-small" not in probed
+    assert "thinkingmachines/inkling-2-mini" not in probed
     for sibling in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
         assert "routable" not in rows[sibling]
         assert sibling in probed
@@ -691,9 +744,114 @@ def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_join_
     assert not any(provider == "thinkingmachines" for provider, _, _ in routes)
 
 
+# Tinker's paid 256K sampler row for Inkling 2 Mini (models.json, 2026-11-25):
+# $0.15 prefill, $0.015 cached prefill, $0.50 sample per 1M tokens.
+INKLING_2_MINI_ROW = {
+    "id": "thinkingmachines/inkling-2-mini",
+    "upstream_id": "thinkingmachines/Inkling-2-Mini:peft:262144",
+    "display_name": "Thinking Machines Inkling 2 Mini 256K",
+    "context_length": 262144,
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "input_token_price_per_m": 150000,
+    "output_token_price_per_m": 500000,
+    "cached_input_token_price_per_m": 15000,
+}
+# DeepInfra lists Inkling 2 Mini at 1M context (api.deepinfra.com/models/list,
+# 2026-11-25: $0.075 in / $0.30 out per M, cached input at 0.2x).
+DEEPINFRA_INKLING_2_MINI_ROW = {
+    "id": "thinkingmachines/inkling-2-mini",
+    "upstream_id": "thinkingmachines/Inkling-2-Mini",
+    "display_name": "thinkingmachines/Inkling-2-Mini",
+    "context_length": 1048576,
+    "max_output_tokens": 1048576,
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "input_token_price_per_m": 75000,
+    "output_token_price_per_m": 300000,
+    "cached_input_token_price_per_m": 15000,
+}
+# io.net lists it at 256K (api.intelligence.io.solutions/api/v1/models,
+# 2026-11-25: $0.10 in / $0.40 out / $0.02 cached per M).
+IO_NET_INKLING_2_MINI_ROW = {
+    "id": "thinkingmachines/inkling-2-mini",
+    "upstream_id": "thinkingmachines/inkling-2-mini",
+    "display_name": "Thinking Machines: Inkling 2 Mini",
+    "title": "thinkingmachines/inkling-2-mini",
+    "model_type": "chat",
+    "context_length": 262144,
+    "max_output_tokens": 65536,
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "routable": True,
+    "input_token_price_per_m": 100000,
+    "output_token_price_per_m": 400000,
+    "cached_input_token_price_per_m": 20000,
+}
+
+
+def test_inkling_2_mini_would_publish_from_tinker_with_an_open_weights_badge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    # Once the access hold lifts, Tinker's paid route publishes as text+image
+    # at its 256K window and its paid sample price. The weights are public on
+    # Hugging Face (thinkingmachines/Inkling-2-Mini: public, ungated,
+    # Apache-2.0), so the model carries the open-weights badge.
+    from trusted_router.catalog import endpoints_for_model, model_open_weights
+
+    serve_manifest_rows(monkeypatch, tmp_path, "thinkingmachines", [INKLING_2_MINI_ROW])
+    model = MODELS["thinkingmachines/inkling-2-mini"]
+    assert model.context_length >= 262_144
+    assert model.input_modalities == ("text", "image")
+    assert model_open_weights(model)
+    tinker = [e for e in endpoints_for_model(model.id) if e.provider == "thinkingmachines"]
+    assert {(e.upstream_id, e.effective_context_length(model)) for e in tinker} == {
+        ("thinkingmachines/Inkling-2-Mini:peft:262144", 262_144)
+    }
+    prepaid = MODEL_ENDPOINTS["thinkingmachines/inkling-2-mini@thinkingmachines/prepaid"]
+    assert prepaid.usage_type == "Credits"
+    assert prepaid.prompt_price_microdollars_per_million_tokens > 0
+    assert ":free" not in prepaid.upstream_id
+
+
+def test_third_party_inkling_2_mini_routes_serve_while_tinker_is_held_and_join_no_combo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    # DeepInfra and io.net list Inkling 2 Mini publicly with prices; their
+    # routes publish on their own merits while Tinker's stays held. Nothing
+    # puts it in a combo: no TrustedRouter meta model has it as a candidate.
+    from trusted_router.catalog import META_MODEL_IDS, endpoints_for_model, meta_candidate_models
+
+    model_id = "thinkingmachines/inkling-2-mini"
+    for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == model_id and endpoint.provider != "thinkingmachines":
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    serve_manifest_rows(monkeypatch, tmp_path, "deepinfra", [DEEPINFRA_INKLING_2_MINI_ROW])
+    serve_manifest_rows(monkeypatch, tmp_path, "io-net", [IO_NET_INKLING_2_MINI_ROW])
+    model = MODELS[model_id]
+
+    routes = {
+        (endpoint.provider, endpoint.upstream_id, endpoint.effective_context_length(model))
+        for endpoint in endpoints_for_model(model_id)
+    }
+    assert ("deepinfra", "thinkingmachines/Inkling-2-Mini", 1_048_576) in routes
+    assert ("io-net", "thinkingmachines/inkling-2-mini", 262_144) in routes
+    assert not any(provider == "thinkingmachines" for provider, _, _ in routes)
+    assert META_MODEL_IDS
+    for meta_id in META_MODEL_IDS:
+        assert model_id not in {candidate.id for candidate in meta_candidate_models(meta_id)}
+
+
 def _held_manifest(tmp_path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202
     manifest = tmp_path / "thinkingmachines.json"
     held = {**INKLING_2_SMALL_ROW, "routable": False, "routable_reason": "provider-access-unavailable"}
+    held_mini = {**INKLING_2_MINI_ROW, "routable": False, "routable_reason": "provider-access-unavailable"}
     sibling = {
         "id": "thinkingmachines/inkling-small",
         "upstream_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
@@ -704,7 +862,7 @@ def _held_manifest(tmp_path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202
         {"id": model_id, "upstream_id": model_id, "input_token_price_per_m": 1, "output_token_price_per_m": 1}
         for model_id in ("thinkingmachines/inkling", "z-ai/glm-5.3")
     ]
-    manifest.write_text(json.dumps({"models": [held, sibling, *others]}), encoding="utf-8")
+    manifest.write_text(json.dumps({"models": [held_mini, held, sibling, *others]}), encoding="utf-8")
     monkeypatch.setattr(thinkingmachines, "MANIFEST_PATH", manifest)
     feeds = {thinkingmachines.SERVERLESS_URL: SERVERLESS, thinkingmachines.SAMPLER_URL: SAMPLER}
     monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
@@ -731,6 +889,9 @@ def test_access_hold_survives_refreshes_without_a_tinker_key(
     held = rows["thinkingmachines/inkling-2-small"]
     assert (held["routable"], held["routable_reason"]) == (False, "provider-access-unavailable")
     assert held["output_token_price_per_m"] == 1_000_000
+    held_mini = rows["thinkingmachines/inkling-2-mini"]
+    assert (held_mini["routable"], held_mini["routable_reason"]) == (False, "provider-access-unavailable")
+    assert held_mini["output_token_price_per_m"] == 500_000
     assert "routable" not in rows["thinkingmachines/inkling-small"]
 
 
@@ -746,13 +907,15 @@ def test_access_canary_rechecks_only_held_routes_and_lifts_on_success(
     rows = _refresh_rows(manifest)
 
     assert [(c["base_url"], c["model"]) for c in calls] == [
-        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Small:peft:262144")
+        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Mini:peft:262144"),
+        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Small:peft:262144"),
     ]
-    held = rows["thinkingmachines/inkling-2-small"]
-    if healthy:
-        assert "routable" not in held and "routable_reason" not in held
-    else:
-        assert (held["routable"], held["routable_reason"]) == (False, "provider-access-unavailable")
+    for model_id in ("thinkingmachines/inkling-2-mini", "thinkingmachines/inkling-2-small"):
+        held = rows[model_id]
+        if healthy:
+            assert "routable" not in held and "routable_reason" not in held
+        else:
+            assert (held["routable"], held["routable_reason"]) == (False, "provider-access-unavailable")
     assert "routable" not in rows["thinkingmachines/inkling-small"]
 
     # Once lifted, later refreshes neither probe nor re-hold the route.
@@ -760,3 +923,4 @@ def test_access_canary_rechecks_only_held_routes_and_lifts_on_success(
     rows = _refresh_rows(manifest)
     assert bool(calls) is not healthy
     assert ("routable" not in rows["thinkingmachines/inkling-2-small"]) is healthy
+    assert ("routable" not in rows["thinkingmachines/inkling-2-mini"]) is healthy
