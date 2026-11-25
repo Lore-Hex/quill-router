@@ -62,21 +62,35 @@ def _model_name(model: Model) -> str:
     return model.name.split(": ", 1)[-1]
 
 
+def _price_date_label(stamp: str) -> str:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(UTC).strftime("%B %-d, %Y, %H:%M UTC")
+
+
 def _price_dates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group the rows' manifest times by the minute the page shows.
+
+    One refresh writes the provider manifests a second or so apart, so their
+    stamps differ while their labels agree. Grouping by the stamp then listed
+    a provider beside the same displayed time; grouping by the label lists a
+    provider only when its prices were collected at a different shown time.
+    A group's machine-readable time is its earliest stamp.
+    """
     if not rows:
         return []
-    groups: dict[str, list[str]] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for row in rows:
-        providers = groups.setdefault(row["as_of"], [])
-        if row["provider_name"] not in providers:
-            providers.append(row["provider_name"])
-    common = max(groups, key=lambda stamp: sum(row["as_of"] == stamp for row in rows))
+        label = _price_date_label(row["as_of"])
+        group = groups.setdefault(label, {"timestamp": row["as_of"], "providers": [], "rows": 0})
+        group["timestamp"] = min(group["timestamp"], row["as_of"])
+        group["rows"] += 1
+        if row["provider_name"] not in group["providers"]:
+            group["providers"].append(row["provider_name"])
+    common = max(groups, key=lambda label: groups[label]["rows"])
     return [{
-        "timestamp": stamp,
-        "label": datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(UTC)
-        .strftime("%B %-d, %Y, %H:%M UTC"),
-        "providers": providers,
-    } for stamp, providers in sorted(groups.items(), key=lambda item: item[0] != common)]
+        "timestamp": group["timestamp"],
+        "label": label,
+        "providers": group["providers"],
+    } for label, group in sorted(groups.items(), key=lambda item: item[0] != common)]
 
 
 def _rate(value: Decimal) -> str:

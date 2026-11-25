@@ -634,11 +634,59 @@ def test_price_dates_show_only_different_providers(
         block = soup.select_one(selector)
         assert [node["datetime"] for node in block.select("time")] == [common_stamp, different_stamp]
         assert "Prices collected November 24, 2026, 17:28 UTC" in block.get_text()
-        assert f"; {PROVIDERS[provider].name}: November 23, 2026, 16:15 UTC" in block.get_text()
+        assert f"; {PROVIDERS[provider].name} prices collected November 23, 2026, 16:15 UTC" in block.get_text()
         assert len(block.select("a")) == 1
     caption = soup.select_one("[data-price-dates]").get_text()
     assert "OpenAI" not in caption
     assert "Anthropic" not in caption
+
+
+def test_price_dates_group_by_the_minute_shown() -> None:
+    """One refresh writes provider manifests a second or so apart (2026-11-25:
+    11:28:23 and 11:28:24). Their labels agree, so the caption names no
+    provider; only a different shown minute earns its own clause."""
+    from trusted_router.agent_cost_guides import _price_dates
+
+    rows = [
+        {"as_of": "2026-11-25T11:28:24Z", "provider_name": "OpenAI"},
+        {"as_of": "2026-11-25T11:28:23Z", "provider_name": "DeepInfra"},
+        {"as_of": "2026-11-25T11:28:23Z", "provider_name": "Anthropic"},
+    ]
+    assert _price_dates(rows) == [{
+        "timestamp": "2026-11-25T11:28:23Z",
+        "label": "November 25, 2026, 11:28 UTC",
+        "providers": ["OpenAI", "DeepInfra", "Anthropic"],
+    }]
+    rows[0]["as_of"] = "2026-11-25T11:29:01Z"
+    dates = _price_dates(rows)
+    assert [date["label"] for date in dates] == ["November 25, 2026, 11:28 UTC", "November 25, 2026, 11:29 UTC"]
+    assert dates[1]["providers"] == ["OpenAI"]
+
+
+@pytest.mark.parametrize("seconds_later", [1, 90])
+def test_a_late_openai_manifest_never_reads_as_a_model_name(
+    monkeypatch: pytest.MonkeyPatch, test_settings: Settings, fixed_catalog: None, seconds_later: int,
+) -> None:
+    """The caption's clause for a provider collected at another time must not
+    read "OpenAI: ", which the guide's prose check reserves for model names.
+    One second later shares the shown minute and adds no clause; 90 seconds
+    later adds "OpenAI prices collected ..."."""
+    from trusted_router import agent_cost_guides
+
+    original_manifest = agent_cost_guides._manifest
+    base = datetime(2026, 11, 25, 11, 28, 23, tzinfo=UTC)
+    late = (base + timedelta(seconds=seconds_later)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def dated_manifest(provider: str) -> dict[str, Any]:
+        manifest = original_manifest(provider)
+        manifest["generated_at"] = late if provider == "openai" else base.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return manifest
+
+    monkeypatch.setattr(agent_cost_guides, "_manifest", dated_manifest)
+    soup = BeautifulSoup(public_page_html(test_settings, PAGES[1].lstrip("/")), "html.parser")
+    caption = soup.select_one("[data-price-dates]").get_text()
+    assert not re.search(r"\b(?:Anthropic|OpenAI|DeepSeek): ", caption)
+    assert ("OpenAI prices collected" in caption) == (seconds_later >= 60)
 
 
 @pytest.mark.parametrize("path", [PAGES[0], PAGES[2]])
