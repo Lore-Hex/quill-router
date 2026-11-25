@@ -248,6 +248,25 @@ def write_discovered_chat_manifest(
             row.pop("unresolved_since", None)
 
         price = result.prices.get(model_id)
+        previous_tiers = existing.get("price_tiers") if existing is not None else None
+        if (isinstance(previous_tiers, list) and len(previous_tiers) >= 2
+                and price is not None and len(price.tiers) == 1):
+            # Retain every price field, including absence of a cached headline.
+            # Discovery/canary state and final operator holds still apply.
+            for field in ("input_token_price_per_m", "output_token_price_per_m",
+                          "cached_input_token_price_per_m", "price_tiers"):
+                if field in existing:
+                    row[field] = existing[field]
+                else:
+                    row.pop(field, None)
+            note = (
+                f"kept tiered prices for {model_id}: new parse returned a single price; "
+                "if the tiers are really gone, remove price_tiers from the manifest by hand"
+            )
+            result.notes.append(note)
+            result.price_holds[model_id] = note
+            present_rows[model_id] = row
+            continue
         if price is not None:
             if row.get("routable_reason") == "price-unavailable":
                 row.pop("routable", None)

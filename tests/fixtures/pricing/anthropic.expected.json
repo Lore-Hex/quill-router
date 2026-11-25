@@ -1,0 +1,81 @@
+{
+  "anthropic/claude-fable-5.1": {
+    "prompt_micro_per_m": 10000000,
+    "completion_micro_per_m": 50000000,
+    "prompt_cached_micro_per_m": 250000
+  },
+  "anthropic/claude-opus-5": {
+    "prompt_micro_per_m": 5000000,
+    "completion_micro_per_m": 25000000,
+    "prompt_cached_micro_per_m": 500000
+  },
+  "anthropic/claude-sonnet-5": {
+    "prompt_micro_per_m": 2000000,
+    "completion_micro_per_m": 10000000,
+    "prompt_cached_micro_per_m": 200000
+  },
+  "anthropic/claude-haiku-4.5": {
+    "prompt_micro_per_m": 1000000,
+    "completion_micro_per_m": 5000000,
+    "prompt_cached_micro_per_m": 100000
+  },
+  "anthropic/claude-fable-5": {
+    "prompt_micro_per_m": 10000000,
+    "completion_micro_per_m": 50000000,
+    "prompt_cached_micro_per_m": 1000000
+  },
+  "anthropic/claude-opus-4.8": {
+    "prompt_micro_per_m": 5000000,
+    "completion_micro_per_m": 25000000,
+    "prompt_cached_micro_per_m": 500000
+  },
+  "anthropic/claude-sonnet-4.6": {
+    "prompt_micro_per_m": 3000000,
+    "completion_micro_per_m": 15000000,
+    "prompt_cached_micro_per_m": 300000
+  },
+  "anthropic/claude-opus-4.7": {
+    "prompt_micro_per_m": 5000000,
+    "completion_micro_per_m": 25000000,
+    "prompt_cached_micro_per_m": 500000
+  },
+  "anthropic/claude-opus-4.6": {
+    "prompt_micro_per_m": 5000000,
+    "completion_micro_per_m": 25000000,
+    "prompt_cached_micro_per_m": 500000
+  },
+  "anthropic/claude-sonnet-4.5": {
+    "prompt_micro_per_m": 3000000,
+    "completion_micro_per_m": 15000000,
+    "prompt_cached_micro_per_m": 300000
+  },
+  "anthropic/claude-opus-4.5": {
+    "prompt_micro_per_m": 5000000,
+    "completion_micro_per_m": 25000000,
+    "prompt_cached_micro_per_m": 500000
+  },
+  "anthropic/claude-opus-4.1": {
+    "prompt_micro_per_m": 15000000,
+    "completion_micro_per_m": 75000000,
+    "prompt_cached_micro_per_m": 1500000
+  },
+  "anthropic/claude-opus-5-fast": {
+    "prompt_micro_per_m": 10000000,
+    "completion_micro_per_m": 50000000,
+    "prompt_cached_micro_per_m": 1000000
+  },
+  "anthropic/claude-haiku-5.5": {
+    "tiers": [
+      {
+        "max_prompt_tokens": 100000,
+        "prompt_micro_per_m": 1000000,
+        "completion_micro_per_m": 5000000
+      },
+      {
+        "max_prompt_tokens": null,
+        "prompt_micro_per_m": 2000000,
+        "completion_micro_per_m": 10000000
+      }
+    ]
+  }
+}
