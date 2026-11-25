@@ -86,6 +86,7 @@ class ErrorType(StrEnum):
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
     KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"
     INSUFFICIENT_CREDITS = "insufficient_credits"
+    STARTER_CREDIT_SESSION_REUSED = "starter_credit_session_reused"
     # A FEDERATED workspace with no spendable balance on THIS plane. Distinct
     # from insufficient_credits because the customer is very likely not out of
     # money — their credits are on the home plane and have not been

@@ -129,7 +129,10 @@ from trusted_router.storage_gcp_channel_failover import (
 )
 from trusted_router.storage_gcp_codec import (
     SIGNUP_CREDIT_DOMAIN_KIND,
+    STARTER_SESSION_KIND,
     email_domain,
+    starter_session_holder,
+    starter_session_needs_write,
 )
 from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
@@ -7372,6 +7375,32 @@ class SpannerStore(OperationalAnalyticsReads):
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
+
+    def claim_starter_session(
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
+    ) -> str | None:
+        # A plain read answers the common cases (this workspace already holds the
+        # session, or another one does) without a read-write transaction.
+        claim = self._read_entity(STARTER_SESSION_KIND, session_key, dict)
+        holder = starter_session_holder(claim, workspace_id, now=now, window_seconds=window_seconds)
+        if (
+            not record
+            or holder is not None
+            or not starter_session_needs_write(claim, workspace_id, now=now, window_seconds=window_seconds)
+        ):
+            return holder
+
+        def txn(transaction: Any) -> str | None:
+            current = self._read_entity_tx(transaction, STARTER_SESSION_KIND, session_key, dict)
+            found = starter_session_holder(current, workspace_id, now=now, window_seconds=window_seconds)
+            if found is None and starter_session_needs_write(current, workspace_id, now=now, window_seconds=window_seconds):
+                self._write_entity_tx(
+                    transaction, STARTER_SESSION_KIND, session_key,
+                    {"workspace_id": workspace_id, "at": now},
+                )
+            return found
+
+        return self._run_in_transaction(txn)
 
     def claim_retirement_notices(
         self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
