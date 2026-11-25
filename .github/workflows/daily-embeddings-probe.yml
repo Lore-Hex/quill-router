@@ -57,6 +57,7 @@ jobs:
       - name: Probe rerank on GCP
         # Runs even when an embeddings provider fails, so each result stands alone.
         if: ${{ !cancelled() }}
+        timeout-minutes: 3
         run: |
           set -euo pipefail
           TR_MONITOR_API_KEY="$(gcloud secrets versions access latest \

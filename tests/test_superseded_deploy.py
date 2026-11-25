@@ -365,6 +365,21 @@ def test_a_transient_server_error_is_retried_once_then_answers(
     assert "retrying gh api in 1 s (retry 1)" in capsys.readouterr().err
 
 
+def test_a_truncated_github_response_is_retried_then_answers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The 2026-11-25 deploy failure: a 504, then a retry whose body GitHub cut short.
+    calls, waits = _scripted_gh(
+        monkeypatch,
+        (1, "", "gh: We couldn't respond to your request in time. (HTTP 504)"),
+        (1, "", "unexpected end of JSON input"),
+        (0, '{"status": "ahead"}', ""),
+    )
+    assert superseded._gh_json(["api", "repos/o/r/compare/a...b"], 600.0) == {"status": "ahead"}
+    assert len(calls) == 3 and waits == [1.0, 2.0]
+    assert "retrying gh api in 2 s (retry 2)" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("stderr", [
     SERVER_ERROR,
     "HTTP 500: Internal Server Error (https://api.github.com/repos/o/r/actions/runs)",
@@ -372,6 +387,7 @@ def test_a_transient_server_error_is_retried_once_then_answers(
     "gh: Service Unavailable (HTTP 503)",
     "HTTP 504: Gateway Timeout (https://api.github.com/repos/o/r/compare/a...b)",
     "gh: HTTP 502",
+    "unexpected end of JSON input",
 ])
 def test_a_persistent_server_error_fails_closed_after_bounded_retries(
     monkeypatch: pytest.MonkeyPatch, stderr: str

@@ -249,6 +249,33 @@ def bound_values_in_the_body() -> Iterator[None]:
         _BOUND_VALUES_IN_BODY.reset(in_body)
 
 
+# Set while a caller with its own wall-clock budget runs reads (see below).
+_READ_TIMEOUT_CAP_SECONDS: ContextVar[float | None] = ContextVar(
+    "clickhouse_read_timeout_cap_seconds", default=None
+)
+
+
+@contextmanager
+def read_timeout_cap(seconds: float) -> Iterator[None]:
+    """Cap every read's timeout in this context at ``seconds``.
+
+    A read's default timeout (20 s) suits a page that makes one read. A
+    background pass that makes several reads behind a shorter deadline needs
+    each read to give up well inside that deadline, or one slow answer
+    outlives the whole pass. Context-local, so it never shortens another
+    caller's reads; worker threads must be started from a copied context.
+    Nested caps keep the tighter one.
+    """
+    if seconds <= 0:
+        raise ValueError("read timeout cap must be positive")
+    outer = _READ_TIMEOUT_CAP_SECONDS.get()
+    token = _READ_TIMEOUT_CAP_SECONDS.set(seconds if outer is None else min(outer, seconds))
+    try:
+        yield
+    finally:
+        _READ_TIMEOUT_CAP_SECONDS.reset(token)
+
+
 @contextmanager
 def _private_sentry_scope() -> Iterator[None]:
     try:
@@ -312,6 +339,9 @@ class OperationalAnalyticsClient:
         timeout_seconds: float = 20.0,
         retry_read_disconnect: bool = False,
     ) -> list[dict[str, Any]]:
+        cap = _READ_TIMEOUT_CAP_SECONDS.get()
+        if cap is not None:
+            timeout_seconds = min(timeout_seconds, cap)
         if self._clock() < self._unreachable_until:
             raise AnalyticsUnreachable(
                 "ClickHouse was unreachable moments ago; not trying again yet"
@@ -575,7 +605,10 @@ FORMAT JSON
 
         Abuse tripwire input: one conversation carried across accounts is an
         operator hopping workspaces. Only workspace ids, the session id, the
-        most common app name and first/last times leave ClickHouse.
+        most common app name, first/last times and the largest member
+        workspace's Credits spend in the window leave ClickHouse. The spend
+        tells a payment ring (funded accounts) from a starter-credit farm
+        (accounts that never spent past their signup credit).
         """
         return self._query(
             """
@@ -585,8 +618,18 @@ SELECT
   uniqExact(workspace_id) AS workspaces,
   topK(1)(app)[1] AS app,
   min(created_at) AS first_seen,
-  max(created_at) AS last_seen
+  max(created_at) AS last_seen,
+  max(spend.ws_spend) AS max_workspace_microdollars
 FROM activity_generations FINAL
+LEFT JOIN
+(
+  SELECT workspace_id, sum(total_cost_microdollars) AS ws_spend
+  FROM activity_generations FINAL
+  WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+    AND usage_type = 'Credits'
+    AND workspace_id != ''
+  GROUP BY workspace_id
+) AS spend USING (workspace_id)
 WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
   AND session_id IS NOT NULL AND session_id != ''
   AND workspace_id != ''

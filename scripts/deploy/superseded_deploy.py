@@ -159,7 +159,12 @@ GH_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (1.0, 2.0)
 # gh's stderr for a 500/502/503/504: `gh api` prints "Server Error (HTTP 502)",
 # other commands "HTTP 502: Bad Gateway (URL)". A 4xx never retries, rate
 # limits (403, 429) included, so nothing here hammers GitHub.
-_TRANSIENT_GH_ERROR = re.compile(r"\bHTTP 50[0234]\b|Server Error|Bad Gateway|Service Unavailable|Gateway Timeout")
+# gh exits non-zero with "unexpected end of JSON input" when GitHub cuts a
+# response body short (seen 2026-11-25 right after a 504): a server fault too.
+_TRANSIENT_GH_ERROR = re.compile(
+    r"\bHTTP 50[0234]\b|Server Error|Bad Gateway|Service Unavailable|Gateway Timeout"
+    r"|unexpected end of JSON input"
+)
 _CLIENT_GH_ERROR = re.compile(r"\bHTTP 4\d\d\b|rate limit", re.IGNORECASE)
 # The retry's wait (patched in tests).
 _sleep = time.sleep

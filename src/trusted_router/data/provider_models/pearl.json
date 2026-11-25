@@ -250,8 +250,7 @@
         "tools",
         "json_mode",
         "reasoning",
-        "structured_outputs",
-        "prompt_caching"
+        "structured_outputs"
       ],
       "supported_sampling_parameters": [
         "temperature",
@@ -263,10 +262,8 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
-      "input_token_price_per_m": 1100000,
-      "output_token_price_per_m": 3300000,
-      "cached_input_token_price_per_m": 43000
+      "routable": false,
+      "routable_reason": "price-unavailable"
     },
     {
       "display_name": "Z.AI: GLM-5.3-Flash",
@@ -293,8 +290,7 @@
         "tools",
         "json_mode",
         "reasoning",
-        "structured_outputs",
-        "prompt_caching"
+        "structured_outputs"
       ],
       "supported_sampling_parameters": [
         "temperature",
@@ -306,10 +302,8 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
-      "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 240000,
-      "cached_input_token_price_per_m": 15000
+      "routable": false,
+      "routable_reason": "price-unavailable"
     },
     {
       "display_name": "Z.AI: GLM-5.3",
@@ -376,8 +370,7 @@
         "chat",
         "completion",
         "tools",
-        "reasoning",
-        "prompt_caching"
+        "reasoning"
       ],
       "supported_sampling_parameters": [
         "temperature",
@@ -390,10 +383,8 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 2000000,
-      "cached_input_token_price_per_m": 20000
+      "routable": false,
+      "routable_reason": "price-unavailable"
     },
     {
       "display_name": "Qwen: Qwen3.8-Flash-Next",
@@ -526,6 +517,6 @@
       "cached_input_token_price_per_m": 3000
     }
   ],
-  "generated_at": "2026-11-25T09:00:02Z",
+  "generated_at": "2026-11-25T14:54:35Z",
   "model_count": 12
 }

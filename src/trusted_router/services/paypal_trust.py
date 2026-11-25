@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from trusted_router.services.provider_trust import invalid, observation, timestamp, usd_micro
-from trusted_router.storage_models import AdverseTrustEvent
+from trusted_router.storage_models import AdverseTrustEvent, AdverseTrustResult
 from trusted_router.url_validation import parse_url
 
 PAYPAL_ADVERSE_EVENTS = frozenset({
@@ -79,14 +79,20 @@ def paypal_adverse_events(event: Mapping[str, Any]) -> tuple[AdverseTrustEvent, 
                         subtype=subtype, status=status, amount=amount, created=created, updated=updated),)
 
 
-def apply_paypal_adverse(event: Mapping[str, Any]) -> list[str]:
+def record_paypal_adverse(
+    event: Mapping[str, Any],
+) -> list[tuple[AdverseTrustEvent, AdverseTrustResult]]:
     """Called only after the existing route verifies the PayPal signature."""
     from trusted_router.storage import STORE
 
-    outcomes = []
+    results = []
     for adverse in paypal_adverse_events(event):
         # record_adverse_trust_event raises the unrecovered-principal alert
         # itself once the transaction commits; alerting here again doubled it.
-        result = STORE.record_adverse_trust_event(adverse)
-        outcomes.append(result.outcome)
-    return outcomes
+        results.append((adverse, STORE.record_adverse_trust_event(adverse)))
+    return results
+
+
+def apply_paypal_adverse(event: Mapping[str, Any]) -> list[str]:
+    """Called only after the existing route verifies the PayPal signature."""
+    return [result.outcome for _, result in record_paypal_adverse(event)]

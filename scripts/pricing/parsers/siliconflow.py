@@ -1,4 +1,11 @@
-"""Parse SiliconFlow's official Framer pricing cards and legacy Markdown."""
+"""Parse SiliconFlow's official model library, pricing cards and legacy Markdown.
+
+https://www.siliconflow.com/models lists every serverless model as a Framer CMS
+card whose fields carry ``data-framer-name`` labels (``model_name``,
+``sub_type``, ``input_pricing``, ``output_pricing``, ``price_unit``). The
+/pricing page shows only a curated subset of those cards, so it cannot price
+most of the authenticated /v1/models catalog.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,7 @@ _DETAILS_RE = re.compile(
     r"\[Details\]\(https://(?:www\.)?siliconflow\.com/models/([\w.\-]+)\)"
 )
 _PRICE_RE = re.compile(r"\$\s*\n?\s*([\d.]+)")
+_NUMBER_RE = re.compile(r"^\d+(?:\.\d+)?$")
 
 
 def _normalize(native_slug: str) -> str:
@@ -26,8 +34,16 @@ def _normalize(native_slug: str) -> str:
         return f"moonshotai/{lower}"
     if lower.startswith("llama") or lower.startswith("meta"):
         return f"meta-llama/{lower}"
-    if lower.startswith("hy3") or lower.startswith("hunyuan"):
+    if re.match(r"hy\d", lower) or lower.startswith("hunyuan"):
         return f"tencent/{lower}"
+    if lower.startswith("ling-") or lower.startswith("ring-"):
+        return f"inclusionai/{lower}"
+    if lower.startswith("seed-"):
+        return f"bytedance-seed/{lower}"
+    if lower.startswith("longcat"):
+        return f"meituan-longcat/{lower}"
+    if lower.startswith("step-"):
+        return f"stepfun-ai/{lower}"
     if lower.startswith("minimax"):
         return f"minimax/{lower}"
     if lower.startswith("gpt-oss"):
@@ -42,6 +58,53 @@ def _skip_non_text(slug: str) -> bool:
         tag in slug.casefold()
         for tag in ("flux", "z-image", "wan2", "vidu", "sora", "kling")
     )
+
+
+def _micro(value: str) -> int | None:
+    # Framer renders a missing CMS number as "nan" or an empty string.
+    if not _NUMBER_RE.match(value):
+        return None
+    return int(round(float(value) * 1_000_000))
+
+
+def _parse_model_library(html: str) -> dict:
+    soup = BeautifulSoup(html, "html.parser")
+    output: dict = {}
+    for card in soup.find_all("a"):
+        names = card.select('[data-framer-name="model_name"]')
+        if len(names) != 1:
+            continue
+        sub_types = card.select('[data-framer-name="sub_type"]')
+        # Only token-billed chat models. Image, video, speech, embedding and
+        # rerank cards are billed per image, second, byte or input token.
+        if not sub_types or sub_types[0].get_text(strip=True).casefold() != "chat":
+            continue
+        label = ""
+        values: dict = {}
+        units: set = set()
+        for field in card.select("[data-framer-name]"):
+            kind = field["data-framer-name"]
+            text = field.get_text(" ", strip=True)
+            if kind == "currency" and text.endswith(":"):
+                label = text[:-1].casefold()
+            elif kind == "currency" and text != "$":
+                label = ""
+            elif kind == "price_unit":
+                units.add(text.casefold())
+            elif kind in ("input_pricing", "output_pricing") and label:
+                values.setdefault(label, text)
+        if units != {"/ m tokens"}:
+            continue
+        prompt = _micro(values.get("input", ""))
+        completion = _micro(values.get("output", ""))
+        if prompt is None or completion is None:
+            continue
+        row = {"prompt_micro_per_m": prompt, "completion_micro_per_m": completion}
+        cached = _micro(values.get("cached input", ""))
+        if cached is not None:
+            row["prompt_cached_micro_per_m"] = cached
+        output.setdefault(_normalize(names[0].get_text(" ", strip=True)), row)
+    return output
 
 
 def _parse_cards(html: str) -> dict:
@@ -98,4 +161,8 @@ def _parse_legacy_markdown(markdown: str) -> dict:
 
 
 def parse(source: str) -> dict:
-    return _parse_cards(source) or _parse_legacy_markdown(source.replace(r"\$", "$"))
+    return (
+        _parse_model_library(source)
+        or _parse_cards(source)
+        or _parse_legacy_markdown(source.replace(r"\$", "$"))
+    )

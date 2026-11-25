@@ -96,7 +96,7 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     # The BYOK documentation page and its slash alias are public HTML only.
     # Pin their identities and absence on other surfaces; retain every frozen
     # API, lifecycle, and state assertion below.
-    # The data-access, simple-start and OpenAI migration pages follow the same rule.
+    # The data-access, simple-start, OpenAI migration and free LLM API pages follow the same rule.
     for base, handler in (("/docs/byok", "byok_docs_page"),
                           ("/docs/routing", "legacy_routing_guide"),
                           ("/who-can-see-your-data", "who_can_see_your_data"),
@@ -115,7 +115,8 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
                           ("/docs/reference", "legacy_api_reference"),
                           ("/docs/openapi", "legacy_openapi_spec"),
                           ("/openapi.yaml", "legacy_openapi_spec"),
-                          ("/docs/migrate-from-openai", "migrate_from_openai")):
+                          ("/docs/migrate-from-openai", "migrate_from_openai"),
+                          ("/free-llm-api", "free_llm_api")):
         for path in (base, base + "/"):
             docs_route = [path, ["GET", "HEAD"],
                           f"register_public_routes.<locals>.{handler}"]

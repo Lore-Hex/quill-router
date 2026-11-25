@@ -632,8 +632,34 @@ class Settings(BaseSettings):
 
     # Hourly abuse tripwires (services/abuse_tripwires.py): shared client
     # sessions across workspaces and first-week single-model spend. Alert
-    # only; nothing is paused or refused. Needs the ClickHouse reader.
+    # only unless abuse_tripwire_auto_latch_linked is on. Needs the
+    # ClickHouse reader.
     abuse_tripwires_enabled: bool = True
+    # When a funded shared-session ring includes an abuse-latched workspace,
+    # also latch its unpaused siblings. Off: the sweep only names them in the
+    # alert as would_latch, so an operator can review the first findings.
+    abuse_tripwire_auto_latch_linked: bool = False
+
+    # PayPal top-up guard (services/paypal_topup_guard.py). PayPal buyers can
+    # reverse a payment weeks after the credit was spent, so new workspaces
+    # get tighter limits. "enforce" refuses on the enforced rules, "log" only
+    # logs what it would refuse, "off" skips the guard. Rules named in
+    # paypal_topup_guard_log_only_rules are logged instead of enforced.
+    paypal_topup_guard_mode: str = "enforce"
+    paypal_topup_guard_log_only_rules: str = ""
+    # Largest single PayPal top-up (credit amount) for a workspace that is not
+    # yet established.
+    paypal_new_workspace_max_topup_cents: int = 10_000
+    # PayPal captures per rolling day for a workspace / owner not established.
+    paypal_new_workspace_daily_captures: int = 2
+    paypal_new_owner_daily_captures: int = 3
+    # Established: the owner is identity-verified, or the owner account is at
+    # least this old AND has topped up at least this much in total.
+    paypal_established_min_owner_age_days: int = 30
+    paypal_established_min_lifetime_topup_cents: int = 5_000
+    # Latch a non-established workspace when PayPal reports a dispute or a
+    # reversal on one of its captures. Established workspaces only alert.
+    paypal_adverse_auto_latch: bool = True
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
@@ -1581,6 +1607,13 @@ class Settings(BaseSettings):
     # the general synthetic pass budget so an unavailable analytics replica
     # cannot occupy control-plane request capacity for minutes.
     synthetic_remediator_deadline_seconds: float = 15.0
+    # Ceiling on each analytics read inside one remediator pass. A healthy
+    # pass makes ~13 small ClickHouse reads of ~0.1 s each (whole pass
+    # 1.6-2.0 s). The reads run concurrently in at most two dependent rounds,
+    # so a pass whose reads all hit this cap still ends near 2x it, inside the
+    # request deadline above. Without it each read kept the client's 20 s
+    # default and one slow answer outlived the whole 15 s deadline.
+    synthetic_remediator_read_timeout_seconds: float = 5.0
     # Monthly self-funding for the monitor workspace, applied lazily on its
     # own gateway-authorize path (synthetic/funding.py). Each deployment has
     # its own database, so each cloud's monitor funds itself from config —
@@ -2168,6 +2201,8 @@ class Settings(BaseSettings):
             raise ValueError("TR_SYNTHETIC_RUN_DEADLINE_SECONDS must be positive")
         if self.synthetic_remediator_deadline_seconds <= 0:
             raise ValueError("TR_SYNTHETIC_REMEDIATOR_DEADLINE_SECONDS must be positive")
+        if self.synthetic_remediator_read_timeout_seconds <= 0:
+            raise ValueError("TR_SYNTHETIC_REMEDIATOR_READ_TIMEOUT_SECONDS must be positive")
         if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
             raise ValueError(
                 "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least TR_MAX_REQUEST_BODY_BYTES"
@@ -2200,6 +2235,20 @@ class Settings(BaseSettings):
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
         if self.stripe_paypal_fee_multiplier_basis_points < 10_000:
             raise ValueError("TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS must be at least 10000")
+        if self.paypal_topup_guard_mode not in {"off", "log", "enforce"}:
+            raise ValueError("TR_PAYPAL_TOPUP_GUARD_MODE must be 'off', 'log' or 'enforce'")
+        for name, value in (
+            ("TR_PAYPAL_NEW_WORKSPACE_MAX_TOPUP_CENTS", self.paypal_new_workspace_max_topup_cents),
+            ("TR_PAYPAL_NEW_WORKSPACE_DAILY_CAPTURES", self.paypal_new_workspace_daily_captures),
+            ("TR_PAYPAL_NEW_OWNER_DAILY_CAPTURES", self.paypal_new_owner_daily_captures),
+        ):
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if (
+            self.paypal_established_min_owner_age_days < 0
+            or self.paypal_established_min_lifetime_topup_cents < 0
+        ):
+            raise ValueError("TR_PAYPAL_ESTABLISHED_* thresholds cannot be negative")
         for name, value in (
             ("TR_STRIPE_CARD_FEE_BASIS_POINTS", self.stripe_card_fee_basis_points),
             (
@@ -2852,6 +2901,14 @@ class Settings(BaseSettings):
     def adyen_webhook_ready(self) -> bool:
         return bool(
             self.adyen_hmac_key and self.adyen_reference_key and self.adyen_merchant_account
+        )
+
+    @property
+    def paypal_topup_guard_log_only_rule_set(self) -> frozenset[str]:
+        return frozenset(
+            rule.strip().lower()
+            for rule in self.paypal_topup_guard_log_only_rules.split(",")
+            if rule.strip()
         )
 
     @property

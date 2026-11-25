@@ -2741,6 +2741,54 @@ html:not(.js-off)[data-brand="nyte"] .migrate-openai-page .mig-diff[data-md-inac
 :root[data-brand="nyte"] .migrate-openai-page .mig-checklist li { max-width: 62ch; }
 :root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-next { margin: 40px 0 0; }
 
+/* /free-llm-api: three steps, one code box, a live price table. */
+:root[data-brand="nyte"] .free-llm-api-page .free-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 62ch;
+  margin: 0 0 28px;
+  padding: 0 0 0 24px;
+  font-size: 17px;
+  line-height: 1.6;
+  font-weight: 450;
+}
+:root[data-brand="nyte"] .free-llm-api-page .free-cheap { color: var(--nyte-yellow, #FFC800); }
+:root[data-brand="nyte"] .free-llm-api-page .guide-section .free-note {
+  margin: 16px 0 0;
+  font-size: 15px;
+  color: var(--nyte-ink-2, #57514A);
+}
+:root[data-brand="nyte"] .free-llm-api-page .free-table thead th:not(:first-child),
+:root[data-brand="nyte"] .free-llm-api-page .free-table td {
+  width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-brand="nyte"] .free-llm-api-page .free-table tbody th { width: auto; font-weight: 450; }
+:root[data-brand="nyte"] .free-llm-api-page .free-table tbody th a { color: var(--nyte-ink, #151311); }
+:root[data-brand="nyte"] .free-llm-api-page .free-table code { font-size: 15px; overflow-wrap: anywhere; }
+:root[data-brand="nyte"] .free-llm-api-page .free-offer {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  background: var(--nyte-lime-tint, #E9F0C2);
+  font: 550 13px/1.5 var(--tr-font-family-sans);
+  white-space: nowrap;
+}
+:root[data-brand="nyte"] .free-llm-api-page .free-single { grid-template-columns: minmax(0, 62ch); }
+:root[data-brand="nyte"] .free-llm-api-page .free-single p { margin: 0; }
+:root[data-brand="nyte"] .free-llm-api-page .free-closing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 24px;
+  padding-top: 24px;
+  border-top: 1.5px solid var(--nyte-ink, #151311);
+}
+:root[data-brand="nyte"] .free-llm-api-page .free-closing p { margin: 0; }
+
 /* Below laptop width the code is too wide to sit beside other content:
    Before stacks over After, and each code sample goes under its text. */
 @media (max-width: 1199px) {
@@ -2774,6 +2822,24 @@ html:not(.js-off)[data-brand="nyte"] .migrate-openai-page .mig-diff[data-md-inac
     color: var(--nyte-ink-2, #57514A);
     font: 600 13px/1.4 var(--tr-font-family-sans);
   }
+  :root[data-brand="nyte"] .free-llm-api-page .free-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 24px;
+  }
+  :root[data-brand="nyte"] .free-llm-api-page .free-table tbody th { grid-column: 1 / -1; }
+  :root[data-brand="nyte"] .free-llm-api-page .free-table td { width: auto; text-align: left; }
+  :root[data-brand="nyte"] .free-llm-api-page .free-offer { margin: 6px 0 0; }
+  :root[data-brand="nyte"] .free-llm-api-page .free-closing .btn { width: 100%; }
+  /* Phones: one 36px step between sections, a short heading gap, and no
+     extra blank band between the last block and the footer. */
+  :root[data-brand="nyte"] .free-llm-api-page main.public-wrap { row-gap: 0; padding-bottom: 0; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section { padding-top: 36px; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section h2 { margin-bottom: 16px; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section .guide-lead,
+  :root[data-brand="nyte"] .free-llm-api-page .free-steps { margin-bottom: 20px; }
+  :root[data-brand="nyte"] .free-llm-api-page .guide-section:has(.free-closing) { padding-top: 24px; }
+  :root[data-brand="nyte"] .free-llm-api-page .faq-panel { margin-top: 24px; }
   :root[data-brand="nyte"] .migrate-openai-page .mig-diff pre { padding: 12px 20px 20px 36px; }
   :root[data-brand="nyte"] .migrate-openai-page .mig-add::before { left: 16px; }
   :root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-col-label { padding: 16px 20px 0; }

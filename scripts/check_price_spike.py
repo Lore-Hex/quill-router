@@ -561,6 +561,17 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000003"),
             Decimal("0.000000075"),
         ),
+        # Verified 2026-11-24 against https://www.siliconflow.com/models and
+        # https://www.siliconflow.com/pricing: Kimi-K2.5 is $0.50 input /
+        # $0.15 cached input / $2.50 output per M, up from 0.45 / 0.07 / 2.25.
+        # Only cached input reaches the 2x gate (x2.14). This hold kept every
+        # SiliconFlow row, including newly priced ones, at its committed state.
+        (
+            "moonshotai/kimi-k2.5 [siliconflow:siliconflow:moonshotai/Kimi-K2.5] cached-input",
+            "prompt",
+            Decimal("0.00000007"),
+            Decimal("0.00000015"),
+        ),
         # Verified 2026-09-22 against https://www.siliconflow.com/pricing:
         # Gemma 4 31B realtime USD/M = 0.75 input / 0.25 cached / 1.00 output.
         # Approve only the observed old-to-new endpoint rates, not future jumps.

@@ -2813,7 +2813,7 @@ class NamedDecisionModel(NamedTuple):
     # rate limited, hence a chain rather than one host (measured medians, in
     # order: 353, 522, 941, 1125 ms). A host joins a chain only after it has been
     # measured there, and only if it is fast enough to be the same product:
-    # zev is Fireworks 340-468 ms then Baseten 616 ms; lev is SambaNova 371-450
+    # zev (on GLM 5.2 Fast) was Fireworks 340-468 ms then Baseten 616 ms; lev is SambaNova 371-450
     # ms, Parasail 927 ms, Together 1576 ms. dev is Wafer 1371 ms, DeepInfra
     # 1858 ms, W&B 1987 ms: measured end to end through TrustedRouter's
     # /api/alpha/decide on 2026-09-25, each provider pinned with fallbacks off.
@@ -2854,6 +2854,10 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
     # it on 2026-12-24 01:00 UTC and names GLM 5.3 Fast as the successor.
     # Fireworks and Baseten both serve 5.3 Fast at 5.2 Fast's list price, with
     # the same 1M window, tools and reasoning, so the name and chain stay.
+    # Fireworks refuses reasoning OFF for 5.3 Fast, so the attested gateway
+    # drives it at "low" effort: 29/29, 8/8 valid, 0.7-1.1 s end to end
+    # through /api/alpha/decide with Fireworks pinned. Baseten answered 529
+    # (overloaded) at any effort that day, so its leg is not yet measured.
     NamedDecisionModel(
         ZEV_1_0_MODEL_ID, "TrustedRouter Zev 1.0", "z-ai/glm-5.3-fast", ("fireworks", "baseten")
     ),
