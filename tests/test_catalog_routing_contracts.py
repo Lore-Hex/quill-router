@@ -1594,8 +1594,10 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         # Together is Inkling's listed provider until its route retires.
         if catalog_predates(TOGETHER_NOVEMBER_6_RETIREMENT_AT):
             assert inkling.provider in provider_ids
+        # Tinker is Inkling's last host until its 2026-12-14 retirement, after
+        # which the model leaves the catalog and this block does not run.
         assert "thinkingmachines" in provider_ids or _delisted(
-            "thinkingmachines/inkling@thinkingmachines/prepaid"
+            inkling.id + "@thinkingmachines/prepaid"
         )
         assert all(endpoint.upstream_id for endpoint in endpoints)
 
