@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from bisect import bisect_right
 from copy import deepcopy
 from dataclasses import replace
@@ -20,6 +21,7 @@ from trusted_router.catalog import (
     Model,
     ModelEndpoint,
     endpoints_for_model,
+    is_publicly_listed,
     published_context_length,
     published_max_completion_tokens,
 )
@@ -37,6 +39,11 @@ COST_GUIDE_ROUTES = (
     ("openai/gpt-6.2-sol", "openai"),
     ("anthropic/claude-opus-5.5", "anthropic"),
 )
+# A working session, not a single prompt: each request re-sends the files and
+# tool results read so far. Chosen so the totals are round token millions.
+CLAUDE_SESSION_REQUESTS = 50
+CLAUDE_SESSION_INPUT_TOKENS = 20_000
+CLAUDE_SESSION_OUTPUT_TOKENS = 1_000
 REQUESTS = 10_000
 INPUT_TOKENS = 4_000
 OUTPUT_TOKENS = 1_000
@@ -210,6 +217,59 @@ def _opencode_context(revision: tuple[tuple[int, str], int]) -> dict[str, Any]:
             [row["model"] for row in aliases if row["model"].context_length < 1_000_000], "v2", limits_only=True,
         ),
     }
+
+
+def claude_code_context() -> dict[str, Any]:
+    return _claude_code_context(_context_revision())
+
+
+@lru_cache(maxsize=1)
+def _claude_code_context(revision: tuple[tuple[int, str], int]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for candidate in MODELS.values():
+        if not candidate.supports_messages or not is_publicly_listed(candidate):
+            continue
+        model = _published_model(candidate.id)
+        if model is None:
+            continue
+        routes = []
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.usage_type != "Credits":
+                continue
+            rates = resolve_request_rates(
+                endpoint.price_tiers,
+                headline_prompt_micro_per_m=endpoint.prompt_price_microdollars_per_million_tokens,
+                headline_completion_micro_per_m=endpoint.completion_price_microdollars_per_million_tokens,
+                total_prompt_tokens=CLAUDE_SESSION_INPUT_TOKENS,
+            )
+            prompt = Decimal(rates.prompt_price_microdollars_per_million_tokens) / _MILLION
+            output = Decimal(rates.completion_price_microdollars_per_million_tokens) / _MILLION
+            per_request_micro = sum(
+                (tokens * rate).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+                for tokens, rate in ((CLAUDE_SESSION_INPUT_TOKENS, prompt),
+                                    (CLAUDE_SESSION_OUTPUT_TOKENS, output))
+            )
+            total = CLAUDE_SESSION_REQUESTS * max(per_request_micro, Decimal(1)) / _MILLION
+            routes.append({"input": _rate(prompt), "output": _rate(output),
+                           "total_exact": total, "total": _money(total),
+                           "provider": endpoint.provider})
+        if routes:
+            cheapest = min(routes, key=lambda row: (row["total_exact"], row["provider"]))
+            rows.append({**cheapest, "model": model, "providers": len({r["provider"] for r in routes})})
+    rows.sort(key=lambda row: (row["total_exact"], row["model"].id))
+    # The catalog has no capability rank. Select the newest numbered Opus
+    # explicitly, rather than treating the highest price as a quality score.
+    opus = [(tuple(map(int, match.group(1).split("."))), row) for row in rows
+            if (match := re.fullmatch(r"anthropic/claude-opus-(\d+(?:\.\d+)*)", row["model"].id))]
+    premium = max(opus, key=lambda entry: entry[0])[1] if opus else None
+    return {"claude_guide": {
+        "rows": rows, "cheapest": rows[0] if rows else None, "premium": premium,
+        "requests": CLAUDE_SESSION_REQUESTS,
+        "input_tokens": CLAUDE_SESSION_INPUT_TOKENS, "output_tokens": CLAUDE_SESSION_OUTPUT_TOKENS,
+        "input_millions": _rate(Decimal(CLAUDE_SESSION_REQUESTS * CLAUDE_SESSION_INPUT_TOKENS) / _MILLION),
+        "output_millions": _rate(Decimal(CLAUDE_SESSION_REQUESTS * CLAUDE_SESSION_OUTPUT_TOKENS) / _MILLION),
+        "fee_percent": str(Decimal(STANDARD_PRICE_MARKUP_BASIS_POINTS) / 100).rstrip("0").rstrip("."),
+    }}
 
 
 def gateway_cost_context() -> dict[str, Any]:

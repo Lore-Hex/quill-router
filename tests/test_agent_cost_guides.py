@@ -126,7 +126,7 @@ def test_guide_contexts_expire_between_lifecycle_revisions(
     assert guides._catalog_expiries.cache_info().misses == 1
 
 
-@pytest.mark.parametrize("path", PAGES)
+@pytest.mark.parametrize("path", (*PAGES, "/docs/claude-code"))
 def test_guides_render_and_are_discoverable(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 200
@@ -141,7 +141,8 @@ def test_guides_render_and_are_discoverable(client: TestClient, path: str) -> No
     assert f"<loc>https://trustedrouter.com{path}</loc>" in client.get("/sitemap-core.xml").text
     for index in ("/llms.txt", "/llms-full.txt", "/docs/llms.txt", "/docs/llms-full.txt"):
         assert path in client.get(index).text
-    assert soup.find("time", datetime="2026-11-24")
+    if path != "/docs/claude-code":
+        assert soup.find("time", datetime="2026-11-24")
     graphs = [json.loads(script.string) for script in soup.select('script[type="application/ld+json"]')]
     faqs = [node for graph in graphs for node in graph["@graph"] if node["@type"] == "FAQPage"]
     assert faqs and len(faqs[0]["mainEntity"]) > 1

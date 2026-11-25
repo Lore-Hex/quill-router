@@ -1,10 +1,11 @@
 {% extends "public/_base.html" %}
-{% from "public/_agent_guide_macros.html" import config_example %}
+{% from "public/_agent_guide_macros.html" import config_example, pong_check %}
 {% block body_attributes %}data-docs-code{% endblock %}
 {% block body %}
 <div class="content-document" data-content-toc>
 <section class="content-section" id="quick-start">
 <h2>Quick start</h2>
+<p>Using Claude Code? See <a href="/docs/claude-code">Claude Code setup and session costs</a>.</p>
 <p>OpenCode lists TrustedRouter as a built-in provider.</p>
 <ol><li>Create a key in <a href="/console/api-keys">Console → API Keys</a>; TrustedRouter inference keys start with <code>sk-tr-</code>.</li><li>Run <code>/connect</code> in OpenCode, choose <strong>TrustedRouter</strong>, and paste the key.</li><li>Run <code>/models</code> and choose {% if opencode_aliases|selectattr("model.id", "equalto", "trustedrouter/zdr")|list %}<code>trustedrouter/trustedrouter/zdr</code>{% else %}a model from the <a href="/models">catalog</a>{% endif %}.</li></ol>
 <pre><code>/connect
@@ -92,10 +93,7 @@
 <section class="content-section" id="smoke-test">
 <h2>Test the key and base URL</h2>
 <p>Send one small request to verify authentication and routing.</p>
-{% if opencode_model %}<pre data-example="curl"><code>curl {{ api_base_url }}/chat/completions \
-  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"{{ opencode_model.id }}","messages":[{"role":"user","content":"Reply with PONG only."}],"max_tokens":16}'</code></pre>{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+{% if opencode_model %}{{ pong_check(api_base_url, opencode_model) }}{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
 </section>
 <section class="content-section" id="troubleshooting">
 <h2>OpenCode API key not working</h2>

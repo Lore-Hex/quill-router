@@ -21,7 +21,11 @@ from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from trusted_router.agent_cost_guides import gateway_cost_context, opencode_context
+from trusted_router.agent_cost_guides import (
+    claude_code_context,
+    gateway_cost_context,
+    opencode_context,
+)
 from trusted_router.ai_iq import ai_iq_for_model
 from trusted_router.bedrock_group_buy import (
     BEDROCK_GROUP_BUY_SPEND_SOURCES,
@@ -254,6 +258,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/privacy",
     "/who-can-see-your-data",
     "/docs/opencode",
+    "/docs/claude-code",
     "/docs/opencode-deepseek",
     "/docs/cut-llm-api-costs",
     "/llm-gateway-pricing",
@@ -1509,6 +1514,30 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "The control plane never receives production inference prompt or output bodies; "
             "ordinary inference keeps no prompt or output logs. "
             "Anyone can verify the running image against the published release."
+        ),
+    ),
+    "docs/claude-code": PublicPage(
+        template="public/claude_code_docs.html",
+        title="Use Claude Code through TrustedRouter",
+        description=(
+            "Keep the same Claude Code with one TrustedRouter key, Claude models from multiple providers, "
+            "and per-key spend caps. Connect through the Anthropic Messages API with two environment variables."
+        ),
+        faq_items=(
+            ("How do I point Claude Code at a gateway, proxy or router?",
+             "Set ANTHROPIC_BASE_URL to https://api.trustedrouter.com and "
+             "ANTHROPIC_AUTH_TOKEN to your TrustedRouter API key. Choose a listed Claude model in Claude Code as usual."),
+            ("What ANTHROPIC_BASE_URL should Claude Code use?",
+             "Use ANTHROPIC_BASE_URL=https://api.trustedrouter.com without /v1; the client appends /v1/messages. "
+             "Set ANTHROPIC_AUTH_TOKEN to your TrustedRouter key."),
+            ("Can I set a Claude Code spend limit per key?",
+             "Yes: use a dedicated TrustedRouter key as ANTHROPIC_AUTH_TOKEN with daily, weekly or monthly limits. "
+             "Strict mode includes outstanding estimates; actual charges can exceed estimates."),
+            ("What does Claude Code cost per session?",
+             "Add up the input and output tokens of every request in the session and multiply by the model's "
+             "price per million. The guide works an example of 50 requests at current prices for the cheapest "
+             "listed Claude model and the newest Opus; listed prices already include the 5.5% fee. "
+             "Usage is billed to the key set in ANTHROPIC_AUTH_TOKEN."),
         ),
     ),
     "docs/opencode": PublicPage(
@@ -3359,6 +3388,7 @@ def public_page_html(
         extra_context=(
             (opencode_context() | gateway_cost_context())
             if page_key in {"docs/opencode", "docs/opencode-deepseek"}
+            else claude_code_context() if page_key == "docs/claude-code"
             else gateway_cost_context()
             if page_key in {"llm-gateway-pricing", "docs/cut-llm-api-costs"}
             else _green_tokens_context() if page_key == "green-tokens"
@@ -5539,6 +5569,8 @@ def llms_txt(settings: Settings) -> str:
 def _llms_agent_cost_guides(domain: str) -> list[str]:
     return [
         "## Agent setup and gateway costs",
+        f"- [Use Claude Code through TrustedRouter](https://{domain}/docs/claude-code): "
+        "ANTHROPIC_BASE_URL, Claude model prices, session costs and per-key spend limits.",
         f"- [Use OpenCode with TrustedRouter](https://{domain}/docs/opencode): "
         "API key setup, model selectors, DeepSeek configuration, and OpenRouter setup comparison.",
         f"- [LLM gateway pricing](https://{domain}/llm-gateway-pricing): "

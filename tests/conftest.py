@@ -151,7 +151,7 @@ def clear_agent_cost_guide_caches() -> Iterator[None]:
     from trusted_router import agent_cost_guides
 
     caches = (agent_cost_guides._opencode_context, agent_cost_guides._gateway_cost_context,
-              agent_cost_guides._catalog_expiries)
+              agent_cost_guides._claude_code_context, agent_cost_guides._catalog_expiries)
     for cache in caches:
         cache.cache_clear()
     yield

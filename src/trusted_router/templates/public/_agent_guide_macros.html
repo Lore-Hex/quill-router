@@ -14,3 +14,11 @@ Prices collected {% for date in dates %}{% if not loop.first %}; {{ date.provide
 {% macro route_range(g) -%}
 {% if g.route_count %}<p data-route-count="{{ g.route_count }}" data-low-provider="{{ g.route_low.provider }}" data-high-provider="{{ g.route_high.provider }}">{{ g.deepseek.name }} has {{ g.route_count }} prepaid provider routes. Ranked by input plus output price, the lowest is <strong>{{ g.route_low.provider_name }}</strong> at <span data-route-low-input>${{ g.route_low.input }}</span> input / <span data-route-low-output>${{ g.route_low.output }}</span> output per million tokens; the highest is <strong>{{ g.route_high.provider_name }}</strong> at <span data-route-high-input>${{ g.route_high.input }}</span> / <span data-route-high-output>${{ g.route_high.output }}</span>. These TrustedRouter retail rates include the standard markup and use the {{ "{:,}".format(g.input_tokens) }}-token context tier. {{ price_dates(g.route_dates) }}; <a href="/models/{{ g.deepseek.model_id }}">all provider routes and limits</a>.</p>{% endif %}
 {%- endmacro %}
+
+{% macro pong_check(base_url, model, messages=false) -%}
+<pre data-example="curl"><code>curl {{ base_url }}/{{ "messages" if messages else "chat/completions" }} \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \{% if messages %}
+  -H "anthropic-version: 2023-06-01" \{% endif %}
+  -d '{"model":"{{ model.id }}","messages":[{"role":"user","content":"Reply with PONG only."}],"max_tokens":{{ [16, model.max_completion_tokens]|min if model.max_completion_tokens else 16 }}}'</code></pre>
+{%- endmacro %}
