@@ -2881,7 +2881,35 @@
       ],
       "default_effort": "high"
     },
+    "upstage/solar-mini-4-5": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "medium"
+    },
     "upstage/solar-mini4": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "medium"
+    },
+    "upstage/solar-pro-4-contributor": {
       "mandatory": false,
       "default_enabled": false,
       "supported_efforts": [
