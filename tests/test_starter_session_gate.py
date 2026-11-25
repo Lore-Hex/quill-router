@@ -315,3 +315,53 @@ def test_caller_chosen_session_names_are_not_enforced(harness_budget: None, clie
 )
 def test_distinctive_session_ids(session_id: str, distinctive: bool) -> None:
     assert starter_session_gate.distinctive_session_id(session_id) is distinctive
+
+
+class _BudgetWatchingStore(_NoAttributionStore):
+    """Records the Spanner budget each gate read sees, then times out like a slow read."""
+
+    def __init__(self) -> None:
+        super().__init__(credits=300_000)
+        self.seen: list[float | None] = []
+
+    def claim_starter_session(
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
+    ) -> str:
+        from google.api_core.exceptions import DeadlineExceeded
+
+        from trusted_router.storage_gcp_io import shared_rpc_budget_remaining
+
+        self.seen.append(shared_rpc_budget_remaining())
+        raise DeadlineExceeded("gate read timed out")
+
+
+def test_a_slow_gate_read_cannot_spend_the_billing_budget() -> None:
+    import time
+
+    from trusted_router.storage_gcp_io import shared_rpc_budget_remaining, spanner_rpc_deadline
+
+    store = _BudgetWatchingStore()
+    with spanner_rpc_deadline(time.monotonic() + 20):
+        decision = starter_session_gate.check(
+            store, _Workspace(), SESSION, now=dt.datetime.now(dt.UTC), starter_credit_microdollars=300_000,
+        )
+        after = shared_rpc_budget_remaining()
+    assert decision == starter_session_gate.EXEMPT  # timed out: fail open
+    assert store.seen and store.seen[0] is not None
+    assert store.seen[0] <= starter_session_gate.GATE_RPC_SECONDS
+    # The request's own deadline is restored with nearly all of it left.
+    assert after is not None and after > 19
+
+
+def test_the_gate_steps_aside_when_the_budget_is_nearly_spent() -> None:
+    import time
+
+    from trusted_router.storage_gcp_io import spanner_rpc_deadline
+
+    store = _BudgetWatchingStore()
+    with spanner_rpc_deadline(time.monotonic() + starter_session_gate.GATE_MIN_REMAINING_SECONDS - 1):
+        decision = starter_session_gate.check(
+            store, _Workspace(), SESSION, now=dt.datetime.now(dt.UTC), starter_credit_microdollars=300_000,
+        )
+    assert decision == starter_session_gate.EXEMPT
+    assert store.seen == []

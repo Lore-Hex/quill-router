@@ -25,7 +25,11 @@ Two steps, so a request that never gets admitted never claims anything:
 ``check`` reads before the credit reservation and refuses when a different
 never-funded workspace holds the session within ``CLAIM_WINDOW``; ``claim``
 records this workspace as the holder after the authorization succeeds. Store
-errors fail open in both: the gate must never take authorize down.
+errors fail open in both: the gate must never take authorize down. Each step's
+store calls run under their own ``GATE_RPC_SECONDS`` Spanner deadline, nested in
+the request's shared one, so a slow gate read can never spend the time the
+billing reservation needs; the gate is skipped when less than
+``GATE_MIN_REMAINING_SECONDS`` of the shared budget is left.
 
 Known limits, each costing a farmer at most a request or two:
 
@@ -40,11 +44,14 @@ a lease, and a never-funded workspace is trust tier 0, which takes none
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime as dt
 import hashlib
 import logging
 import re
+import time
+from collections.abc import Iterator
 from typing import Any
 
 from trusted_router.services.abuse_tripwires import parse_time
@@ -59,6 +66,10 @@ NEW_WORKSPACE_AGE = dt.timedelta(days=14)
 #: stay above it so that adding credits always lifts the gate.
 FUNDED_SLACK_MICRODOLLARS = 500_000
 MINIMUM_PURCHASE_MICRODOLLARS = 1_000_000
+
+#: The gate's own Spanner budget per step, and the shared budget it leaves alone.
+GATE_RPC_SECONDS = 0.5
+GATE_MIN_REMAINING_SECONDS = 3.0
 
 REFUSAL_MESSAGE = (
     "This conversation already used free starter credit on another account. "
@@ -96,6 +107,26 @@ def distinctive_session_id(session_id: str) -> bool:
         and any(char.isupper() for char in session_id)
         and any(char.isdigit() for char in session_id)
     )
+
+
+class _BudgetTooLow(Exception):
+    """Less than GATE_MIN_REMAINING_SECONDS of the request's budget is left."""
+
+
+@contextlib.contextmanager
+def _gate_deadline() -> Iterator[None]:
+    """A short Spanner deadline nested in the request's shared one.
+
+    On exit the shared deadline is restored untouched, so whatever the gate
+    spent, billing keeps the rest of its budget.
+    """
+    from trusted_router.storage_gcp_io import shared_rpc_budget_remaining, spanner_rpc_deadline
+
+    remaining = shared_rpc_budget_remaining()
+    if remaining is not None and remaining < GATE_MIN_REMAINING_SECONDS:
+        raise _BudgetTooLow
+    with spanner_rpc_deadline(time.monotonic() + GATE_RPC_SECONDS):
+        yield
 
 
 def session_key(session_id: str) -> str:
@@ -136,16 +167,17 @@ def check(
     if created is None or now - created > NEW_WORKSPACE_AGE:
         return EXEMPT
     try:
-        if _funded(store, workspace.id, starter_credit_microdollars=starter_credit_microdollars):
-            return EXEMPT
-        key = session_key(session_id)
-        holder: str | None = store.claim_starter_session(
-            key,
-            workspace.id,
-            now=int(now.timestamp()),
-            window_seconds=int(CLAIM_WINDOW.total_seconds()),
-            record=False,
-        )
+        with _gate_deadline():
+            if _funded(store, workspace.id, starter_credit_microdollars=starter_credit_microdollars):
+                return EXEMPT
+            key = session_key(session_id)
+            holder: str | None = store.claim_starter_session(
+                key,
+                workspace.id,
+                now=int(now.timestamp()),
+                window_seconds=int(CLAIM_WINDOW.total_seconds()),
+                record=False,
+            )
     except Exception:  # noqa: BLE001 - fail open; authorize must not depend on this gate
         log.warning("billing.starter_session_gate_failed workspace_id=%s", workspace.id, exc_info=True)
         return EXEMPT
@@ -157,12 +189,13 @@ def claim(store: Any, decision: GateDecision, workspace_id: str, *, now: dt.date
     if decision.claim_key is None:
         return
     try:
-        store.claim_starter_session(
-            decision.claim_key,
-            workspace_id,
-            now=int(now.timestamp()),
-            window_seconds=int(CLAIM_WINDOW.total_seconds()),
-        )
+        with _gate_deadline():
+            store.claim_starter_session(
+                decision.claim_key,
+                workspace_id,
+                now=int(now.timestamp()),
+                window_seconds=int(CLAIM_WINDOW.total_seconds()),
+            )
     except Exception:  # noqa: BLE001 - the request is already admitted
         log.warning("billing.starter_session_claim_failed workspace_id=%s", workspace_id, exc_info=True)
 
