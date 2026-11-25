@@ -370,10 +370,10 @@
   },
   "grok": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "xAI Grok",
     "privacy": "TR-funded ZDR",
-    "route_count": 14,
+    "route_count": 13,
     "route_mode": "Prepaid + BYOK",
     "slug": "grok"
   },
@@ -658,19 +658,19 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
   "openai": {
     "card_version": 2,
-    "model_count": 40,
+    "model_count": 34,
     "name": "OpenAI",
     "privacy": "TR-funded ZDR",
-    "route_count": 69,
+    "route_count": 63,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -1009,10 +1009,10 @@
   },
   "zai": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "Z.AI",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 21,
     "route_mode": "Prepaid + BYOK",
     "slug": "zai"
   },
