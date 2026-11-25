@@ -190,6 +190,7 @@ def write_discovered_chat_manifest(
     pricing_source_url: str | None = None,
     operator_hold_reasons: dict[str, str] | None = None,
     confirmed_disabled_ids: Collection[str] = (),
+    hold_tier_removal: bool = False,
 ) -> list[str]:
     """Rebuild a chat-provider manifest from a fresh provider catalog.
 
@@ -249,8 +250,15 @@ def write_discovered_chat_manifest(
 
         price = result.prices.get(model_id)
         previous_tiers = existing.get("price_tiers") if existing is not None else None
-        if (isinstance(previous_tiers, list) and len(previous_tiers) >= 2
-                and price is not None and len(price.tiers) == 1):
+        # Providers whose prices are read from a web page opt in: a page
+        # redesign can make the parser see one price where there are two, and
+        # the first tier alone under-bills every long prompt. A provider API
+        # that stops reporting a tier is taken at its word, and so is a route
+        # coming back after being delisted, whose old prices may be stale.
+        if (hold_tier_removal and existing is not None
+                and isinstance(previous_tiers, list) and len(previous_tiers) >= 2
+                and price is not None and len(price.tiers) == 1
+                and existing.get("routable_reason") != "delisted-upstream"):
             # Retain every price field, including absence of a cached headline.
             # Discovery/canary state and final operator holds still apply.
             for field in ("input_token_price_per_m", "output_token_price_per_m",

@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 
-from bs4 import BeautifulSoup, Comment, NavigableString, Tag
+from bs4 import BeautifulSoup
 
 _MODEL_FAMILIES = {"Fable", "Opus", "Sonnet", "Haiku"}
 _FAST_MODE_RE = re.compile(
@@ -29,16 +29,9 @@ _MODEL_HEADING_RE = re.compile(
     r"^(?P<family>Fable|Opus|Sonnet|Haiku)\s+(?P<version>[0-9]+(?:\.[0-9]+)?)$"
 )
 _PRICE_RE = re.compile(r"^\$([0-9]+(?:\.[0-9]+)?)$")
-_LABELS = {"input", "output", "read", "write"}
-_PRICE_VALUE_RE = re.compile(r"\$[0-9]+(?:\.[0-9]+)?")
-_COMPARISON = r"(?:≤|<=|<|>|>=|≥|\bup to|\bover|\babove|\bunder|\bmore than|\bfewer than)"
-_CONTEXT_COUNT = r"(?:[0-9]+(?:\.[0-9]+)?\s*[KM]\b(?:\s+tokens\b)?|[0-9]+\s+tokens\b)"
-_TIER_TEXT_RE = re.compile(
-    rf"^Prompts\b|{_COMPARISON}\s*{_CONTEXT_COUNT}|{_CONTEXT_COUNT}\s*{_COMPARISON}",
-    re.IGNORECASE,
-)
-# Longest threshold wording treated as a tier heading wherever it appears.
-_TIER_HEADING_MAX_WORDS = 6
+# On a tiered card the second tier's price follows the first within three
+# lines (unit, heading, price); an untiered card reaches its next label first.
+_SAME_LABEL_PRICE_WINDOW = 4
 _TIER_HEADING_RE = re.compile(
     r"Prompts (?P<side>≤|<=|>) (?P<count>[0-9]+)(?P<unit>K|M) tokens"
 )
@@ -51,21 +44,20 @@ def _is_model_name(name: str) -> tuple[str, str] | None:
     return None
 
 
-def _structured_cards(soup: BeautifulSoup) -> list[tuple[str, Tag]]:
-    cards = []
-    for heading in soup.select('h3.card_pricing_title_text, h3[class*="__modelName"]'):
-        parsed = _is_model_name(heading.get_text(strip=True))
-        card = heading.parent.parent if heading.parent else None
-        if parsed is not None and isinstance(card, Tag):
-            family, version = parsed
-            cards.append((f"anthropic/claude-{family.lower()}-{version}", card))
-    return cards
-
-
 def _parse_structured(soup: BeautifulSoup) -> dict:
     """Parse the Webflow / CSS-module layouts where each model lives in a card."""
     out: dict = {}
-    for or_id, card in _structured_cards(soup):
+    headings = soup.select('h3.card_pricing_title_text, h3[class*="__modelName"]')
+    for heading in headings:
+        name = heading.get_text(strip=True)
+        parsed = _is_model_name(name)
+        if parsed is None:
+            continue
+        family, version = parsed
+        or_id = f"anthropic/claude-{family.lower()}-{version}"
+        card = heading.parent.parent if heading.parent else None
+        if card is None:
+            continue
         prices: dict[str, Decimal] = {}
         for price_node in card.select('.tokens_main_wrap, [class*="__priceRow"]'):
             label = price_node.select_one('.tokens_main_label, [class*="__priceLabel"]')
@@ -97,7 +89,7 @@ def _parse_structured(soup: BeautifulSoup) -> dict:
     return out
 
 
-def _collect_lines(soup: Tag) -> list[str]:
+def _collect_lines(soup: BeautifulSoup) -> list[str]:
     """Return a flat list of non-empty text lines from the page."""
     lines: list[str] = []
     for s in soup.stripped_strings:
@@ -179,126 +171,17 @@ def _parse_tiered_card(segment: list[str]) -> dict | None:
     return {"tiers": tiers}
 
 
-def _is_tier_heading(text: str) -> bool:
-    """A threshold that reads as a heading, not as a sentence about the model.
-
-    "Up to 200K tokens" names a price tier. "Our fastest model, with up to 1M
-    tokens of context" describes the model and says nothing about its prices,
-    so a description must not make an ordinary card lose its row.
-    """
-    return _TIER_TEXT_RE.search(text) is not None and (
-        text.lower().startswith("prompts") or len(text.split()) <= _TIER_HEADING_MAX_WORDS
-    )
-
-
-def _multi_priced(lines: list[str]) -> bool:
-    """Evidence only: accepting tier prices remains _parse_tiered_card's job."""
-    # Threshold wording counts anywhere when it reads as a heading, and
-    # anywhere inside the price area, which starts at the first quantity label.
-    price_area = next(
-        (i for i, line in enumerate(lines) if line.lower() in _LABELS | {"prompt caching"}),
-        len(lines),
-    )
-    # Inline markup can split a comparison/count over several text nodes.
-    if _TIER_TEXT_RE.search(" ".join(lines[price_area:])):
-        return True
-    seen: set[str] = set()
-    label = ""
-    values = 0
-    for index, line in enumerate(lines):
-        if _is_tier_heading(line) or (index >= price_area and _TIER_TEXT_RE.search(line)):
+def _second_price_follows(segment: list[str], price_index: int, labels: dict[str, str]) -> bool:
+    """Whether another price sits under the same label, within a tier's distance."""
+    for line in segment[price_index + 1 : price_index + 1 + _SAME_LABEL_PRICE_WINDOW]:
+        if line.lower() in labels:
+            return False
+        if _PRICE_RE.match(line) is not None:
             return True
-        if line.lower() in _LABELS:
-            label = line.lower()
-            if label in seen:
-                return True
-            seen.add(label)
-            values = 0
-        elif label:
-            values += len(_PRICE_VALUE_RE.findall(line))
-            if values > 1:
-                return True
     return False
 
 
-def _flat_cards(lines: list[str], *, bounded: bool = True) -> list[tuple[str, list[str]]]:
-    positions = [(i, match) for i, line in enumerate(lines)
-                 if (match := _MODEL_HEADING_RE.fullmatch(line)) is not None]
-    cards = []
-    for index, (start, match) in enumerate(positions):
-        end = positions[index + 1][0] if index + 1 < len(positions) else len(lines)
-        segment = lines[start + 1:end]
-        # Flat dumps lack a DOM boundary. After both input and output have
-        # prices, stop at the first non-card line. Labels, dollar amounts,
-        # units, context headings and split threshold fragments belong to a
-        # card; prose/FAQ/banner text does not. Never inspect the page tail
-        # for duplicate labels or dollar amounts beyond this boundary.
-        priced: set[str] = set()
-        label = ""
-        for i, line in enumerate(segment):
-            lower = line.lower()
-            card_line = (
-                lower in _LABELS | {"prompt caching"}
-                or _PRICE_VALUE_RE.search(line) is not None
-                or _TIER_TEXT_RE.search(line) is not None
-                or re.fullmatch(_COMPARISON, line, re.I) is not None
-                or re.fullmatch(r"/\s*MTok", line, re.I) is not None
-                or re.fullmatch(r"(?:short|long|standard|extended) (?:context|prompts)", lower)
-                or re.fullmatch(
-                    r"(?:short|long|standard|extended|context|prompts|tokens|up|to|over|above|"
-                    r"under|more|fewer|than|[≤<>≥=]+|[0-9.]+[KM]?)", line, re.I,
-                )
-            )
-            if bounded and {"input", "output"} <= priced and not card_line:
-                segment = segment[:i]
-                break
-            if lower in _LABELS:
-                label = lower
-            elif label and _PRICE_VALUE_RE.search(line):
-                priced.add(label)
-        model_id = f"anthropic/claude-{match.group('family').lower()}-{match.group('version')}"
-        cards.append((model_id, segment))
-    return cards
-
-
-def _structured_multi_priced(cards: list[tuple[str, Tag]]) -> set[str]:
-    models = set()
-    for model_id, card in cards:
-        # Use the structured reader's DOM boundary, not the page tail.
-        # Joined element text catches thresholds split by inline markup;
-        # the model heading is never evidence of a pricing threshold.
-        lines = []
-        for node in card.descendants:
-            if isinstance(node, Tag):
-                raw_value = node.get("data-value")
-                if (isinstance(raw_value, str)
-                        and node.select_one('.tokens_main_val_number, [class*="__priceValue"]') is None
-                        and any("tokens_main_val_number" == name or "__priceValue" in name
-                                for name in node.get("class", []))
-                        and "$" not in node.get_text()):
-                    lines.append(f"${raw_value}")
-            elif isinstance(node, NavigableString) and not isinstance(node, Comment):
-                text = node.strip()
-                if text and not _MODEL_HEADING_RE.fullmatch(text):
-                    lines.append(text)
-        tier_text = any(
-            _is_tier_heading(node.get_text(" ", strip=True))
-            for node in card.find_all(True) if node.name != "h3"
-        )
-        labels = [node.get_text(" ", strip=True)
-                  for node in card.select('.tokens_main_label, [class*="__priceLabel"]')]
-        multiple_values = any(
-            len(node.select('.tokens_main_val_number, [class*="__priceValue"]')) > 1
-            for node in card.select('.tokens_main_wrap, [class*="__priceRow"]')
-            if (label := node.select_one('.tokens_main_label, [class*="__priceLabel"]'))
-            and label.get_text(" ", strip=True).lower() in _LABELS
-        )
-        if tier_text or multiple_values or _multi_priced(lines) or _multi_priced(labels):
-            models.add(model_id)
-    return models
-
-
-def _parse_flat_text(cards: list[tuple[str, list[str]]]) -> dict:
+def _parse_flat_text(lines: list[str]) -> dict:
     """Parse the flat-text dump format.
 
     After a line matching e.g. "Haiku 5.5", scan forward until the next model
@@ -307,7 +190,17 @@ def _parse_flat_text(cards: list[tuple[str, list[str]]]) -> dict:
     require two complete, consistent tiers and never fall back to flat prices.
     """
     out: dict = {}
-    for or_id, segment in cards:
+    # Find indices of all model-heading lines.
+    model_positions: list[tuple[int, str, str]] = []
+    for i, line in enumerate(lines):
+        m = _MODEL_HEADING_RE.match(line)
+        if m is not None:
+            model_positions.append((i, m.group("family"), m.group("version")))
+
+    for idx, (start, family, version) in enumerate(model_positions):
+        end = model_positions[idx + 1][0] if idx + 1 < len(model_positions) else len(lines)
+        segment = lines[start + 1 : end]
+        or_id = f"anthropic/claude-{family.lower()}-{version}"
         if or_id in out:
             continue
         if any(line.startswith("Prompts") for line in segment):
@@ -322,6 +215,7 @@ def _parse_flat_text(cards: list[tuple[str, list[str]]]) -> dict:
             "read": "read",
             "write": "write",
         }
+        several_prices = False
         for j, line in enumerate(segment):
             key = label_map.get(line.lower())
             if key is None or key in prices:
@@ -334,10 +228,16 @@ def _parse_flat_text(cards: list[tuple[str, list[str]]]) -> dict:
                         prices[key] = Decimal(pm.group(1))
                     except InvalidOperation:
                         pass
+                    several_prices = several_prices or _second_price_follows(segment, k, label_map)
                     break
                 # If we hit another label before a price, stop looking.
                 if segment[k].lower() in label_map:
                     break
+        # One label with two prices is a tiered card whose headings this
+        # parser does not know. The first price alone would be the low tier
+        # for every prompt length, so publish nothing for the model instead.
+        if several_prices:
+            continue
         if "input" not in prices or "output" not in prices:
             continue
         row = {
@@ -354,28 +254,12 @@ def parse(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     out = _parse_structured(soup)
 
-    # Prefer actual DOM card boundaries when available, including for the
-    # flat reader. A complete tier breakdown beats a structured headline.
+    # Fallback / supplement: parse flat text for any models not already found.
     lines = _collect_lines(soup)
-    structured_cards = _structured_cards(soup)
-    structured_ids = {model_id for model_id, _card in structured_cards}
-    cards = [(model_id, segment) for model_id, segment in _flat_cards(lines)
-             if model_id not in structured_ids]
-    for _model_id, card in structured_cards:
-        cards.extend(_flat_cards(_collect_lines(card), bounded=False))
-    flat = _parse_flat_text(cards)
+    flat = _parse_flat_text(lines)
     for key, value in flat.items():
-        if key not in out or "tiers" in value:
+        if key not in out:
             out[key] = value
-
-    # Enforce the same fail-closed rule once, after merging both readers and
-    # before deriving Fast SKUs, so a rejected base cannot leak a flat variant.
-    multi_priced = _structured_multi_priced(structured_cards)
-    multi_priced.update(model_id for model_id, segment in cards
-                        if _multi_priced(segment))
-    for model_id in multi_priced:
-        if model_id in out and "tiers" not in out[model_id]:
-            del out[model_id]
 
     # Anthropic documents Fast mode as a multiplier below the standard model
     # cards. Publish a distinct `-fast` SKU only when the statement and base

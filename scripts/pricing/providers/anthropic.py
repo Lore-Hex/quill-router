@@ -256,4 +256,6 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=_DISCOVERY_SOURCE_URL,
+        # Prices come from the public pricing page, not an API.
+        hold_tier_removal=True,
     )
