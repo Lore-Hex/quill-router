@@ -10,11 +10,6 @@ are not about which hosts serve these models, so a test that needs the pair
 borrows the archived routes (CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS) for its own
 duration. Tests about the catalog itself never use this; they assert the
 routes are gone (tests/test_closed_weight_routes.py).
-
-The token-billed side is the maker's own route (Seedance on BytePlus). An
-operator's prepaid billing hold on that provider (PREPAID_PROVIDER_HOLD_REASONS)
-keeps it settlement-only (HELD_PREPAID_SETTLEMENT_ENDPOINTS); that hold is not
-what these tests are about either, so the held routes are borrowed the same way.
 """
 
 from __future__ import annotations
@@ -40,11 +35,7 @@ VIDEO_VEHICLE_MODEL_IDS = frozenset({
 def archived_video_routes() -> Iterator[None]:
     """Borrow the archived mixed-host video routes for one test."""
     with pytest.MonkeyPatch.context() as patch:
-        archived = {
-            **catalog_registry.CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS,
-            **catalog_registry.HELD_PREPAID_SETTLEMENT_ENDPOINTS,
-        }
-        for endpoint_id, endpoint in archived.items():
+        for endpoint_id, endpoint in catalog_registry.CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS.items():
             if endpoint.model_id in VIDEO_VEHICLE_MODEL_IDS:
                 patch.setitem(catalog_registry.MODEL_ENDPOINTS, endpoint_id, endpoint)
         for model_id in VIDEO_VEHICLE_MODEL_IDS:

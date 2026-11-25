@@ -543,6 +543,12 @@ ENV_VARS=(
   # the conservative aggregate application bucket; the platform scale cap is
   # the cost boundary until the documented Front Door/Private Link migration.
   "TR_RATE_LIMIT_CLIENT_IP_MODE=untrusted"
+  # In untrusted mode every caller shares one source bucket, so the per-client
+  # default (240/60 s) is the cap for the whole app: on 2026-11-23 one outside
+  # path scanner held it and locked out the public /status and /fleet pages
+  # for most of every minute. The same value AWS pins
+  # (prepare_ecs_release.py, AWS_SOURCE_ADMISSION_PER_WINDOW).
+  "TR_RATE_LIMIT_IP_PER_WINDOW=6000"
   "TR_MAX_REQUEST_BODY_BYTES=4194304"
   "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES=8388608"
   "TR_MAX_CONCURRENT_REQUEST_BODIES=2"

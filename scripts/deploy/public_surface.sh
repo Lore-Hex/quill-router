@@ -873,7 +873,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
   body_file="$(mktemp "${TMPDIR:-/tmp}/tr-public-probe-${target}-XXXXXX")"
   public_paths=(/ /status.json /robots.txt)
   if [ -n "${TR_PUBLIC_DOCS_MANIFEST:-}" ]; then
-    public_paths+=(/docs /health /ready)
+    public_paths+=(/docs /about /blog /static/homepage/application.css /static/homepage/components.css /health /ready)
   fi
   for path in "${public_paths[@]}"; do
     probe_status=0
