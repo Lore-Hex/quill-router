@@ -81,16 +81,6 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # Adapter, manifest and secrets are kept; delete this line to re-enable
     # after funding and a successful paid-path recovery canary.
     "zro": "operator-credit-exhausted",
-    # November 23: Nscale refused TR's operator token on every probed chat
-    # route with HTTP 401/403 "Invalid or expired token" (Mistral Large 3
-    # from 00:39Z, Sentry QUILL-ROUTER-J2; GLM 5.3 by 11:37Z, QUILL-ROUTER-J4;
-    # the provider performance page shows Qwen3.8 27B and Qwen3.8 Flash Next
-    # refused as provider_auth_config with no successful sample). One token
-    # refused across models is the account or key, not per-model removals.
-    # This holds every Nscale prepaid route and its probes; customer keys are
-    # unaffected. Delete this line only after the key or account is fixed and
-    # a paid-path recovery canary succeeds.
-    "nscale": "provider-access-unavailable",
     # Sonar is now reformulated as Agent API calls. Its reported input/search
     # costs no longer reconcile with the old fixed-fee catalog contract.
     # Keep managed billing dark until a reviewed adapter accounts for them.

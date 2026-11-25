@@ -509,49 +509,74 @@ jobs:
               --repo "${GITHUB_REPOSITORY}"
           }
 
-          # Main moves during the refresh and its 20-60 minute exact-SHA CI
+          # Main moves during the refresh and its 15-60 minute exact-SHA CI
           # run. Discarding every superseded snapshot published nothing for
           # 6+ hours on busy days (Sentry QUILL-ROUTER-DM, 2026-11-07), so a
           # snapshot whose inputs main did not touch is carried onto the new
-          # main instead of recomputed. Carrying is safe because:
-          #   * the snapshot is a function of the tree's refresh inputs
-          #     (/tmp/refresh-inputs.txt) and the upstream prices. When
-          #     REFRESH_BASE..main changes none of those paths, a refresh of
-          #     the new main computes this same snapshot. Any other change, a
-          #     rewind or force-push of main, or a missing input list
-          #     recomputes from the new main as before;
-          #   * the carried commit is a new, untested SHA, so it goes through
-          #     the whole gate again: its own ci.yml dispatch, polled by id
-          #     for that exact SHA, then the status bridge and the push. No
-          #     SHA reaches main without a successful CI run of that SHA.
-          # A round's CI run is superseded the moment main moves: its SHA can
-          # no longer be pushed. Waiting out that run (35-55 minutes) before
-          # carrying meant publication needed main to stay still for a whole
-          # CI run that started at an arbitrary time. With main merging every
-          # 20-40 minutes on busy days, three such rounds lost the race for
-          # 9 hours on 2026-11-19 and again on 11-20 (runs 44782888255,
-          # 44800370604). So the poll also watches main, about once a minute,
-          # and on a move cancels the superseded run and starts the next round
-          # at once: it carries onto the new head and dispatches that SHA's
-          # own CI, or recomputes. Publication then needs only one quiet
-          # CI-length window after any merge, which busy days do have. Nothing
-          # about what may be pushed changes: the push still requires a
-          # successful CI run of the exact SHA whose parent is main.
+          # main instead of recomputed. Carrying is safe because the snapshot
+          # is a function of the tree's refresh inputs (/tmp/refresh-inputs.txt)
+          # and the upstream prices. When REFRESH_BASE..main changes none of
+          # those paths, a refresh of the new main computes this same snapshot.
+          # Any other change, a rewind or force-push of main, or a missing input
+          # list recomputes from the new main as before.
+          #
+          # Accepting a carried data-only snapshot. Requiring a green run of
+          # the exact SHA on top of the latest main meant any merge during the
+          # ~20 minute snapshot CI run restarted it: on 2026-11-25 run
+          # 45553277992 lost four rounds to merges ~20 minutes apart and
+          # published nothing for 3.5 hours. Main's branch protection is not
+          # strict: a pull request is tested on the main of its CI run and
+          # merged onto a newer main without a re-run. A snapshot that changes
+          # only data (no self-healed parser) is now published on the strength
+          # of its CI run on an earlier main when all of these hold, which is
+          # more than any pull request gets:
+          #   1. its exact-SHA CI run concluded success on TESTED_BASE (with
+          #      base-ci, after TESTED_BASE's own push run succeeded too);
+          #   2. main gained no refresh input since REFRESH_BASE (carry_check):
+          #      the new main's refresh would write the same bytes, and every
+          #      catalog loader in the refresh's import closure is unchanged;
+          #   3. alias vectors move only if main gained nothing under fastpath/,
+          #      the vectors' one reader outside the refresh inputs;
+          #   4. main's head has no ci.yml run that concluded without success:
+          #      a red main is never built on;
+          #   5. after the push, the carried SHA's own exact-SHA ci.yml run is
+          #      dispatched. deploy.yml's gate-on-ci deploys no SHA without a
+          #      green run of that exact SHA, and the job's next step waits for
+          #      this run and fails the refresh loudly unless it is green. The
+          #      combination is fully tested before it can reach production.
+          # So a merge during snapshot CI no longer cancels the run: it
+          # finishes, and the snapshot is carried onto main's head and pushed
+          # at once, its statuses naming the run that checked its data.
+          # Publication needs one green snapshot CI run, not a quiet main.
+          # A snapshot that changes a parser, or whose acceptance is refused,
+          # keeps the exact-SHA path: a superseded run is cancelled at once and
+          # the next round carries (with its own CI run) or recomputes.
           # Rounds stop after MAX_ROUNDS exact-SHA CI runs or once the next
           # round could not finish within the job's time limit.
           REFRESH_BASE="${GITHUB_SHA}"
           PUBLISH_BASE="${GITHUB_SHA}"
           MAX_ROUNDS=6
+          # Carried pushes that main's next merge may race before a new round.
+          MAX_ACCEPT_TRIES=5
           ROUND_START_DEADLINE=$(( $(date +%s) + 150 * 60 ))
           refresh_inputs=()
           if [ -s /tmp/refresh-inputs.txt ]; then
             mapfile -t refresh_inputs < /tmp/refresh-inputs.txt
           fi
+          # What the snapshot commit changes; a carry keeps it unchanged.
+          snapshot_data_only=1
+          if ! git diff --quiet HEAD^ HEAD -- scripts/pricing/parsers/; then
+            snapshot_data_only=""
+          fi
+          snapshot_vectors=""
+          if ! git diff --quiet HEAD^ HEAD -- fastpath/testdata/model_alias_vectors_v1.json; then
+            snapshot_vectors=1
+          fi
 
-          # Move the snapshot commit (HEAD, whose parent is PUBLISH_BASE) onto
-          # $1 when that is safe; return non-zero, changing nothing, if not.
-          carry_snapshot() {
-            local target=$1 tree carried
+          # Whether the snapshot commit (HEAD, whose parent is PUBLISH_BASE) may
+          # move onto $1 at all. Changes nothing.
+          carry_check() {
+            local target=$1
             if [ "${#refresh_inputs[@]}" -eq 0 ]; then
               echo "refresh input list unavailable; cannot prove the snapshot is current"
               return 1
@@ -565,6 +590,13 @@ jobs:
               git diff --name-only "${REFRESH_BASE}" "${target}" -- "${refresh_inputs[@]}"
               return 1
             fi
+          }
+
+          # Move the snapshot commit onto $1 when that is safe; return non-zero,
+          # changing nothing, if not.
+          carry_snapshot() {
+            local target=$1 tree carried
+            carry_check "${target}" || return 1
             # Every staged path is a refresh input, so this three-way merge
             # cannot conflict; a conflict would still stop the carry.
             if ! tree=$(git merge-tree --write-tree --merge-base "${PUBLISH_BASE}" "${target}" HEAD); then
@@ -582,154 +614,56 @@ jobs:
             PUBLISH_BASE="${target}"
           }
 
-          for round in $(seq 1 "${MAX_ROUNDS}"); do
-            git fetch -q origin main
-            main_sha=$(git rev-parse origin/main)
-            if [ "${main_sha}" != "${PUBLISH_BASE}" ]; then
-              if [ "${round}" -gt 1 ] && [ "$(date +%s)" -ge "${ROUND_START_DEADLINE}" ]; then
-                queue_recompute "main advanced and no time remains for another exact-SHA CI run"
-                exit 0
-              fi
-              if ! carry_snapshot "${main_sha}"; then
-                queue_recompute "main advanced during price refresh"
-                exit 0
-              fi
-              echo "  main gained no refresh-input changes; carried the snapshot onto ${main_sha}"
+          # Rules 1-3 above: whether the successful CI run of the snapshot on
+          # TESTED_BASE also covers its carried copy on $1. Changes nothing.
+          accept_check() {
+            local target=$1
+            if [ -z "${snapshot_data_only}" ]; then
+              echo "the snapshot changes a parser; only its own exact-SHA CI run can publish it"
+              return 1
             fi
-
-            SNAPSHOT_SHA=$(git rev-parse HEAD)
-            # --force: a later round replaces the branch with the carried commit.
-            git push --force origin "HEAD:refs/heads/${BRANCH}"
-            gh workflow run ci.yml \
-              --ref "${BRANCH}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              -f scope=paths
-            echo "  dispatched ci.yml for generated snapshot ${SNAPSHOT_SHA} (round ${round})"
-
-            ci_passed=""
-            ci_run_id=""
-            # One automatic rerun of only the failed jobs per exact-SHA run: a
-            # single timing flake in one shard otherwise discarded the whole
-            # hour's snapshot (2026-11-10). The rerun is the same run and SHA;
-            # the run must still conclude success over every job, and its jobs
-            # rerun unchanged. Polls of the old attempt are ignored until the
-            # rerun's attempt appears. It shares this round's 120-minute poll
-            # budget, so MAX_ROUNDS and the round deadline bound it as before.
-            ci_rerun_attempt=""
-            ci_superseded=""
-            # Keep exact-SHA completion mandatory, but allow the test matrix
-            # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
-            for poll in $(seq 1 480); do
-              if [ -n "${ci_run_id}" ]; then
-                # Once the listing has found the run, poll that run by id. A
-                # second dispatch on the same branch and SHA could otherwise be
-                # read, and on timeout cancelled, in its place.
-                run_json=$(gh run view "${ci_run_id}" \
-                  --repo "${GITHUB_REPOSITORY}" \
-                  --json databaseId,headSha,status,conclusion,attempt)
-                if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
-                  echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
-                  exit 1
-                fi
-              else
-                run_json=$(gh run list \
-                  --repo "${GITHUB_REPOSITORY}" \
-                  --workflow ci.yml \
-                  --branch "${BRANCH}" \
-                  --event workflow_dispatch \
-                  --json databaseId,headSha,status,conclusion,attempt \
-                  --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
-              fi
-              if [ -n "${run_json}" ]; then
-                status=$(jq -r .status <<<"${run_json}")
-                conclusion=$(jq -r .conclusion <<<"${run_json}")
-                ci_run_id=$(jq -r .databaseId <<<"${run_json}")
-                attempt=$(jq -r '.attempt // 1' <<<"${run_json}")
-                echo "  ci run ${ci_run_id} attempt ${attempt}: status=${status} conclusion=${conclusion:-<pending>}"
-                # Every fourth poll (about a minute) of an unfinished run, ask
-                # whether main moved. If it did, this run's SHA can never be
-                # pushed: cancel it by id and let the next round carry or
-                # recompute now instead of after the run ends.
-                # A failed fetch only skips this check: the push still needs
-                # main to equal PUBLISH_BASE, re-read after the run ends.
-                if [ "${status}" != "completed" ] && [ $(( poll % 4 )) -eq 0 ] && \
-                   git fetch -q origin main; then
-                  main_now=$(git rev-parse origin/main)
-                  if [ "${main_now}" != "${PUBLISH_BASE}" ]; then
-                    echo "  main advanced to ${main_now} during snapshot CI; cancelling superseded ci run ${ci_run_id}"
-                    gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
-                      echo "::warning::could not cancel superseded ci run ${ci_run_id}"
-                    ci_superseded=1
-                    break
-                  fi
-                fi
-                if [ -n "${ci_rerun_attempt}" ] && [ "${attempt}" -lt "${ci_rerun_attempt}" ]; then
-                  # The rerun was requested; this is still the failed attempt.
-                  sleep 15
-                  continue
-                fi
-                if [ "${status}" = "completed" ]; then
-                  if [ "${conclusion}" = "success" ]; then
-                    ci_passed=1
-                    break
-                  fi
-                  if [ "${conclusion}" = "failure" ] && [ -z "${ci_rerun_attempt}" ]; then
-                    echo "::warning title=Snapshot CI rerun::ci run ${ci_run_id} attempt ${attempt} failed; rerunning its failed jobs once"
-                    if ! gh run rerun "${ci_run_id}" --failed --repo "${GITHUB_REPOSITORY}"; then
-                      echo "could not rerun the failed jobs of ci run ${ci_run_id}"
-                      exit 1
-                    fi
-                    ci_rerun_attempt=$((attempt + 1))
-                    echo "ci_rerun=${ci_run_id}:${ci_rerun_attempt}" >> "$GITHUB_OUTPUT"
-                    sleep 15
-                    continue
-                  fi
-                  if [ "${conclusion}" = "failure" ]; then
-                    # The quarantine step reads this run's failure records.
-                    echo "snapshot_ci_failed=${ci_run_id}" >> "$GITHUB_OUTPUT"
-                  fi
-                  echo "generated snapshot CI concluded '${conclusion}'"
-                  exit 1
-                fi
-              fi
-              sleep 15
-            done
-            if [ -n "${ci_superseded}" ]; then
-              continue
+            carry_check "${target}" || return 1
+            if [ -n "${snapshot_vectors}" ] && ! git diff --quiet "${TESTED_BASE}" "${target}" -- fastpath/; then
+              echo "the snapshot changes alias vectors and main gained fastpath changes"
+              return 1
             fi
-            if [ -z "${ci_passed}" ]; then
-              echo "generated snapshot CI did not pass within 120 minutes"
-              # Deleting the branch (the EXIT trap) does not cancel its run. A
-              # run left queued or running here keeps its jobs in the
-              # organization's Actions queue after nothing can use its result.
-              # Cancel the run polled above by id, never a fresh listing.
-              if [ -n "${ci_run_id}" ]; then
-                gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
-                  echo "::warning::could not cancel ci run ${ci_run_id}"
-              fi
-              exit 1
-            fi
+          }
 
-            # Never push a checked SHA onto any parent but the one it was
-            # checked on: that would publish an untested tree. If main moved
-            # during CI, the next round carries the snapshot (and checks the
-            # carried SHA from scratch) or recomputes from the new head.
-            git fetch -q origin main
-            if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]; then
-              echo "  main advanced during snapshot CI"
-              continue
+          # Rule 4: main's head $1 has no ci.yml run (push or dispatch) that
+          # concluded without success. A run still going, or not listed yet a
+          # moment after the merge, is not red; a listing that fails is refused.
+          main_not_red() {
+            local runs
+            if ! runs=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml --commit "$1" \
+              --json status,conclusion,event \
+              --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch")]'); then
+              echo "could not read the ci.yml runs of main ${1}"
+              return 1
             fi
+            if [ "$(jq '(length == 0) or any(.[]; .status != "completed" or .conclusion == "success")' \
+                   <<<"${runs}")" != true ]; then
+              echo "every ci.yml run of main ${1} concluded without success"
+              return 1
+            fi
+          }
 
+          # Bridge ci run ci_run_id's success to main's required statuses on
+          # SNAPSHOT_SHA, then push SNAPSHOT_SHA onto PUBLISH_BASE. $1 is the
+          # statuses' description. Sets push_outcome to pushed or raced; any
+          # other outcome stops the step. Called as a plain command, so errexit
+          # holds inside it.
+          publish_snapshot() {
+            local description=$1 context status_json status_id verified_status status_read push_try push_log
+            push_outcome=""
             # GitHub's protected-branch hook does not accept check runs from a
             # workflow_dispatch branch for a direct GITHUB_TOKEN push, even
             # though those check runs are successful on this exact commit. Post
-            # equivalent commit statuses only after the complete exact-SHA CI
-            # run succeeds. Both the checks and these statuses are emitted by
-            # the repository's pinned GitHub Actions app. The contexts are
-            # main's required checks: lint, the first three test shards and
-            # the CI summary. The summary's status is true of this commit: the
-            # poll above accepted only a run that concluded success, and a run
-            # cannot conclude success unless its summary job succeeded.
+            # equivalent commit statuses only after the complete CI run
+            # succeeds. Both the checks and these statuses are emitted by the
+            # repository's pinned GitHub Actions app. The contexts are main's
+            # required checks: lint, the first three test shards and the CI
+            # summary. The poll accepted only a run that concluded success, and
+            # a run cannot conclude success unless its summary job succeeded.
             ci_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
             expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"
             for context in "lint" "test (1)" "test (2)" "test (3)" "CI"; do
@@ -738,7 +672,7 @@ jobs:
                 "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
                 -f state=success \
                 -f context="${context}" \
-                -f description="Exact snapshot CI passed" \
+                -f description="${description}" \
                 -f target_url="${ci_url}")
               status_id=$(jq -r '.id // empty' <<<"${status_json}")
               if ! [[ "${status_id}" =~ ^[0-9]+$ ]] || \
@@ -798,7 +732,6 @@ jobs:
             # GitHub still enforces protection on every attempt; any other
             # rejection, or the last attempt's, withholds the snapshot.
             push_log=$(mktemp)
-            push_outcome=""
             for push_try in 1 2 3 4; do
               if git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
                 push_outcome=pushed
@@ -819,22 +752,220 @@ jobs:
               echo "::warning title=Snapshot push retry::the protected-branch hook has not seen this SHA's required statuses yet; retrying push ${push_try}/3"
               sleep $(( push_try * 10 ))
             done
-            if [ "${push_outcome}" = raced ]; then
-              echo "  main raced the checked snapshot push"
-              continue
+            # The push outcome is the caller's to act on.
+          }
+
+          for round in $(seq 1 "${MAX_ROUNDS}"); do
+            git fetch -q origin main
+            main_sha=$(git rev-parse origin/main)
+            if [ "${main_sha}" != "${PUBLISH_BASE}" ]; then
+              if [ "${round}" -gt 1 ] && [ "$(date +%s)" -ge "${ROUND_START_DEADLINE}" ]; then
+                queue_recompute "main advanced and no time remains for another exact-SHA CI run"
+                exit 0
+              fi
+              if ! carry_snapshot "${main_sha}"; then
+                queue_recompute "main advanced during price refresh"
+                exit 0
+              fi
+              echo "  main gained no refresh-input changes; carried the snapshot onto ${main_sha}"
             fi
 
-            # GITHUB_TOKEN pushes do not start push-triggered workflows, so
-            # this push starts no deploy. The snapshot lives under src/ and
-            # rides the next control-plane rollout of main. This job's last
-            # step dispatches deploy.yml for a snapshot that waited too long
-            # for one (scripts/deploy/price_snapshot_deploy.py).
-            echo "validated=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            SNAPSHOT_SHA=$(git rev-parse HEAD)
+            # The SHA and parent this round's CI run checks.
+            TESTED_SHA="${SNAPSHOT_SHA}"
+            TESTED_BASE="${PUBLISH_BASE}"
+            # --force: a later round replaces the branch with the carried commit.
+            git push --force origin "HEAD:refs/heads/${BRANCH}"
+            gh workflow run ci.yml \
+              --ref "${BRANCH}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              -f scope=paths
+            echo "  dispatched ci.yml for generated snapshot ${SNAPSHOT_SHA} (round ${round})"
+
+            ci_passed=""
+            ci_run_id=""
+            # One automatic rerun of only the failed jobs per exact-SHA run: a
+            # single timing flake in one shard otherwise discarded the whole
+            # hour's snapshot (2026-11-10). The rerun is the same run and SHA;
+            # the run must still conclude success over every job, and its jobs
+            # rerun unchanged. Polls of the old attempt are ignored until the
+            # rerun's attempt appears. It shares this round's 120-minute poll
+            # budget, so MAX_ROUNDS and the round deadline bound it as before.
+            ci_rerun_attempt=""
+            ci_superseded=""
+            # The main head this run was last kept for (accept_check passed).
+            ci_kept_for=""
+            # Keep exact-SHA completion mandatory, but allow the test matrix
+            # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
+            for poll in $(seq 1 480); do
+              if [ -n "${ci_run_id}" ]; then
+                # Once the listing has found the run, poll that run by id. A
+                # second dispatch on the same branch and SHA could otherwise be
+                # read, and on timeout cancelled, in its place.
+                run_json=$(gh run view "${ci_run_id}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --json databaseId,headSha,status,conclusion,attempt)
+                if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
+                  echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
+                  exit 1
+                fi
+              else
+                run_json=$(gh run list \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --workflow ci.yml \
+                  --branch "${BRANCH}" \
+                  --event workflow_dispatch \
+                  --json databaseId,headSha,status,conclusion,attempt \
+                  --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+              fi
+              if [ -n "${run_json}" ]; then
+                status=$(jq -r .status <<<"${run_json}")
+                conclusion=$(jq -r .conclusion <<<"${run_json}")
+                ci_run_id=$(jq -r .databaseId <<<"${run_json}")
+                attempt=$(jq -r '.attempt // 1' <<<"${run_json}")
+                echo "  ci run ${ci_run_id} attempt ${attempt}: status=${status} conclusion=${conclusion:-<pending>}"
+                # Every fourth poll (about a minute) of an unfinished run, ask
+                # whether main moved. If it did and the run's success would not
+                # cover the snapshot on the new main (accept_check), this run's
+                # SHA can never be pushed: cancel it by id and let the next round
+                # carry or recompute now instead of after the run ends.
+                # A failed fetch only skips this check: publication re-reads
+                # main after the run ends.
+                if [ "${status}" != "completed" ] && [ $(( poll % 4 )) -eq 0 ] && \
+                   git fetch -q origin main; then
+                  main_now=$(git rev-parse origin/main)
+                  if [ "${main_now}" != "${PUBLISH_BASE}" ] && [ "${main_now}" != "${ci_kept_for}" ]; then
+                    if accept_check "${main_now}"; then
+                      echo "  main advanced to ${main_now} during snapshot CI; keeping ci run ${ci_run_id}: its data-only snapshot can be accepted onto the new main"
+                      ci_kept_for="${main_now}"
+                    else
+                      echo "  main advanced to ${main_now} during snapshot CI; cancelling superseded ci run ${ci_run_id}"
+                      gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
+                        echo "::warning::could not cancel superseded ci run ${ci_run_id}"
+                      ci_superseded=1
+                      break
+                    fi
+                  fi
+                fi
+                if [ -n "${ci_rerun_attempt}" ] && [ "${attempt}" -lt "${ci_rerun_attempt}" ]; then
+                  # The rerun was requested; this is still the failed attempt.
+                  sleep 15
+                  continue
+                fi
+                if [ "${status}" = "completed" ]; then
+                  if [ "${conclusion}" = "success" ]; then
+                    ci_passed=1
+                    break
+                  fi
+                  if [ "${conclusion}" = "failure" ] && [ -z "${ci_rerun_attempt}" ]; then
+                    echo "::warning title=Snapshot CI rerun::ci run ${ci_run_id} attempt ${attempt} failed; rerunning its failed jobs once"
+                    if ! gh run rerun "${ci_run_id}" --failed --repo "${GITHUB_REPOSITORY}"; then
+                      echo "could not rerun the failed jobs of ci run ${ci_run_id}"
+                      exit 1
+                    fi
+                    ci_rerun_attempt=$((attempt + 1))
+                    echo "ci_rerun=${ci_run_id}:${ci_rerun_attempt}" >> "$GITHUB_OUTPUT"
+                    sleep 15
+                    continue
+                  fi
+                  if [ "${conclusion}" = "failure" ]; then
+                    # The quarantine step reads this run's failure records.
+                    echo "snapshot_ci_failed=${ci_run_id}" >> "$GITHUB_OUTPUT"
+                  fi
+                  echo "generated snapshot CI concluded '${conclusion}'"
+                  exit 1
+                fi
+              fi
+              sleep 15
+            done
+            if [ -n "${ci_superseded}" ]; then
+              continue
+            fi
+            if [ -z "${ci_passed}" ]; then
+              echo "generated snapshot CI did not pass within 120 minutes"
+              # Deleting the branch (the EXIT trap) does not cancel its run. A
+              # run left queued or running here keeps its jobs in the
+              # organization's Actions queue after nothing can use its result.
+              # Cancel the run polled above by id, never a fresh listing.
+              if [ -n "${ci_run_id}" ]; then
+                gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
+                  echo "::warning::could not cancel ci run ${ci_run_id}"
+              fi
+              exit 1
+            fi
+
+            # Never push a checked SHA onto any parent but the one it was
+            # checked on: that would publish an untested tree. If main moved
+            # during CI, the snapshot is accepted onto the new main below
+            # (rules 1-5) or the next round carries it (checking the carried
+            # SHA from scratch) or recomputes from the new head.
+            git fetch -q origin main
+            main_sha=$(git rev-parse origin/main)
+            if [ "${main_sha}" = "${PUBLISH_BASE}" ]; then
+              publish_snapshot "Exact snapshot CI passed"
+              if [ "${push_outcome}" = pushed ]; then
+                # GITHUB_TOKEN pushes do not start push-triggered workflows, so
+                # this push starts no deploy. The snapshot lives under src/ and
+                # rides the next control-plane rollout of main. This job's last
+                # step dispatches deploy.yml for a snapshot that waited too long
+                # for one (scripts/deploy/price_snapshot_deploy.py).
+                echo "validated=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "  main raced the checked snapshot push"
+            else
+              echo "  main advanced during snapshot CI"
+            fi
+
+            for accept_try in $(seq 1 "${MAX_ACCEPT_TRIES}"); do
+              git fetch -q origin main
+              main_sha=$(git rev-parse origin/main)
+              if ! accept_check "${main_sha}" || ! main_not_red "${main_sha}"; then
+                echo "  not accepting ci run ${ci_run_id} of ${TESTED_SHA} for main ${main_sha}"
+                break
+              fi
+              if ! carry_snapshot "${main_sha}"; then
+                break
+              fi
+              SNAPSHOT_SHA=$(git rev-parse HEAD)
+              echo "  accepting the data-only snapshot onto ${main_sha} as ${SNAPSHOT_SHA}: ci run ${ci_run_id} passed it on ${TESTED_BASE}"
+              # The branch names the carried SHA for its own CI run (rule 5).
+              git push --force origin "${SNAPSHOT_SHA}:refs/heads/${BRANCH}"
+              publish_snapshot "Snapshot CI passed on ${TESTED_SHA:0:12}; data-only carry onto main"
+              if [ "${push_outcome}" = pushed ]; then
+                # Rule 5. deploy.yml's gate-on-ci needs a green run of this exact
+                # SHA, and the next step waits for this one.
+                if gh workflow run ci.yml --ref "${BRANCH}" --repo "${GITHUB_REPOSITORY}" -f scope=paths; then
+                  echo "  dispatched ci.yml for the accepted snapshot ${SNAPSHOT_SHA}"
+                else
+                  echo "::warning::could not dispatch ci.yml for the accepted snapshot ${SNAPSHOT_SHA}"
+                fi
+                echo "accepted_sha=${SNAPSHOT_SHA}" >> "$GITHUB_OUTPUT"
+                echo "validated=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "  main raced the accepted snapshot push (try ${accept_try}/${MAX_ACCEPT_TRIES})"
+            done
           done
           queue_recompute "main advanced during each of ${MAX_ROUNDS} exact-SHA CI runs"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for the accepted snapshot's own CI run
+        # A data-only snapshot accepted onto a newer main (the publication
+        # step's rules 1-5) reached main on its CI run on the earlier main.
+        # The carried SHA's own exact-SHA run was dispatched right after the
+        # push: deploy.yml deploys nothing without it, and a red one fails
+        # this run loudly with the revert to make
+        # (scripts/pricing/accepted_snapshot_ci.py).
+        if: steps.publication.outputs.accepted_sha != ''
+        timeout-minutes: 100
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACCEPTED_SHA: ${{ steps.publication.outputs.accepted_sha }}
+        run: >-
+          python3 -m scripts.pricing.accepted_snapshot_ci --repo "${GITHUB_REPOSITORY}"
+          --sha "${ACCEPTED_SHA}" --branch "automation/price-refresh-${GITHUB_RUN_ID}"
 
       - name: Quarantine providers that failed snapshot CI
         id: quarantine

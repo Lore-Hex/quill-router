@@ -19,6 +19,8 @@ DEPLOY_DISPATCH = 'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSI
 # External commands in the extracted step. Shell builtins/functions (echo,
 # test/[ /[[, trap, cleanup_branch, etc.) need no executable. The allowlisted
 # PATH also makes a newly introduced, unlisted command fail rather than escape.
+PARSER = "scripts/pricing/parsers/fixture.py"
+VECTORS = "fastpath/testdata/model_alias_vectors_v1.json"
 PUBLICATION_COMMANDS = {
     "bash": "real", "git": "wrapped", "jq": "real", "cat": "real",
     "date": "real", "seq": "real", "mktemp": "real", "grep": "real", "gh": "fake", "sleep": "fake",
@@ -88,20 +90,18 @@ def remove_publication_guard(script: str, guard: str) -> str:
         if guard == "accept_pending":
             script = remove_publication_guard(script, "conclusion")
     elif guard == "late_bridge":
+        # Post the statuses after publish_snapshot's main push.
         start = script.index('ci_url="${GITHUB_SERVER_URL}')
         end = script.index("push_log=$(mktemp)", start)
         bridge = script[start:end]
         script = script[:start] + script[end:]
-        after_push = script.index("# GITHUB_TOKEN pushes do not start")
+        after_push = script.index("# The push outcome is the caller's to act on.")
         return script[:after_push] + bridge + script[after_push:]
     elif guard == "head_sha":
         before, after = r'map(select(.headSha == \"${SNAPSHOT_SHA}\"))', "."
     elif guard == "main_moved":
         # Only disable the pre-push guard; retain the push-race recovery guard.
-        before = 'if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]; then'
-        after = "if false; then"
-        assert script.count(before) == 2
-        return script.replace(before, after, 1)
+        before, after = 'if [ "${main_sha}" = "${PUBLISH_BASE}" ]; then', "if true; then"
     elif guard == "poll_workflow":
         before, after = "--workflow ci.yml \\", "--workflow deploy.yml \\"
     elif guard == "poll_event":
@@ -111,7 +111,7 @@ def remove_publication_guard(script: str, guard: str) -> str:
         after = ('git commit --allow-empty -m "Never ran CI"\n'
                  'SNAPSHOT_SHA=$(git rev-parse HEAD)\n' + before)
     elif guard == "unverified_commit_before_dispatch":
-        before = "gh workflow run ci.yml"
+        before = "gh workflow run ci.yml \\\n"
         after = 'git commit --allow-empty -m "Never ran CI"\n' + before
     elif guard == "poll_by_listing":
         # Keep re-reading the branch listing after the run was found.
@@ -144,6 +144,21 @@ def remove_publication_guard(script: str, guard: str) -> str:
         start = script.index('if [ "${push_try}" -ge 4 ] || \\')
         end = script.index("; then", script.index("(is|are) expected", start))
         before, after = script[start:end], 'if [ "${push_try}" -ge 4 ]'
+    elif guard == "accept_red_main":
+        # Build on main whatever its own CI concluded.
+        before = 'if ! accept_check "${main_sha}" || ! main_not_red "${main_sha}"; then'
+        after = 'if ! accept_check "${main_sha}"; then'
+    elif guard == "accept_parser":
+        # Accept a snapshot that changes a self-healed parser.
+        before, after = 'if [ -z "${snapshot_data_only}" ]; then', "if false; then"
+    elif guard == "accept_vectors":
+        # Accept alias vectors over a change to their fastpath reader.
+        before = 'if [ -n "${snapshot_vectors}" ] && ! git diff --quiet "${TESTED_BASE}" "${target}" -- fastpath/; then'
+        after = "if false; then"
+    elif guard == "no_accepted_ci":
+        # Leave the accepted SHA without its own exact-SHA CI run.
+        before = 'if gh workflow run ci.yml --ref "${BRANCH}" --repo "${GITHUB_REPOSITORY}" -f scope=paths; then'
+        after = "if true; then"
     else:
         raise AssertionError(f"Unknown mutation: {guard}")
     assert script.count(before) == 1, f"Mutation target missing or ambiguous: {guard}"
@@ -219,11 +234,21 @@ class PublicationRepo:
         protection_rejects: int = 0,
         protection_message: str | None = None,
         protection_moves_main: bool = False,
+        parser_change: bool = False,
+        vectors_change: bool = False,
+        main_ci: list[dict[str, object]] | None = None,
+        main_ci_fault: str | None = None,
+        poll_move: tuple[int, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if changed:
             snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
             snapshot.write_text('{"generated": true}\n')
             self.git("add", str(snapshot))
+        # A self-healed parser or new alias vectors in the same snapshot.
+        for flag, path in ((parser_change, PARSER), (vectors_change, VECTORS)):
+            if flag:
+                (self.clone / path).write_text('{"healed": true}\n')
+                self.git("add", path)
         states = run_states if run_states is not None else [("completed", conclusion)]
         # `polls` is the listing at each poll, verbatim; otherwise one run per poll.
         # A third element is the run attempt; gh reports 1 before any rerun.
@@ -262,6 +287,13 @@ class PublicationRepo:
             scenario["protection_moves_main"] = True
         if protection_message is not None:
             scenario["protection_message"] = protection_message
+        if main_ci is not None:
+            scenario["main_ci"] = main_ci
+        if main_ci_fault is not None:
+            scenario["main_ci_fault"] = main_ci_fault
+        if poll_move is not None:
+            assert advance_main is not None, "poll_move uses advance_main's peer clone"
+            scenario["poll_move"] = {"poll": poll_move[0], "path": poll_move[1]}
         (self.root / "scenario.json").write_text(json.dumps(scenario))
         script = remove_publication_guard(self.script, mutation) if mutation else self.script
         # Relocate only the workflow's fixed scratch paths. Gate logic and all
@@ -361,6 +393,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         "src/trusted_router/data/model_changes_state.json",
         "src/trusted_router/static/og/providers/fixture.png",
         "fastpath/testdata/model_alias_vectors_v1.json",
+        "fastpath/internal/gwauth/vectors_test.go",
         "scripts/pricing/parsers/fixture.py",
         "scripts/pricing/providers/fixture.py",
         "src/trusted_router/money.py",
@@ -709,11 +742,11 @@ def test_publication_recomputes_when_main_rewound(publication_repo: PublicationR
     assert "does not descend from" in result.stdout
 
 
-def assert_carried_onto(repo: PublicationRepo, parent: str) -> None:
+def assert_carried_onto(repo: PublicationRepo, parent: str, *extra: str) -> None:
     """Main is the snapshot commit on `parent`: parent's tree plus the snapshot."""
     assert repo.git("rev-parse", "refs/heads/main^", cwd=repo.root / "origin.git") == parent
     changed = repo.git("diff", "--name-only", parent, repo.main, cwd=repo.root / "origin.git")
-    assert changed.splitlines() == ["src/trusted_router/data/openrouter_snapshot.json"]
+    assert changed.splitlines() == sorted(["src/trusted_router/data/openrouter_snapshot.json", *extra])
     snapshot = repo.git("show", f"{repo.main}:src/trusted_router/data/openrouter_snapshot.json",
                         cwd=repo.root / "origin.git")
     assert snapshot == '{"generated": true}'
@@ -724,15 +757,17 @@ def test_snapshot_is_carried_over_main_changes_that_are_not_refresh_inputs(
     publication_repo: PublicationRepo, path: str | None,
 ) -> None:
     # A merge lands while the first exact-SHA CI runs. It touches nothing the
-    # refresh reads, so the snapshot moves onto it and its new SHA gets its
+    # refresh reads, so a snapshot that also heals a parser (which only its
+    # own exact-SHA run may publish) moves onto it and its new SHA gets its
     # own complete CI run before statuses and the push (2026-11-07 starvation).
-    result = publication_repo.run(advance_main={"dispatches": 1, "path": path})
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path}, parser_change=True)
     moved = (publication_repo.root / "main-moved").read_text().strip()
     assert_snapshot_published(publication_repo, result, rounds=2)
     first, second = publication_repo.dispatched_shas
     assert publication_repo.git("rev-parse", f"{first}^") == publication_repo.base
     assert publication_repo.main == second != first
-    assert_carried_onto(publication_repo, moved)
+    assert_carried_onto(publication_repo, moved, PARSER)
+    assert "the snapshot changes a parser" in result.stdout
     assert f"carried the snapshot onto {moved}" in result.stdout
 
 
@@ -771,8 +806,9 @@ def test_snapshot_is_recomputed_without_the_refresh_input_list(publication_repo:
 
 
 def test_carrying_stops_after_bounded_ci_rounds(publication_repo: PublicationRepo) -> None:
-    # Main moves during every exact-SHA CI run: six rounds, then recompute.
-    result = publication_repo.run(advance_main={"dispatches": 6, "path": None})
+    # Main moves during every exact-SHA CI run of a snapshot that heals a
+    # parser: six rounds, then recompute.
+    result = publication_repo.run(advance_main={"dispatches": 6, "path": None}, parser_change=True)
     assert_snapshot_withheld(publication_repo, result, rounds=6)
     assert "main advanced during each of 6 exact-SHA CI runs" in result.stdout
     assert len(set(publication_repo.dispatched_shas)) == 6
@@ -782,7 +818,8 @@ def test_carrying_stops_after_bounded_superseded_rounds(publication_repo: Public
     # Main moves during every run, each found and cancelled mid-run: the
     # early restart is bounded by the same six rounds.
     states = [("in_progress", None)] * 12 + [("completed", "success")]
-    result = publication_repo.run(advance_main={"dispatches": 6, "path": None}, run_states=states)
+    result = publication_repo.run(advance_main={"dispatches": 6, "path": None}, run_states=states,
+                                  parser_change=True)
     assert_snapshot_withheld(publication_repo, result, rounds=6)
     assert "main advanced during each of 6 exact-SHA CI runs" in result.stdout
     assert len(cancels(publication_repo)) == 6
@@ -814,10 +851,12 @@ def test_a_superseded_ci_run_is_cancelled_and_the_snapshot_carried_at_once(
     # four polls, cancels that run by id and carries the snapshot onto the new
     # main straight away. Waiting out the doomed run needed main to stay still
     # for one whole CI run after it, which busy days never gave (2026-11-19/20).
-    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, run_states=SLOW_RUN)
+    # (A data-only snapshot keeps its run instead: test_a_data_only_snapshot_keeps_its_run_when_main_moves.)
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, run_states=SLOW_RUN,
+                                  parser_change=True)
     moved = (publication_repo.root / "main-moved").read_text().strip()
     assert_snapshot_published(publication_repo, result, rounds=2)
-    assert_carried_onto(publication_repo, moved)
+    assert_carried_onto(publication_repo, moved, PARSER)
     assert round_polls(publication_repo) == [4, 13]
     assert cancels(publication_repo) == [["run", "cancel", "1234", "--repo", publication_repo.env["GITHUB_REPOSITORY"]]]
     events = publication_repo.events
@@ -856,9 +895,10 @@ def test_snapshot_is_carried_over_static_site_changes(publication_repo: Publicat
     publication_repo.base = publication_repo.git("rev-parse", "HEAD")
     publication_repo.env["GITHUB_SHA"] = publication_repo.base
     (publication_repo.root / "events.jsonl").write_text("")
-    result = publication_repo.run(advance_main={"dispatches": 1, "path": path}, run_states=SLOW_RUN)
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path}, run_states=SLOW_RUN,
+                                  parser_change=True)
     assert_snapshot_published(publication_repo, result, rounds=2)
-    assert_carried_onto(publication_repo, (publication_repo.root / "main-moved").read_text().strip())
+    assert_carried_onto(publication_repo, (publication_repo.root / "main-moved").read_text().strip(), PARSER)
 
 
 def test_input_check_mutation_is_detected(publication_repo: PublicationRepo) -> None:
@@ -992,50 +1032,64 @@ def test_publication_guards_have_effect(publication_repo: PublicationRepo, guard
         assert_snapshot_published(publication_repo, result)
 
 
+def publication_parts() -> tuple[str, str, str]:
+    """The publication step's publish_snapshot function, its round loop, and the whole step."""
+    workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
+    step = workflow[workflow.index("- name: Commit, verify, and push if changed"):]
+    step = step[:step.index("\n      - name: ", 1)]
+    function = step[step.index("publish_snapshot() {"):]
+    function = function[:function.index("\n          }\n")]
+    rounds = step[step.index('for round in $(seq 1 "${MAX_ROUNDS}"); do'):]
+    return function, rounds, step
+
+
 def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(
         encoding="utf-8"
     )
+    function, rounds, step = publication_parts()
     branch_ci_dispatch = "gh workflow run ci.yml \\\n"
     deploy_dispatch = (
         'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" -f track_main=true'
     )
 
-    assert 'BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"' in workflow
-    assert "SNAPSHOT_SHA=$(git rev-parse HEAD)" in workflow
-    assert 'git push --force origin "HEAD:refs/heads/${BRANCH}"' in workflow
-    assert branch_ci_dispatch in workflow
-    assert '--ref "${BRANCH}"' in workflow
-    assert '--branch "${BRANCH}"' in workflow
-    assert 'select(.headSha == \\"${SNAPSHOT_SHA}\\")' in workflow
-    assert 'if [ "${conclusion}" = "success" ]' in workflow
+    assert 'BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"' in step
+    assert "SNAPSHOT_SHA=$(git rev-parse HEAD)" in rounds
+    assert 'git push --force origin "HEAD:refs/heads/${BRANCH}"' in rounds
+    assert branch_ci_dispatch in rounds
+    assert '--ref "${BRANCH}"' in rounds
+    assert '--branch "${BRANCH}"' in rounds
+    assert 'select(.headSha == \\"${SNAPSHOT_SHA}\\")' in rounds
+    assert 'if [ "${conclusion}" = "success" ]' in rounds
     assert "statuses: write" in workflow
-    assert 'ci_run_id=$(jq -r .databaseId <<<"${run_json}")' in workflow
-    assert 'if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]' in workflow
+    assert 'ci_run_id=$(jq -r .databaseId <<<"${run_json}")' in rounds
     assert "git rebase" not in workflow
     status_bridge = '"repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"'
-    assert status_bridge in workflow
-    assert 'for context in "lint" "test (1)" "test (2)" "test (3)" "CI"; do' in workflow
-    assert '-f target_url="${ci_url}"' in workflow
-    assert 'expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"' in workflow
-    assert "status_id=$(jq -r '.id // empty'" in workflow
-    assert '$(jq -r .url <<<"${status_json}")' in workflow
-    assert '$(jq -r .context <<<"${status_json}")' in workflow
-    assert '$(jq -r .state <<<"${status_json}")' in workflow
-    assert '--jq "map(select(.id == ${status_id}))[0] // empty"' in workflow
-    assert '$(jq -r .creator.login <<<"${verified_status}")' in workflow
-    assert '!= "github-actions[bot]"' in workflow
+    assert status_bridge in function
+    assert 'for context in "lint" "test (1)" "test (2)" "test (3)" "CI"; do' in function
+    assert '-f target_url="${ci_url}"' in function
+    assert 'expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"' in function
+    assert "status_id=$(jq -r '.id // empty'" in function
+    assert '$(jq -r .url <<<"${status_json}")' in function
+    assert '$(jq -r .context <<<"${status_json}")' in function
+    assert '$(jq -r .state <<<"${status_json}")' in function
+    assert '--jq "map(select(.id == ${status_id}))[0] // empty"' in function
+    assert '$(jq -r .creator.login <<<"${verified_status}")' in function
+    assert '!= "github-actions[bot]"' in function
     main_push = 'git push origin "HEAD:refs/heads/main"'
-    assert main_push in workflow
+    assert step.count(main_push) == 1 and main_push in function
+    assert function.index(status_bridge) < function.index(main_push)
+    # The push-race guard inside the function compares main with the parent.
+    assert function.index(main_push) < function.index(
+        'if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]; then')
+    # In each round: dispatch, the exact SHA's success, then main is re-read
+    # before either publication (exact, or accepted onto the new main).
+    exact_guard = 'if [ "${main_sha}" = "${PUBLISH_BASE}" ]; then'
+    assert rounds.index(branch_ci_dispatch) < rounds.index('if [ "${conclusion}" = "success" ]') \
+        < rounds.index(exact_guard) < rounds.index('publish_snapshot "Exact snapshot CI passed"') \
+        < rounds.index('if ! accept_check "${main_sha}" || ! main_not_red "${main_sha}"; then') \
+        < rounds.index("publish_snapshot \"Snapshot CI passed on")
     assert deploy_dispatch in workflow
-    assert workflow.index(branch_ci_dispatch) < workflow.index(main_push)
-    assert workflow.index('if [ "${conclusion}" = "success" ]') < workflow.index(
-        status_bridge
-    )
-    assert workflow.index(
-        'if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]'
-    ) < workflow.index(status_bridge)
-    assert workflow.index(status_bridge) < workflow.index(main_push)
     assert workflow.index(main_push) < workflow.index(deploy_dispatch)
     assert "deploy_synthetic_monitor" not in workflow
     assert "WARN: failed to dispatch deploy.yml" not in workflow
@@ -1051,12 +1105,26 @@ def test_price_refresh_publishes_only_after_exact_snapshot_ci() -> None:
     assert "- name: Validate generated catalog before commit" not in workflow
     before_commit = workflow[: workflow.index(commit_step)]
     assert "uv run pytest" not in before_commit
-    publish = workflow[workflow.index(commit_step) :]
-    dispatch = publish.index("gh workflow run ci.yml")
-    exact_sha = publish.index('map(select(.headSha == \\"${SNAPSHOT_SHA}\\"))')
-    success = publish.index('if [ "${conclusion}" = "success" ]; then')
-    main_push = publish.index('git push origin "HEAD:refs/heads/main"')
-    assert dispatch < exact_sha < success < main_push
+    _, rounds, _ = publication_parts()
+    dispatch = rounds.index("gh workflow run ci.yml")
+    exact_sha = rounds.index('map(select(.headSha == \\"${SNAPSHOT_SHA}\\"))')
+    success = rounds.index('if [ "${conclusion}" = "success" ]; then')
+    publish = rounds.index("publish_snapshot ")
+    assert dispatch < exact_sha < success < publish
+
+
+def test_an_accepted_snapshot_waits_for_its_own_ci_run() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
+    steps = workflow["jobs"]["refresh"]["steps"]
+    publication = next(i for i, step in enumerate(steps) if step.get("id") == "publication")
+    verify = steps[publication + 1]
+    assert verify["if"] == "steps.publication.outputs.accepted_sha != ''"
+    assert "python3 -m scripts.pricing.accepted_snapshot_ci" in verify["run"]
+    assert '--branch "automation/price-refresh-${GITHUB_RUN_ID}"' in verify["run"]
+    assert verify["env"]["ACCEPTED_SHA"] == "${{ steps.publication.outputs.accepted_sha }}"
+    assert "continue-on-error" not in verify
+    validated = next(step for step in steps if step.get("name") == "Catalog refresh validated")
+    assert steps.index(validated) > publication + 1  # skipped when the run is red
 
 
 def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
@@ -1266,7 +1334,7 @@ def test_main_moving_during_a_protection_retry_carries_the_snapshot(
     # never retried onto a parent it was not checked on.
     result = publication_repo.run(
         protection_rejects=1, protection_moves_main=True,
-        run_states=[("completed", "success"), ("completed", "success")],
+        run_states=[("completed", "success"), ("completed", "success")], parser_change=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     moved = (publication_repo.root / "main-moved").read_text().strip()
@@ -1283,3 +1351,229 @@ def test_main_moving_during_a_protection_retry_carries_the_snapshot(
     assert len(pushes) == 2
     assert Path(publication_repo.env["GITHUB_OUTPUT"]).read_text().endswith("validated=true\n")
     assert "main raced the checked snapshot push" in result.stdout
+
+
+# --- Accepting a carried data-only snapshot (2026-11-25, run 45553277992) ---
+
+
+def accepted_dispatch_index(repo: PublicationRepo) -> int:
+    return [i for i, event in enumerate(repo.events) if event[0] == "ci-dispatch"][-1]
+
+
+def assert_snapshot_accepted(
+    repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, tested: int = 1,
+    main_pushes: int = 1, posts: int = 5, reruns: tuple[str, ...] = (),
+) -> str:
+    """The snapshot CI run passed on an earlier main; its carried copy is main, with its own CI run dispatched."""
+    assert result.returncode == 0, result.stdout + result.stderr
+    accepted = repo.main
+    assert Path(repo.env["GITHUB_OUTPUT"]).read_text() == "".join(
+        f"ci_rerun={rerun}\n" for rerun in reruns) + f"accepted_sha={accepted}\nvalidated=true\n"
+    shas = repo.dispatched_shas
+    # `tested` snapshot CI runs, then the accepted SHA's own run, dispatched once.
+    assert len(shas) == tested + 1, shas
+    tested_sha = shas[tested - 1]
+    assert shas[-1] == accepted != tested_sha
+    assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")] * (tested + 1)
+    origin = repo.root / "origin.git"
+    parent = repo.git("rev-parse", f"{accepted}^", cwd=origin)
+    # The data is byte-identical to what the snapshot CI run checked, and
+    # main's own changes are untouched: the accepted commit is a pure carry.
+    assert repo.git("diff", "--name-only", f"{tested_sha}^", tested_sha, cwd=origin) == repo.git(
+        "diff", "--name-only", parent, accepted, cwd=origin)
+    for path in repo.git("diff", "--name-only", parent, accepted, cwd=origin).splitlines():
+        assert repo.git("show", f"{accepted}:{path}", cwd=origin) == repo.git(
+            "show", f"{tested_sha}:{path}", cwd=origin)
+    # The run that passed answered for the tested SHA, before anything was published.
+    events = repo.events
+    answers = [(i, json.loads(event[2])) for i, event in enumerate(events) if event[0] == "poll" and event[2]]
+    passed = [i for i, answer in answers if answer["headSha"] == tested_sha
+              and answer["status"] == "completed" and answer["conclusion"] == "success"]
+    assert passed
+    # Main's head was checked for a red CI run before the push.
+    checks = [i for i, event in enumerate(events) if event[0] == "main-ci" and event[1] == parent]
+    pushes = [i for i, event in enumerate(events) if event[0] == "git" and "HEAD:refs/heads/main" in event]
+    assert len(pushes) == main_pushes
+    assert checks and passed[0] < checks[-1] < pushes[-1]
+    # Statuses name the accepted SHA and the run that checked its data.
+    status_posts = [(i, event) for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "POST" in event]
+    assert len(status_posts) == posts
+    last = status_posts[-5:]
+    assert all(f"/statuses/{accepted}" in event[4] for _, event in last)
+    assert all(any(arg.startswith("description=Snapshot CI passed on " + tested_sha[:12]) for arg in event)
+               for _, event in last)
+    assert all(f"target_url={repo.env['GITHUB_SERVER_URL']}/{repo.env['GITHUB_REPOSITORY']}/actions/runs/1234"
+               in event for _, event in last)
+    assert all(i < pushes[-1] for i, _ in last)
+    # Rule 5: the accepted SHA's own exact-SHA CI run, dispatched after the push.
+    assert pushes[-1] < accepted_dispatch_index(repo)
+    assert not any(call[:3] == ["workflow", "run", "deploy.yml"] for call in repo.calls)
+    return tested_sha
+
+
+@pytest.mark.parametrize("path", [None, "docs/unrelated.md"])
+def test_a_data_only_snapshot_is_accepted_onto_a_main_that_moved_during_ci(
+    publication_repo: PublicationRepo, path: str | None,
+) -> None:
+    # One green snapshot CI run publishes, however often main merges: no
+    # second CI round that the next merge would cancel again.
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path})
+    moved = (publication_repo.root / "main-moved").read_text().strip()
+    tested = assert_snapshot_accepted(publication_repo, result)
+    assert publication_repo.git("rev-parse", f"{tested}^") == publication_repo.base
+    assert_carried_onto(publication_repo, moved)
+    assert f"accepting the data-only snapshot onto {moved}" in result.stdout
+
+
+def test_a_data_only_snapshot_keeps_its_run_when_main_moves(publication_repo: PublicationRepo) -> None:
+    # Before, the move cancelled the run and restarted CI on the new main:
+    # four restarts and 3.5 hours without a snapshot on 2026-11-25.
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, run_states=SLOW_RUN)
+    assert_snapshot_accepted(publication_repo, result)
+    assert cancels(publication_repo) == []
+    assert round_polls(publication_repo) == [13, 0]
+    assert result.stdout.count("keeping ci run 1234") == 1
+
+
+def test_a_kept_run_is_cancelled_once_main_changes_a_refresh_input(publication_repo: PublicationRepo) -> None:
+    # Kept on the first merge (docs). A later merge changes catalog code, so
+    # no success of this run could publish: cancel it then and recompute.
+    states = [("in_progress", None)] * 20 + [("completed", "success")]
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": "docs/unrelated.md"},
+                                  run_states=states, poll_move=(6, "src/trusted_router/money.py"))
+    assert "keeping ci run 1234" in result.stdout
+    assert_snapshot_withheld(publication_repo, result, rounds=1)
+    assert round_polls(publication_repo) == [8]
+    assert len(cancels(publication_repo)) == 1
+    assert "main gained changes to refresh inputs:" in result.stdout
+
+
+def test_snapshot_ci_failure_after_a_kept_run_still_withholds(publication_repo: PublicationRepo) -> None:
+    # Keeping the run changes nothing about a red one: one rerun, then the
+    # snapshot is withheld and the quarantine step gets the run.
+    states: list[tuple[str, str | None, int]] = (
+        [("in_progress", None, 1)] * 4 + [("completed", "failure", 1), ("completed", "failure", 2)])
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, run_states=states)
+    assert result.returncode != 0
+    assert "snapshot_ci_failed=1234" in Path(publication_repo.env["GITHUB_OUTPUT"]).read_text()
+    assert publication_repo.main == (publication_repo.root / "main-moved").read_text().strip()
+    assert not any(call[0] == "api" for call in publication_repo.calls)
+
+
+@pytest.mark.parametrize("main_ci", [
+    [{"status": "in_progress", "conclusion": None, "event": "push"}],
+    [],  # not listed yet, a moment after the merge
+    [{"status": "completed", "conclusion": "failure", "event": "push"},
+     {"status": "completed", "conclusion": "success", "event": "workflow_dispatch"}],
+    [{"status": "completed", "conclusion": "failure", "event": "pull_request"}],
+])
+def test_a_main_whose_ci_is_not_red_is_built_on(
+    publication_repo: PublicationRepo, main_ci: list[dict[str, object]],
+) -> None:
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, main_ci=main_ci)
+    assert_snapshot_accepted(publication_repo, result)
+
+
+@pytest.mark.parametrize("main_ci, fault", [
+    ([{"status": "completed", "conclusion": "failure", "event": "push"}], None),
+    ([{"status": "completed", "conclusion": "cancelled", "event": "push"}], None),
+    (None, "error"),
+])
+def test_a_red_or_unknown_main_takes_the_exact_sha_path(
+    publication_repo: PublicationRepo, main_ci: list[dict[str, object]] | None, fault: str | None,
+) -> None:
+    # Rule 4: never build on a main whose own CI is red (or unreadable): the
+    # next round carries the snapshot and checks that exact SHA instead.
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, main_ci=main_ci,
+                                  main_ci_fault=fault)
+    assert_snapshot_published(publication_repo, result, rounds=2)
+    assert_carried_onto(publication_repo, (publication_repo.root / "main-moved").read_text().strip())
+    assert "not accepting ci run 1234" in result.stdout
+
+
+def test_accepting_a_red_main_is_detected(publication_repo: PublicationRepo) -> None:
+    red = [{"status": "completed", "conclusion": "failure", "event": "push"}]
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, main_ci=red,
+                                  mutation="accept_red_main")
+    # Built on the red main: the accepted SHA is main, with no red-main check.
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"accepted_sha={publication_repo.main}" in Path(publication_repo.env["GITHUB_OUTPUT"]).read_text()
+    with pytest.raises(AssertionError):
+        assert_snapshot_accepted(publication_repo, result)
+    with pytest.raises(AssertionError):
+        assert_snapshot_published(publication_repo, result, rounds=2)
+
+
+def test_accepting_a_parser_change_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, parser_change=True,
+                                  mutation="accept_parser")
+    assert_snapshot_accepted(publication_repo, result)
+    with pytest.raises(AssertionError):
+        assert_snapshot_published(publication_repo, result, rounds=2)
+
+
+@pytest.mark.parametrize("path, accepted", [
+    ("fastpath/internal/gwauth/vectors_test.go", False),  # the vectors' reader changed
+    ("docs/unrelated.md", True),
+])
+def test_alias_vectors_are_accepted_only_over_an_unchanged_fastpath(
+    publication_repo: PublicationRepo, path: str, accepted: bool,
+) -> None:
+    assert not covered_by_refresh_inputs(path)
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path}, vectors_change=True)
+    moved = (publication_repo.root / "main-moved").read_text().strip()
+    if accepted:
+        assert_snapshot_accepted(publication_repo, result)
+    else:
+        assert_snapshot_published(publication_repo, result, rounds=2)
+        assert "the snapshot changes alias vectors and main gained fastpath changes" in result.stdout
+    assert_carried_onto(publication_repo, moved, VECTORS)
+
+
+def test_accepting_vectors_over_a_fastpath_change_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": "fastpath/internal/gwauth/vectors_test.go"},
+                                  vectors_change=True, mutation="accept_vectors")
+    assert_snapshot_accepted(publication_repo, result)
+
+
+def test_an_accepted_snapshot_without_its_own_ci_run_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, mutation="no_accepted_ci")
+    assert result.returncode == 0, result.stdout + result.stderr
+    with pytest.raises(AssertionError):
+        assert_snapshot_accepted(publication_repo, result)
+
+
+def test_a_refresh_input_change_is_never_accepted(publication_repo: PublicationRepo) -> None:
+    path = "src/trusted_router/money.py"
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path})
+    assert_snapshot_withheld(publication_repo, result, rounds=1)
+    assert "main gained changes to refresh inputs:" in result.stdout
+    assert "accepting the data-only snapshot" not in result.stdout
+
+
+def test_a_raced_accepted_push_is_carried_again(publication_repo: PublicationRepo) -> None:
+    # Main merges again between the carry and the push: carry onto that head
+    # and push again, on the same CI run, without a new snapshot CI round.
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None},
+                                  protection_rejects=1, protection_moves_main=True)
+    assert_snapshot_accepted(publication_repo, result, main_pushes=2, posts=10)
+    assert "main raced the accepted snapshot push (try 1/5)" in result.stdout
+    assert_carried_onto(publication_repo, (publication_repo.root / "main-moved").read_text().strip())
+
+
+def test_a_raced_exact_push_is_accepted_onto_the_new_main(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(protection_rejects=1, protection_moves_main=True)
+    assert_snapshot_accepted(publication_repo, result, main_pushes=2, posts=10)
+    assert "main raced the checked snapshot push" in result.stdout
+
+
+def test_raced_accepted_pushes_are_bounded(publication_repo: PublicationRepo) -> None:
+    # Five raced carries, then a new round: carry and an exact-SHA CI run.
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None},
+                                  protection_rejects=5, protection_moves_main=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "main raced the accepted snapshot push (try 5/5)" in result.stdout
+    assert len(publication_repo.dispatched_shas) == 2
+    assert publication_repo.main == publication_repo.dispatched_shas[-1]
+    assert main_push_attempts(publication_repo) == 6
+    assert Path(publication_repo.env["GITHUB_OUTPUT"]).read_text() == "validated=true\n"

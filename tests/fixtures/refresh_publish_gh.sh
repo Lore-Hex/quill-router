@@ -19,6 +19,7 @@ branch_arg=''
 ref_arg=''
 event_arg=''
 failed_arg=''
+commit_arg=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jq) filter=$2; shift ;;
@@ -29,10 +30,28 @@ while [ "$#" -gt 0 ]; do
     --ref) ref_arg=$2; shift ;;
     --event) event_arg=$2; shift ;;
     --failed) failed_arg=1 ;;
+    --commit) commit_arg=$2; shift ;;
     repos/*/statuses/*) endpoint=$1 ;;
   esac
   shift
 done
+
+# A later merge lands at a given poll of the first CI run (`poll_move`).
+poll_move() {
+  local at path peer dispatch=0
+  at=$(jq -r '.poll_move.poll // empty' "${scenario}")
+  if [ -z "${at}" ] || [ "$1" != "${at}" ]; then return 0; fi
+  if [ -f "${TMPDIR}/dispatch-count" ]; then read -r dispatch < "${TMPDIR}/dispatch-count"; fi
+  if [ "${dispatch}" != 1 ]; then return 0; fi
+  peer=$(jq -r .advance_main.clone "${scenario}")
+  path=$(jq -r .poll_move.path "${scenario}")
+  "${REAL_GIT}" -C "${peer}" pull -q --ff-only origin main
+  printf 'later change\n' >> "${peer}/${path}"
+  "${REAL_GIT}" -C "${peer}" add -- "${path}"
+  "${REAL_GIT}" -C "${peer}" commit -qm "Later main update"
+  "${REAL_GIT}" -C "${peer}" push -q origin HEAD:main
+  "${REAL_GIT}" -C "${peer}" rev-parse HEAD > "${TMPDIR}/main-moved"
+}
 
 if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
   case "${third}" in
@@ -84,6 +103,20 @@ if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
     refresh-prices.yml|deploy.yml) ;;
     *) echo "Unexpected workflow: ${third}" >&2; exit 1 ;;
   esac
+elif [ "${command}" = run ] && [ "${subcommand}" = list ] && [ -n "${commit_arg}" ]; then
+  # The ci.yml runs of a main commit (the publication's red-main check):
+  # the scenario's `main_ci` list, green push CI by default.
+  if [ "${workflow_arg}" != ci.yml ]; then
+    echo "Unexpected commit run selection: workflow=${workflow_arg}" >&2
+    exit 1
+  fi
+  if [ "$(jq -r '.main_ci_fault // empty' "${scenario}")" = error ]; then
+    echo 'simulated run listing failure' >&2
+    exit 1
+  fi
+  answer=$(jq -c "(.main_ci // [{\"status\": \"completed\", \"conclusion\": \"success\", \"event\": \"push\"}]) | ${filter}" "${scenario}")
+  record_event main-ci "${commit_arg}" "${answer}"
+  printf '%s\n' "${answer}"
 elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
   if [ "${workflow_arg}" != ci.yml ] || [ "${event_arg}" != workflow_dispatch ] || \
      [ "${branch_arg}" != "automation/price-refresh-${GITHUB_RUN_ID}" ]; then
@@ -94,6 +127,7 @@ elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
   if [ -f "${TMPDIR}/poll-count" ]; then read -r poll < "${TMPDIR}/poll-count"; fi
   poll=$((poll + 1))
   printf '%s\n' "${poll}" > "${TMPDIR}/poll-count"
+  poll_move "${poll}"
   # Apply the caller's actual jq expression, including its headSha selection.
   # Once the sequence ends, repeat its last answer (also covers all 180 polls).
   answer=$(jq -c --argjson index "$((poll - 1))" \
@@ -111,6 +145,7 @@ elif [ "${command}" = run ] && [ "${subcommand}" = view ]; then
   if [ -f "${TMPDIR}/poll-count" ]; then read -r poll < "${TMPDIR}/poll-count"; fi
   poll=$((poll + 1))
   printf '%s\n' "${poll}" > "${TMPDIR}/poll-count"
+  poll_move "${poll}"
   answer=$(jq -c --argjson index "$((poll - 1))" --arg id "${third}" \
     '.polls[([$index, (.polls | length) - 1] | min)] | map(select((.databaseId | tostring) == $id))[0] // empty' \
     "${scenario}")
