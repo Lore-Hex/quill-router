@@ -61,7 +61,12 @@ def runtime_layers(config: dict) -> tuple[list[str], dict]:
                   or re.fullmatch(r"/bin/sh -c #\(nop\)\s+COPY dir:[0-9a-f]{64} in \./src\s*",
                                   h["created_by"])]
     require(len(boundaries) == 1 and boundaries[0] > 0, "unrecognized public image build")
-    return layers[:boundaries[0]], config["config"]
+    runtime_config = config["config"]
+    require(isinstance(runtime_config, dict) and bool(runtime_config.get("Entrypoint"))
+            and bool(runtime_config.get("Cmd")), "missing runtime settings")
+    # The legacy Docker builder assigns a different intermediate image ID to
+    # this field for every build. It is not an executable runtime setting.
+    return layers[:boundaries[0]], {k: v for k, v in runtime_config.items() if k != "Image"}
 
 
 def runtime(image: str) -> tuple[list[str], dict]:
