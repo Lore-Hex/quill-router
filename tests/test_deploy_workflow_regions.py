@@ -150,8 +150,9 @@ def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> Non
 def test_snapshot_upload_uses_isolated_iap_acceleration_without_runtime_bloat() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
-    steps = workflow["jobs"]["migrate-schema"]["steps"]
-    install = next(step for step in steps if step.get("name") == "Install migration runtime")
+    steps = workflow["jobs"]["sync-public-snapshots"]["steps"]
+    install = next(step for step in workflow["jobs"]["migrate-schema"]["steps"]
+                   if step.get("name") == "Install migration runtime")
     sync = next(step for step in steps if step.get("name") == "Sync shared public analytics snapshots")
 
     assert not any(dep.startswith("numpy") for dep in project["project"]["dependencies"])
@@ -167,7 +168,7 @@ def test_snapshot_upload_uses_isolated_iap_acceleration_without_runtime_bloat() 
 
 def test_snapshot_failure_is_reported_using_outcome_not_masked_conclusion() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
-    steps = workflow["jobs"]["migrate-schema"]["steps"]
+    steps = workflow["jobs"]["sync-public-snapshots"]["steps"]
     sync = next(step for step in steps if step.get("name") == "Sync shared public analytics snapshots")
     report = next(step for step in steps if step.get("name") == "Report snapshot publication failure")
 
@@ -189,6 +190,27 @@ def test_snapshot_sync_cannot_gate_the_control_plane_deploy() -> None:
     carrying. Bounded and non-fatal, so a snapshot problem degrades snapshots.
     """
     workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
+    jobs = yaml.safe_load(workflow)["jobs"]
+    publisher = jobs["sync-public-snapshots"]
+
+    def ancestors(name: str) -> set[str]:
+        return {upstream for dep in jobs[name].get("needs", [])
+                for upstream in {dep, *ancestors(dep)}}
+
+    assert {"admit-cloud", "select-release", "migrate-schema", "confirm-regions-ready",
+            "confirm-still-on-main"} <= ancestors("sync-public-snapshots")
+    assert "needs.confirm-still-on-main.outputs.on_main == 'true'" in publisher["if"]
+    assert publisher["steps"][0]["with"]["ref"] == "${{ needs.select-release.outputs.commit }}"
+    assert publisher["env"]["TR_DEPLOY_MUTEX_OPERATION"] == "${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}"
+    commands = [s.get("run", "") for s in publisher["steps"]]
+    assert commands.index("bash scripts/deploy/deploy_mutex.sh assert") < next(
+        i for i, command in enumerate(commands) if "sync_public_analytics_snapshots.sh --apply" in command
+    )
+    for lane in ("deploy", "rollout-secondaries"):
+        assert "sync-public-snapshots" not in ancestors(lane)
+        assert lane not in ancestors("sync-public-snapshots")
+    assert "sync-public-snapshots" in jobs["finalize-cloud"]["needs"]
+    assert workflow.count("sync_public_analytics_snapshots.sh --apply") == 1
     step = workflow.split("- name: Sync shared public analytics snapshots", 1)[1].split(
         "- name:", 1
     )[0]
