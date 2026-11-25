@@ -654,11 +654,12 @@ def test_nscale_secret_is_refreshed_hourly() -> None:
     assert "NSCALE_API_KEY:trustedrouter-nscale-api-key" in workflow
 
 
-def test_nscale_prepaid_routes_are_held_while_the_operator_token_is_refused() -> None:
-    # 2026-11-23: Nscale refused TR's token with HTTP 401/403 "Invalid or
-    # expired token" across models (Sentry QUILL-ROUTER-J2, QUILL-ROUTER-J4),
-    # so the account, not any one model, is the cause. Every prepaid route
-    # stays dark; already-authorized calls keep their settlement tariff.
+def test_nscale_prepaid_routes_serve_after_the_operator_token_was_replaced() -> None:
+    # 2026-11-23 Nscale refused TR's old token on every route ("Invalid or
+    # expired token") and #2885 held the provider. The key was replaced on
+    # 2026-11-25, so the hold is lifted: Nscale prepaid routes are built again
+    # and no reviewed hold blocks them. If Nscale still refuses, route-health
+    # probes alert and the hold should be restored.
     from tests import catalog_vehicles
     from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
     from trusted_router.provider_contracts import (
@@ -666,11 +667,9 @@ def test_nscale_prepaid_routes_are_held_while_the_operator_token_is_refused() ->
         provider_route_reviewed_hold,
     )
 
-    assert PREPAID_PROVIDER_HOLD_REASONS["nscale"] == "provider-access-unavailable"
-    assert "provider-access-unavailable" in refresh.SNAPSHOT_EXCLUDED_HOLD_REASONS
-    assert provider_route_reviewed_hold("nscale", "z-ai/glm-5.3")
+    assert "nscale" not in PREPAID_PROVIDER_HOLD_REASONS
+    assert not provider_route_reviewed_hold("nscale", "z-ai/glm-5.3")
     built = catalog_vehicles.registry_endpoints()
-    assert not [key for key in built if key.endswith("@nscale/prepaid")]
-    held = {key for key in HELD_PREPAID_SETTLEMENT_ENDPOINTS if key.endswith("@nscale/prepaid")}
-    assert "z-ai/glm-5.3@nscale/prepaid" in held
-    assert "qwen/qwen3.8-27b@nscale/prepaid" in held
+    assert "z-ai/glm-5.3@nscale/prepaid" in built
+    assert "qwen/qwen3.8-27b@nscale/prepaid" in built
+    assert not [key for key in HELD_PREPAID_SETTLEMENT_ENDPOINTS if key.endswith("@nscale/prepaid")]
