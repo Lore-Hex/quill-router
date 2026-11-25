@@ -1807,6 +1807,13 @@ for _closed_model_id in {
         MODELS[_closed_model_id] = replace(
             MODELS[_closed_model_id], prepaid_available=False, byok_available=False,
         )
+# Likewise a launch video model whose every route is held (x-ai/grok-imagine-
+# video under xAI ZDR) stays known but claims no availability.
+for _video_model_id in frozenset(_VIDEO_MODELS) - _routed_model_ids:
+    if _video_model_id in MODELS:
+        MODELS[_video_model_id] = replace(
+            MODELS[_video_model_id], prepaid_available=False, byok_available=False,
+        )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
 
 # Apply gateway rollout holds after every catalog source has merged and before
