@@ -18,6 +18,7 @@ from trusted_router.services.checkout_fees import (
     rail_processing_fee,
     stripe_max_credit_cents,
 )
+from trusted_router.services.paused_topup import refuse_topup_if_abuse_paused
 from trusted_router.services.stripe_radar import payment_account_signals
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
@@ -35,6 +36,7 @@ def create_checkout_session(
     workspace = STORE.get_workspace(workspace_id)
     if workspace is None:
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)
+    refuse_topup_if_abuse_paused(workspace)
 
     success_url = body.success_url or f"https://{settings.trusted_domain}/billing/success"
     cancel_url = body.cancel_url or f"https://{settings.trusted_domain}/billing"

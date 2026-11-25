@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -16,6 +17,8 @@ from trusted_router.services.paypal_billing import (
     credit_paypal_capture,
     verify_paypal_webhook_signature,
 )
+from trusted_router.services.paypal_topup_guard import observe_paypal_capture
+from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 
@@ -44,6 +47,19 @@ def register(router: APIRouter) -> None:
             # a slow PayPal API/Store cannot stall unrelated login or console
             # requests.
             result = await run_in_threadpool(credit_paypal_capture, event)
+            if result.credited:
+                # Normally the capture route credits first and this delivery
+                # is a duplicate; observe here only when the webhook credited.
+                await run_in_threadpool(
+                    partial(
+                        observe_paypal_capture,
+                        STORE,
+                        workspace_id=result.workspace_id,
+                        seller_protection=result.seller_protection,
+                        payer_email_matches=None,
+                        settings=settings,
+                    )
+                )
             return {
                 "data": {
                     "event_id": event_id,
@@ -52,14 +68,27 @@ def register(router: APIRouter) -> None:
                     "workspace_id": result.workspace_id,
                     "credited": result.credited,
                     "status": result.status,
+                    "held": result.held,
                     **money_pair("amount", result.amount_microdollars),
                     **money_pair("processing_fee", result.processing_fee_microdollars),
                     **money_pair("total", result.charge_amount_microdollars),
                 }
             }
-        from trusted_router.services.paypal_trust import apply_paypal_adverse
+        from trusted_router.services.paypal_topup_guard import latch_after_paypal_adverse
+        from trusted_router.services.paypal_trust import record_paypal_adverse
 
-        outcomes = await run_in_threadpool(apply_paypal_adverse, event)
-        if outcomes:
-            return {"data": {"event_id": event_id, "adverse": outcomes}}
+        results = await run_in_threadpool(record_paypal_adverse, event)
+        if results:
+            # After the adverse fact committed: a dispute or reversal on a
+            # new workspace latches it, so what is left cannot be spent.
+            latches = await run_in_threadpool(
+                latch_after_paypal_adverse, STORE, results, settings=settings
+            )
+            data: dict[str, Any] = {
+                "event_id": event_id,
+                "adverse": [result.outcome for _, result in results],
+            }
+            if latches:
+                data["latches"] = latches
+            return {"data": data}
         return {"data": {"ignored": True, "event_id": event_id}}

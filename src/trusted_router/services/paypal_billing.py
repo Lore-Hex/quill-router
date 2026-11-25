@@ -25,6 +25,15 @@ from trusted_router.money import (
 )
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.services.checkout_fees import rail_processing_fee
+from trusted_router.services.paused_topup import (
+    alert_held_topup,
+    refuse_topup_if_abuse_paused,
+)
+from trusted_router.services.paypal_topup_guard import (
+    check_paypal_capture,
+    check_paypal_checkout,
+    observe_paypal_capture,
+)
 from trusted_router.services.stripe_fees import (
     CREDITS_LINE_ITEM_NAME,
     PROCESSING_FEE_LINE_ITEM_NAME,
@@ -64,6 +73,11 @@ class PayPalCaptureResult:
     status: str
     processing_fee_microdollars: int = 0
     charge_amount_microdollars: int = 0
+    # PayPal's seller_protection.status on the capture, when reported.
+    seller_protection: str | None = None
+    # Credited onto an abuse-latched workspace: unspendable until an operator
+    # clears the latch, and alerted for a refund.
+    held: bool = False
 
 
 @dataclass(frozen=True)
@@ -89,6 +103,16 @@ def create_paypal_checkout_session(
     workspace = STORE.get_workspace(workspace_id)
     if workspace is None:
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)
+    refuse_topup_if_abuse_paused(workspace)
+    # Before any order exists, so a refusal leaves nothing for the buyer to
+    # approve. Runs in mock mode too, so local and test exercise the guard.
+    check_paypal_checkout(
+        STORE,
+        workspace_id=workspace_id,
+        initiating_user_id=initiating_user_id,
+        credit_amount_cents=credit_amount_cents,
+        settings=settings,
+    )
 
     if not settings.paypal_enabled:
         if settings.environment.lower() in {"local", "test"}:
@@ -177,6 +201,10 @@ def capture_paypal_order_for_workspace(
 ) -> PayPalCaptureResult:
     if not settings.paypal_enabled:
         raise api_error(400, "PayPal checkout is not configured", ErrorType.BAD_REQUEST)
+    # Capturing is the moment money moves. Refusing here leaves the approved
+    # order uncaptured: PayPal never charges the buyer and it expires.
+    refuse_topup_if_abuse_paused(STORE.get_workspace(workspace_id))
+    check_paypal_capture(STORE, workspace_id=workspace_id, settings=settings)
     order = _paypal_post(
         settings,
         f"/v2/checkout/orders/{order_id}/capture",
@@ -188,7 +216,14 @@ def capture_paypal_order_for_workspace(
     )
     result = credit_paypal_capture(order, expected_workspace_id=workspace_id)
     if result.status == "COMPLETED":
-        record_paypal_payer_email_match(order, workspace_id=result.workspace_id)
+        payer_matches = record_paypal_payer_email_match(order, workspace_id=result.workspace_id)
+        observe_paypal_capture(
+            STORE,
+            workspace_id=result.workspace_id,
+            seller_protection=result.seller_protection,
+            payer_email_matches=payer_matches,
+            settings=settings,
+        )
     if result.order_id == "":
         return PayPalCaptureResult(
             order_id=order_id,
@@ -199,6 +234,8 @@ def capture_paypal_order_for_workspace(
             status=result.status,
             processing_fee_microdollars=result.processing_fee_microdollars,
             charge_amount_microdollars=result.charge_amount_microdollars,
+            seller_protection=result.seller_protection,
+            held=result.held,
         )
     return result
 
@@ -292,11 +329,19 @@ def credit_paypal_capture(
             or (workspace.owner_user_id if workspace is not None else None)
         ),
     )
+    held = False
     if credited:
         record_credit_purchase(
             workspace_id,
             amount_microdollars=amount_microdollars,
             payment_method="paypal",
+        )
+        held = alert_held_topup(
+            STORE,
+            workspace_id=workspace_id,
+            provider="paypal",
+            payment_ref=capture_id,
+            amount_microdollars=amount_microdollars,
         )
     return PayPalCaptureResult(
         order_id=parsed["order_id"],
@@ -307,6 +352,8 @@ def credit_paypal_capture(
         status=parsed["status"],
         processing_fee_microdollars=processing_fee_microdollars,
         charge_amount_microdollars=charge_amount_microdollars,
+        seller_protection=parsed["seller_protection"],
+        held=held,
     )
 
 
@@ -645,7 +692,16 @@ def _paypal_capture_payload(
         "charge_amount_microdollars": charge_amount_microdollars,
         "status": str(capture.get("status") or ""),
         "occurred_at": capture.get("create_time"),
+        "seller_protection": _seller_protection_status(capture),
     }
+
+
+def _seller_protection_status(capture: Mapping[str, Any]) -> str | None:
+    protection = capture.get("seller_protection")
+    if not isinstance(protection, Mapping):
+        return None
+    status = protection.get("status")
+    return status.strip().upper()[:32] if isinstance(status, str) and status.strip() else None
 
 
 def _paypal_credit_reference(

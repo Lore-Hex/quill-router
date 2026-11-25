@@ -24,6 +24,7 @@ from typing import Any
 
 from trusted_router.config import Settings
 from trusted_router.refill_claim import recent_block, refill_now
+from trusted_router.services.paused_topup import abuse_paused
 from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
@@ -99,8 +100,13 @@ def maybe_charge_after_settle(
 
     # Closure archives the workspace and disables refill in the same commit.
     # Recheck here as an earlier account read may predate that commit.
-    if STORE.get_workspace(workspace_id) is None:
+    current_workspace = STORE.get_workspace(workspace_id)
+    if current_workspace is None:
         return AutoRefillOutcome(fired=False, reason="account_closed")
+    # An abuse-latched workspace cannot spend; charging its card only buys a
+    # refund or a chargeback.
+    if abuse_paused(current_workspace):
+        return AutoRefillOutcome(fired=False, reason="abuse_paused")
 
     if account.auto_refill_threshold_microdollars >= account.auto_refill_amount_microdollars:
         # Saving this is refused now (money.check_auto_refill_settings), but a

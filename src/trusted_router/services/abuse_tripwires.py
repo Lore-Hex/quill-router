@@ -1,9 +1,12 @@
 """Abuse tripwires: detect-and-alert checks for stolen-payment top-up rings.
 
-Alert only. Nothing here pauses, latches or refuses anything: each finding is
-an ops alert (log + Sentry issue) that names the workspace ids and the signals
-that fired, so an operator can review it and latch with
-``POST /internal/admin/workspaces/{id}/abuse`` when it is real.
+Alert only by default: each finding is an ops alert (log + Sentry issue) that
+names the workspace ids and the signals that fired, so an operator can review
+it and latch with ``POST /internal/admin/workspaces/{id}/abuse`` when it is
+real. The one exception is opt-in: with ``abuse_tripwire_auto_latch_linked``
+on, a funded shared session that already holds an abuse-latched workspace
+latches its unpaused siblings (``latch_linked_workspaces``). Off, the alert
+names them as ``linked_to_latched``.
 
 Primary signals (each one alone raises an alert):
 
@@ -80,6 +83,7 @@ ALERT_FINGERPRINTS: dict[str, list[str]] = {
         "starter_credit_farm",
         "single_model_concentration",
         "new_github_account",
+        "linked_latch",
         "deferred",
     )
 }
@@ -103,6 +107,7 @@ class WorkspaceContext:
     created_at: dt.datetime | None = None
     first_topup_at: dt.datetime | None = None
     billing_paused: bool = False
+    abuse_latched: bool = False
     new_github_account: bool = False
     paypal_payer_mismatch: bool | None = None
 
@@ -119,6 +124,8 @@ class WorkspaceContext:
             signals.append("paypal_payer_mismatch")
         if self.billing_paused:
             signals.append("already_paused")
+        if self.abuse_latched:
+            signals.append("abuse_latched")
         return signals
 
 
@@ -129,6 +136,9 @@ class Finding:
     fingerprint: list[str]
     tags: dict[str, str]
     workspace_ids: tuple[str, ...]
+    # Unpaused workspaces in a funded ring that already holds an abuse-latched
+    # workspace: the ones ``auto_latch_linked`` latches (or names as would_latch).
+    latch_candidates: tuple[str, ...] = ()
 
 
 def parse_time(value: Any) -> dt.datetime | None:
@@ -173,6 +183,7 @@ def store_workspace_context(store: Any, workspace_id: str) -> WorkspaceContext:
         created_at=parse_time(workspace.created_at),
         first_topup_at=parse_time(getattr(attribution, "first_purchase_at", None)),
         billing_paused=bool(getattr(workspace, "billing_paused", False)),
+        abuse_latched="abuse" in (getattr(workspace, "billing_pause_causes", None) or ()),
         new_github_account=(
             owner is not None
             and github_account_was_new(owner.github_account_created_at, owner.created_at)
@@ -218,6 +229,9 @@ def evaluate_shared_sessions(
             continue  # already latched: nothing left for an operator to do
         digest = _session_digest(session_id)
         signal = "shared_session" if _session_funded(row, contexts) else "starter_credit_farm"
+        latch_candidates: tuple[str, ...] = ()
+        if signal == "shared_session" and any(item.abuse_latched for item in contexts):
+            latch_candidates = tuple(item.workspace_id for item in contexts if not item.billing_paused)
         app = _app(row.get("app"))
         described = " ".join(
             _describe(
@@ -235,6 +249,7 @@ def evaluate_shared_sessions(
                     f"abuse.tripwire {signal} "
                     f"session={digest} workspaces={len(workspace_ids)} app={app} "
                     f"signals={signal} ws={described}"
+                    + (f" linked_to_latched={','.join(latch_candidates)}" if latch_candidates else "")
                 ),
                 fingerprint=ALERT_FINGERPRINTS[signal],
                 tags={
@@ -245,9 +260,46 @@ def evaluate_shared_sessions(
                     "abuse_app": app,
                 },
                 workspace_ids=tuple(workspace_ids),
+                latch_candidates=latch_candidates,
             )
         )
     return findings
+
+
+LINKED_LATCH_OPERATOR = "system:abuse-tripwire"
+
+
+def latch_linked_workspaces(store: Any, findings: Iterable[Finding], *, enabled: bool) -> list[str]:
+    """Latch the unpaused members of funded rings that hold a latched workspace.
+
+    Off by default: the alert names them as ``linked_to_latched`` either way.
+    Idempotent per (session, workspace) abuse_ref, so an operator's clear is
+    never undone by the next sweep. Returns the workspaces newly latched.
+    """
+    if not enabled:
+        return []
+    latched: list[str] = []
+    for finding in findings:
+        digest = finding.tags.get("abuse_session", "")
+        for workspace_id in finding.latch_candidates:
+            try:
+                if store.record_workspace_abuse_and_demote(
+                    workspace_id,
+                    abuse_ref=f"tripwire-linked:{digest}:{workspace_id}",
+                    operator_identity=LINKED_LATCH_OPERATOR,
+                    reason="Shared client session with an abuse-latched funded workspace",
+                ):
+                    latched.append(workspace_id)
+            except Exception:  # noqa: BLE001 - one failure must not stop the sweep
+                log.warning("abuse_tripwire.linked_latch_failed", exc_info=True)
+    if latched:
+        ops_alert(
+            f"abuse.tripwire linked_latch latched={','.join(latched)}",
+            fingerprint=ALERT_FINGERPRINTS["linked_latch"],
+            tags={"tr_component": "abuse_tripwire", "abuse_signal": "linked_latch"},
+            claim_detail=",".join(latched),
+        )
+    return latched
 
 
 def _session_funded(row: Mapping[str, Any], contexts: Iterable[WorkspaceContext]) -> bool:
@@ -328,6 +380,7 @@ def run_tripwire_sweep(
     *,
     now: dt.datetime | None = None,
     emit: Callable[[Finding], bool] | None = None,
+    auto_latch_linked: bool = False,
 ) -> list[Finding]:
     """Evaluate both primary tripwires once; emit each finding at most once.
 
@@ -358,6 +411,7 @@ def run_tripwire_sweep(
     sessions = evaluate_shared_sessions(session_rows, context=context, concentrated=concentrated, now=current)
     rings = [finding for finding in sessions if finding.tags["abuse_signal"] == "shared_session"]
     farms = [finding for finding in sessions if finding.tags["abuse_signal"] != "shared_session"]
+    latch_linked_workspaces(store, rings, enabled=auto_latch_linked)
     # Payment-ring findings first, so farms never take the per-sweep cap from them.
     findings = [*rings, *concentration, *farms]
     send = emit or _emit
@@ -429,7 +483,9 @@ def run_hourly_tripwire_sweep(
     current = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC)
     if not store.record_webhook_event_once(SWEEP_CLAIM_SOURCE, current.strftime("%Y-%m-%dT%H")):
         return None
-    return run_tripwire_sweep(reader, store, now=current)
+    return run_tripwire_sweep(
+        reader, store, now=current, auto_latch_linked=settings.abuse_tripwire_auto_latch_linked,
+    )
 
 
 def alert_new_github_signup(
