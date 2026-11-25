@@ -607,7 +607,7 @@ jobs:
           --cov=trusted_router --cov-report=
       - name: Upload this shard's durations
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: durations-default-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
@@ -619,7 +619,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-failures-${{ matrix.shard }}
           path: ${{ runner.temp }}/test-failures/failures.json
@@ -632,7 +632,7 @@ jobs:
         # make the combine job compute the floor from fewer shards than it
         # thinks it has.
         run: mv .coverage coverage-${{ matrix.shard }}.dat
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.shard }}
           path: coverage-${{ matrix.shard }}.dat
@@ -696,7 +696,7 @@ jobs:
         # Named under durations-default-*, so merge_shard_durations.py's
         # default profile reads the lane with the eight shards.
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: durations-default-heavy-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
@@ -709,7 +709,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-failures-heavy-${{ matrix.shard }}
           path: ${{ runner.temp }}/test-failures/failures.json
@@ -717,7 +717,7 @@ jobs:
           if-no-files-found: ignore
       - name: Stash this shard's coverage
         run: mv .coverage coverage-heavy-${{ matrix.shard }}.dat
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-heavy-${{ matrix.shard }}
           path: coverage-heavy-${{ matrix.shard }}.dat
@@ -819,7 +819,7 @@ jobs:
         if: github.event_name == 'pull_request'
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-selection
           path: selection.json.gz
@@ -975,7 +975,7 @@ jobs:
           ${POST_CUTOVER_TESTS}
       - name: Upload this shard's durations
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: durations-post-cutover-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
@@ -1040,7 +1040,7 @@ jobs:
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
       - name: Upload oracle durations separately from the full suites
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: durations-oracle-${{ matrix.clock }}-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
