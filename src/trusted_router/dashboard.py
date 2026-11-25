@@ -113,6 +113,7 @@ from trusted_router.fortanix_launch import (
     fortanix_launch_offer,
     launch_offer_facts,
 )
+from trusted_router.gateway_processing import GATEWAY_HOP_CLAIM, gateway_processing_claim
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -2806,6 +2807,8 @@ def _env() -> Environment:
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
     env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
+    env.globals["gateway_processing_claim"] = gateway_processing_claim
+    env.globals["gateway_hop_claim"] = GATEWAY_HOP_CLAIM
     env.globals["vendor_exclusion_claim"] = VENDOR_EXCLUSION_CLAIM
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
@@ -5462,7 +5465,9 @@ def _llms_common_objections(domain: str) -> list[str]:
         "dependency, with TrustedRouter responsible for its hosted API, routing, and billing "
         "and upstream availability and processing still dependencies; "
         f"[status](https://{domain}/status) and "
-        f"[benchmarks](https://{domain}/benchmarks/reports) imply no latency guarantee.",
+        f"[benchmarks](https://{domain}/benchmarks/reports) imply no latency guarantee. "
+        f"{gateway_processing_claim()} {GATEWAY_HOP_CLAIM} "
+        f"See [live end-to-end synthetic measurements](https://{domain}/status).",
         "- B. Prompt TLS terminates inside an attested enclave running published source, "
         "the control plane never receives production inference prompt or output bodies, "
         "ordinary inference keeps no prompt or output logs, and anyone can verify the "

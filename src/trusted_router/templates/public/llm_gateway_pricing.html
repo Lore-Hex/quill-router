@@ -46,6 +46,7 @@
 </section>
 <section class="content-section" id="worth"><h2>Is an LLM gateway worth the markup versus calling the provider directly?</h2>
 <p>With one provider and steady usage, going direct is cheaper by the fee; the gateway fee is repaid when savings from the model mix exceed that fee, under the workload assumptions below.</p>
+{% include "public/_gateway_processing.html" %}
 <p>TrustedRouter adds <span data-fee-per-hundred>${{ cost_guide.fee_per_hundred }}</span> per $100.00 of provider-priced inference.{% if cost_guide.break_even_percent is defined %} The {{ cost_guide.fee_percent }}% fee is repaid once about <span data-break-even-percent="{{ cost_guide.break_even_percent_exact }}">{{ cost_guide.break_even_percent }}%</span> of {{ cost_guide.mid.name }} traffic moves to {{ cost_guide.small.name }}. At that share, the gateway inference total matches the direct {{ cost_guide.mid.name }} bill of ${{ cost_guide.mid.provider_cost }}. This excludes payment processing and assumes identical token counts. The same mix is possible direct with two integrations.{% endif %}</p>
 <p>For implementation examples{% if cost_guide.mixed_total is defined %} and the {{ cost_guide.cheap_percent }}/{{ cost_guide.premium_percent }} split{% endif %}, see <a href="/docs/cut-llm-api-costs">cut LLM API costs without rewriting your code</a>.</p>
 </section>
