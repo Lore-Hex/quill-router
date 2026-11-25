@@ -17,7 +17,10 @@ from tests.pinned_manifests import (
     serve_manifest_rows,
 )
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, Model, endpoints_for_model
-from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
+from trusted_router.provider_lifecycle import (
+    BASETEN_DECEMBER_2026_RETIREMENT_AT,
+    FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+)
 from trusted_router.providers import (
     OPENAI_COMPATIBLE_PROVIDERS,
     ProviderClient,
@@ -669,7 +672,7 @@ async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(tmp_path, m
 @pytest.mark.parametrize("endpoint_id", [
     "openai/gpt-oss-120b@fireworks/prepaid",
     "moonshotai/kimi-k3@fireworks/prepaid",
-    "z-ai/glm-5.2-fast@baseten/prepaid",
+    "z-ai/glm-5.3-fast@baseten/prepaid",
     "qwen/qwen3.7-flash@alibaba/prepaid",
     "qwen/qwen3.7-flash-2026-07-15@alibaba/prepaid",
 ])
@@ -719,7 +722,11 @@ def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing(
 def test_fireworks_catalog_exposes_glm_52_fast_router(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    # After Fireworks' retirement the router is still served by Baseten.
+    # After Fireworks' retirement the router is still served by Baseten, until
+    # Baseten retires it too (2026-12-24 01:00 UTC); then no host serves it.
+    if not catalog_predates(BASETEN_DECEMBER_2026_RETIREMENT_AT):
+        assert endpoints_for_model("z-ai/glm-5.2-fast") == []
+        return
     serve_manifest_rows(monkeypatch, tmp_path, "baseten", [BASETEN_GLM_5_2_FAST])
     endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
@@ -747,6 +754,10 @@ def test_fireworks_catalog_exposes_glm_52_fast_router(
 def test_baseten_catalog_exposes_glm_52_fast_router(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    if not catalog_predates(BASETEN_DECEMBER_2026_RETIREMENT_AT):
+        # Baseten's December retirement refuses even the pinned row.
+        assert endpoints_for_model("z-ai/glm-5.2-fast") == []
+        return
     serve_manifest_rows(monkeypatch, tmp_path, "baseten", [BASETEN_GLM_5_2_FAST])
     endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
     baseten = [endpoint for endpoint in endpoints if endpoint.provider == "baseten"]

@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 
+from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import (
     MODELS,
     PROVIDERS,
@@ -28,8 +29,10 @@ from trusted_router.catalog_data import (
     US_PROVIDER_ONLY_MODEL_IDS,
 )
 from trusted_router.catalog_privacy import endpoint_privacy_tier, endpoint_zero_data_retention
+from trusted_router.provider_lifecycle import BASETEN_DECEMBER_2026_RETIREMENT_AT
 
 INKLING_2_SMALL = "thinkingmachines/inkling-2-small"
+NEMOTRON_3_ULTRA = "nvidia/nemotron-3-ultra-550b-a55b"
 LIBERTY_WINDOW = 1_048_576
 
 
@@ -103,7 +106,20 @@ def test_liberty_tier_is_its_weakest_members_best_us_route(model_id: str) -> Non
 def test_liberty_41_advertises_zero_retention() -> None:
     if "cloudflare-workers-ai" not in _inkling_endpoints():
         pytest.skip("Cloudflare's Inkling 2 Small route is not cataloged under this clock")
-    assert model_max_privacy_tier(MODELS[LIBERTY_4_1_MODEL_ID]) >= PRIVACY_TIER_ZERO_RETENTION
+    if catalog_predates(BASETEN_DECEMBER_2026_RETIREMENT_AT):
+        assert model_max_privacy_tier(MODELS[LIBERTY_4_1_MODEL_ID]) >= PRIVACY_TIER_ZERO_RETENTION
+        return
+    # Baseten's 2026-12-24 retirement removes Nemotron 3 Ultra's only ZDR US
+    # route. Its remaining US hosts are not ZDR, so Liberty 4.0 and 4.1 stop
+    # advertising zero retention: the label follows the members, never a claim.
+    ultra_best = max(
+        endpoint_privacy_tier(endpoint)
+        for endpoint in endpoints_for_model(NEMOTRON_3_ULTRA)
+        if PROVIDERS[endpoint.provider].provider_headquarters_country == PROVIDER_JURISDICTION_US
+    )
+    assert ultra_best < PRIVACY_TIER_ZERO_RETENTION
+    for model_id in (LIBERTY_4_0_MODEL_ID, LIBERTY_4_1_MODEL_ID):
+        assert model_max_privacy_tier(MODELS[model_id]) == ultra_best
 
 
 def test_one_non_zdr_member_route_demotes_liberty_41_not_40(

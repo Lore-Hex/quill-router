@@ -77,4 +77,5 @@ def test_baseten_september_manifest_records_only_announced_retirements() -> None
         assert rows[model_id]["upstream_id"] == native_id
         assert rows[model_id]["retirement_at"] == "2026-09-26T00:00:00Z"
     for model_id in _RETAINED:
-        assert "retirement_at" not in rows[model_id]
+        # Some later retire in Baseten's December notice, never in September's.
+        assert rows[model_id].get("retirement_at") != "2026-09-26T00:00:00Z"

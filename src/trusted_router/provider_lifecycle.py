@@ -105,6 +105,11 @@ DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT = datetime(2026, 11, 30, 0, 0
 # Boundless's November 24 notices stop serving 18 models on Thursday 26 Nov
 # 2026 at 23:59 UTC (the first named eight; the follow-up lists all 18).
 BOUNDLESS_NOV_26_RETIREMENT_AT = datetime(2026, 11, 26, 23, 59, tzinfo=UTC)
+# Baseten's November 25 notice (changelog dated November 20) deprecates
+# five Model APIs at 5pm PT on
+# December 23, 2026. Daylight saving time ended on November 1, so that is
+# 17:00 PST (UTC-8), i.e. 2026-12-24 01:00 UTC.
+BASETEN_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 24, 1, 0, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -757,6 +762,51 @@ _RETIREMENTS = (
             "deepseek-ai/DeepSeek-V4-Pro",
         }),
         effective_at=BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
+    ),
+    # Baseten's November 25 notice (and its public changelog entry "Model API
+    # deprecation notice for December 23rd"): DeepSeek V4.1 Flash, DeepSeek
+    # V4.1 Flash Fast, DeepSeek V4 Flash 0731, GLM 5.2 Fast and Nemotron 3
+    # Ultra are deprecated at 5pm PT on December 23 (17:00 PST = 2026-12-24
+    # 01:00 UTC), after which the ids return errors. Each name is the
+    # display_name of exactly one Baseten manifest row; the Fast variants are
+    # separate Model API ids, not service tiers. The dated DeepSeek V4.1 Flash
+    # 1017 (and 1017 Fast) routes are not named and stay. GLM 5.2 Fast and
+    # DeepSeek V4.1 Flash Fast have no other live provider, so they leave the
+    # catalog at the cutoff; the rest stay on other providers.
+    # https://www.baseten.co/resources/changelog/model-api-deprecations-december-23-2026/
+    # Replacements are the changelog's own, quoted only where like-for-like or
+    # newer; never substituted.
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-flash-0731"}),
+        upstream_ids=frozenset({
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            "deepseek-ai/DeepSeek-V4-Flash-0731",
+        }),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"deepseek/deepseek-v4.1-flash-fast"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4.1-Flash-Fast"}),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017-fast",),
+    ),
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"z-ai/glm-5.2-fast"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.2-Fast"}),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3-fast",),
+    ),
+    # The changelog suggests Nemotron 3.5 Super VL (120B) for Nemotron 3 Ultra
+    # (550B). A smaller tier is not a like-for-like swap, so none is quoted.
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"nvidia/nemotron-3-ultra-550b-a55b"}),
+        upstream_ids=frozenset({"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"}),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
     ),
     # Venice's September notice replaces deepseek-v4-flash with the separate
     # deepseek-v4-1-flash model on September 15. No time zone was specified;
