@@ -18,6 +18,12 @@ def test_rerank_vectors_match_python():
     assert result.returncode == 0, result.stderr
     committed = (ROOT / "fastpath/testdata/authorize_rerank_v1.json").read_text()
     assert committed == result.stdout
-    for case in json.loads(committed)["cases"]:
+    cases = json.loads(committed)["cases"]
+    assert {case["name"]: case["expect"]["python"] for case in cases} == {
+        "pass:rerank:accepted": {"leased": True, "status": 200, "type": None},
+        "pass:rerank:chat": {"leased": False, "status": 400, "type": "model_not_supported"},
+        "pass:rerank:absent": {"leased": False, "status": 400, "type": "model_not_supported"},
+    }
+    for case in cases:
         assert case["expect"]["outcome"] == "pass"
-        assert case["expect"]["reason"] in {"body.evaluator_input", "evaluate.refused"}
+        assert case["expect"]["reason"] == "body.evaluator_input"

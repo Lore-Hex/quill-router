@@ -142,6 +142,21 @@ def test_the_snapshot_lists_the_catalog_in_catalog_order(live) -> None:
     assert [p.slug for p in snapshot.providers] == sorted(catalog_data.PROVIDERS)
 
 
+def test_live_inputs_exclude_rerank_and_compiler_also_filters_it(live, settings) -> None:
+    snapshot, inputs = live
+    rerank_models = tuple(model for model in catalog_registry.MODELS.values() if model.supports_rerank)
+    assert rerank_models
+    rerank_ids = {model.id for model in rerank_models}
+    rerank_endpoints = tuple(endpoint for endpoint in catalog_registry.MODEL_ENDPOINTS.values()
+                             if endpoint.model_id in rerank_ids)
+    assert rerank_endpoints
+    assert not any(model.supports_rerank for model in inputs.models)
+    assert not any(endpoint.model_id in rerank_ids for endpoint in inputs.endpoints)
+    unfiltered = replace(inputs, models=(*inputs.models, *rerank_models),
+                         endpoints=(*inputs.endpoints, *rerank_endpoints))
+    assert canonical_snapshot_bytes(_compile(settings, unfiltered)) == canonical_snapshot_bytes(snapshot)
+
+
 def test_every_epoch_price_is_the_effective_endpoint_price_at_that_instant(live) -> None:
     snapshot, inputs = live
     raw = {e.id: e for e in inputs.endpoints}

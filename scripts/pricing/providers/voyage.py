@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -10,6 +11,17 @@ from scripts.pricing.manifest import write_embedding_provider_manifest
 
 SLUG = "voyage"
 URL = "https://docs.voyageai.com/docs/pricing.md"
+# Query plus one document, from docs.voyageai.com/docs/reranker.
+RERANK_CONTEXT_LIMITS = {
+    "rerank-3": 32_000,
+    "rerank-3-lite": 32_000,
+    "rerank-2.5": 32_000,
+    "rerank-2.5-lite": 32_000,
+    "rerank-2": 16_000,
+    "rerank-2-lite": 8_000,
+    "rerank-1": 8_000,
+    "rerank-lite-1": 4_000,
+}
 EXPECTED_MODELS = [
     "voyage/voyage-4-large",
     "voyage/voyage-4",
@@ -49,9 +61,22 @@ def fetch() -> ProviderPricingResult:
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
-    return write_embedding_provider_manifest(
+    notes = write_embedding_provider_manifest(
         result,
         manifest_path=MANIFEST_PATH,
         required_model_ids=frozenset({"voyage/voyage-3-large"}),
         rerank_model_ids=frozenset(key for key in result.prices if key.startswith("voyage/rerank-")),
     )
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    for row in raw["models"]:
+        if not isinstance(row, dict) or row.get("model_type") != "rerank":
+            continue
+        context = RERANK_CONTEXT_LIMITS.get(row.get("upstream_id"))
+        if context is None:
+            row["routable"] = False
+            row["routable_reason"] = "api-model-unconfirmed"
+            notes.append(f"held {row.get('id')}: upstream id absent from API model documentation")
+        elif row.get("context_length") is None:
+            row["context_length"] = context
+    MANIFEST_PATH.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return notes

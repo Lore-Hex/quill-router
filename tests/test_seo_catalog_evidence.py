@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
-from trusted_router.catalog import META_MODEL_IDS, MODELS, endpoints_for_model
+from trusted_router.catalog import META_MODEL_IDS, MODELS, endpoints_for_model, is_publicly_listed
 from trusted_router.catalog_aliases import MODEL_LISTING_ALIASES
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.seo_catalog import _PAGE_FOCUS_TERMS, seo_catalog_evidence
@@ -53,7 +53,7 @@ def test_seo_evidence_uses_consistent_catalog_claims(client: TestClient) -> None
 def test_seo_counts_alias_routes_once_under_the_canonical_model() -> None:
     public_ids = {
         model.id for model in MODELS.values()
-        if model.id not in META_MODEL_IDS and not model.internal_only
+        if model.id not in META_MODEL_IDS and is_publicly_listed(model)
     }
     aliases = {
         alias for alias, canonical in MODEL_LISTING_ALIASES.items()

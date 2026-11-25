@@ -36,7 +36,8 @@
       ],
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 8000
     },
     {
       "id": "voyage/rerank-2",
@@ -54,7 +55,8 @@
       ],
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 16000
     },
     {
       "id": "voyage/rerank-2-lite",
@@ -72,7 +74,8 @@
       ],
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 8000
     },
     {
       "id": "voyage/rerank-2.5",
@@ -90,7 +93,8 @@
       ],
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
     },
     {
       "id": "voyage/rerank-2.5-lite",
@@ -108,7 +112,8 @@
       ],
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
     },
     {
       "id": "voyage/rerank-3",
@@ -126,7 +131,8 @@
       ],
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
     },
     {
       "id": "voyage/rerank-3-lite",
@@ -144,7 +150,8 @@
       ],
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
     },
     {
       "id": "voyage/rerank-lite-1",
@@ -162,7 +169,8 @@
       ],
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 4000
     }
   ]
 }

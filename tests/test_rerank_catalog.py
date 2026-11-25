@@ -30,6 +30,7 @@ from trusted_router.pricing import (
     _customer_price,
 )
 from trusted_router.provider_manifest_policy import provider_manifest_row_price_is_valid
+from trusted_router.provider_og import all_provider_og_facts
 from trusted_router.routes.mcp import TrustedRouterMCP
 from trusted_router.routing_snapshot import (
     CatalogInputs,
@@ -61,15 +62,17 @@ def _manifest(path: Path, rows: list[dict]) -> None:
     }))
 
 
-def test_rerank_flags_default_off() -> None:
-    assert all(not provider.supports_rerank for provider in catalog_data.PROVIDERS.values())
+def test_rerank_flags_only_voyage_enabled() -> None:
+    assert {p.slug for p in catalog_data.PROVIDERS.values() if p.supports_rerank} == {"voyage"}
     assert not Model("example/model", "Model", "voyage", 8192).supports_rerank
-    assert not any(model.supports_rerank for model in catalog_registry.MODELS.values())
+    assert {model.provider for model in catalog_registry.MODELS.values() if model.supports_rerank} == {"voyage"}
 
 
 def test_rerank_manifest_requires_provider_opt_in(tmp_path, monkeypatch) -> None:
     _manifest(tmp_path, [ROW])
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    monkeypatch.setitem(catalog_data.PROVIDERS, "voyage",
+                        replace(catalog_data.PROVIDERS["voyage"], supports_rerank=False))
     assert catalog_ingest._rerank_models() == {}
     monkeypatch.setitem(catalog_data.PROVIDERS, "voyage",
                         replace(catalog_data.PROVIDERS["voyage"], supports_rerank=True))
@@ -185,21 +188,31 @@ def test_rerank_parser_to_manifest(provider, fixture, expected, manifest_state, 
     assert set(rows) == set(expected) | set(initial_rows)
     assert {model_id for model_id, row in rows.items() if row.get("routable") is not False} == set(expected)
     for model_id in initial_rows.keys() - expected.keys():
-        assert rows[model_id] == {
+        held = {
             **initial_rows[model_id], "routable": False, "routable_reason": "price-unavailable",
         }
+        if provider is voyage:
+            held["context_length"] = voyage.RERANK_CONTEXT_LIMITS[held["upstream_id"]]
+        assert rows[model_id] == held
     assert raw["model_count"] == len(raw["models"])
     for model_id, cost in expected.items():
         row = rows[model_id]
         assert row["input_token_price_per_m"] == cost
         assert row["output_token_price_per_m"] == 0
         assert row["endpoints"] == ["rerank"]
-        assert row["upstream_id"] == model_id.split("/", 1)[1]
+        assert row["upstream_id"] == (cohere.RERANK_UPSTREAM_IDS[model_id]
+                                      if provider is cohere else model_id.split("/", 1)[1])
+        if provider is voyage:
+            assert row["context_length"] == voyage.RERANK_CONTEXT_LIMITS[row["upstream_id"]]
         assert row["pricing_source"] == provider.URL
         assert provider_manifest_row_price_is_valid(row)
-    assert not catalog_data.PROVIDERS[provider.SLUG].supports_rerank
+    assert catalog_data.PROVIDERS[provider.SLUG].supports_rerank == (provider is voyage)
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
-    assert catalog_ingest._rerank_models() == {}
+    assert set(catalog_ingest._rerank_models()) == (set(expected) if provider is voyage else set())
+    with monkeypatch.context() as patch:
+        patch.setitem(catalog_data.PROVIDERS, provider.SLUG,
+                      replace(catalog_data.PROVIDERS[provider.SLUG], supports_rerank=False))
+        assert catalog_ingest._rerank_models() == {}
 
     # The next hourly write may change only the root generated_at field.
     assert raw["generated_at"] == "2026-11-24T12:00:00Z"
@@ -243,29 +256,30 @@ def test_jina_scores_without_token_price_are_reported(monkeypatch) -> None:
     assert any("jina-reranker-v3" in note and "per-token" in note for note in result.notes)
 
 
-@pytest.mark.parametrize("manifest_state", MANIFEST_STATES)
+@pytest.mark.parametrize("manifest_state", (*MANIFEST_STATES, "checked-in"))
 def test_rerank_catalog_public_and_routing_differential(
     tmp_path, monkeypatch, client, test_settings, manifest_state,
 ) -> None:
     shutil.copytree(catalog_ingest._PROVIDER_MODELS_DIR, tmp_path / "manifests")
     directory = tmp_path / "manifests"
-    # Exercise both sides of the scheduled refresh, regardless of today's files.
-    for slug in ("voyage", "cohere"):
-        path = directory / f"{slug}.json"
-        raw = json.loads(path.read_text())
-        raw["models"] = [row for row in raw["models"] if row.get("model_type") != "rerank"]
-        raw["models"].extend(rerank_rows(slug, manifest_state))
-        raw["model_count"] = len(raw["models"])
-        path.write_text(json.dumps(raw))
-    # Every copied provider must have a rerank-free baseline before adding ROW.
-    for path in directory.glob("*.json"):
-        raw = json.loads(path.read_text())
-        raw["models"] = [row for row in raw["models"] if row.get("model_type") != "rerank"]
-        raw["model_count"] = len(raw["models"])
-        path.write_text(json.dumps(raw))
-    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", directory)
-    monkeypatch.setitem(catalog_data.PROVIDERS, "voyage",
-                        replace(catalog_data.PROVIDERS["voyage"], supports_rerank=True))
+    if manifest_state != "checked-in":
+        # Exercise both sides of the scheduled refresh, regardless of today's files.
+        for slug in ("voyage", "cohere"):
+            path = directory / f"{slug}.json"
+            raw = json.loads(path.read_text())
+            raw["models"] = [row for row in raw["models"] if row.get("model_type") != "rerank"]
+            raw["models"].extend(rerank_rows(slug, manifest_state))
+            raw["model_count"] = len(raw["models"])
+            path.write_text(json.dumps(raw))
+        # Every copied provider must have a rerank-free baseline before adding ROW.
+        for path in directory.glob("*.json"):
+            raw = json.loads(path.read_text())
+            raw["models"] = [row for row in raw["models"] if row.get("model_type") != "rerank"]
+            raw["model_count"] = len(raw["models"])
+            path.write_text(json.dumps(raw))
+        monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", directory)
+        monkeypatch.setitem(catalog_data.PROVIDERS, "voyage",
+                            replace(catalog_data.PROVIDERS["voyage"], supports_rerank=True))
     from trusted_router import middleware
 
     monkeypatch.setattr(middleware, "secrets", SimpleNamespace(token_urlsafe=lambda _: "fixed-test-nonce"))
@@ -276,22 +290,35 @@ def test_rerank_catalog_public_and_routing_differential(
             monkeypatch.setattr(module, "utcnow", lambda: instant)
     path = directory / "voyage.json"
     raw = json.loads(path.read_text())
-    baseline = runpy.run_path(catalog_registry.__file__)
-    raw["models"].append(ROW)
-    raw["model_count"] = len(raw["models"])
-    path.write_text(json.dumps(raw))
-    extended = runpy.run_path(catalog_registry.__file__)
-    assert set(extended["MODELS"]) - set(baseline["MODELS"]) == {RERANK_ID}
-    assert extended["MODELS"][RERANK_ID].supports_rerank
-    assert {key: value for key, value in extended["MODELS"].items() if key != RERANK_ID} == baseline["MODELS"]
+    if manifest_state == "checked-in":
+        assert catalog_data.PROVIDERS["voyage"].supports_rerank
+        with monkeypatch.context() as patch:
+            patch.setitem(catalog_data.PROVIDERS, "voyage",
+                          replace(catalog_data.PROVIDERS["voyage"], supports_rerank=False))
+            baseline = runpy.run_path(catalog_registry.__file__)
+        extended = runpy.run_path(catalog_registry.__file__)
+        rerank_ids = {"voyage/" + model_id for model_id in voyage.RERANK_CONTEXT_LIMITS}
+    else:
+        baseline = runpy.run_path(catalog_registry.__file__)
+        raw["models"].append(ROW)
+        raw["model_count"] = len(raw["models"])
+        path.write_text(json.dumps(raw))
+        extended = runpy.run_path(catalog_registry.__file__)
+        rerank_ids = {RERANK_ID}
+    assert set(extended["MODELS"]) - set(baseline["MODELS"]) == rerank_ids
+    assert all(extended["MODELS"][key].supports_rerank for key in rerank_ids)
+    assert {key: value for key, value in extended["MODELS"].items() if key not in rerank_ids} == baseline["MODELS"]
     added = {key: value for key, value in extended["MODEL_ENDPOINTS"].items()
-             if value.model_id == RERANK_ID}
-    assert len(added) == 1
+             if value.model_id in rerank_ids}
+    assert len(added) == len(rerank_ids)
     assert {key: value for key, value in extended["MODEL_ENDPOINTS"].items()
             if key not in added} == baseline["MODEL_ENDPOINTS"]
 
     def observe(registry):
         with pytest.MonkeyPatch.context() as patch:
+            if manifest_state == "checked-in":
+                patch.setitem(catalog_data.PROVIDERS, "voyage", replace(
+                    catalog_data.PROVIDERS["voyage"], supports_rerank=registry is extended))
             for module_name, module in list(sys.modules.items()):
                 if module is not None and module_name.startswith("trusted_router"):
                     for name in ("MODELS", "MODEL_ENDPOINTS"):
@@ -301,7 +328,7 @@ def test_rerank_catalog_public_and_routing_differential(
             if RERANK_ID in registry["MODELS"]:
                 candidates = routing.rerank_route_endpoint_candidates({"model": RERANK_ID}, test_settings)
                 assert [(model.id, endpoint.id) for model, endpoint in candidates] == [
-                    (RERANK_ID, next(iter(added)))
+                    (RERANK_ID, next(key for key, endpoint in added.items() if endpoint.model_id == RERANK_ID))
                 ]
             outputs = {}
             paths = (
@@ -314,9 +341,13 @@ def test_rerank_catalog_public_and_routing_differential(
                 f"/models/{RERANK_ID}", f"/models/{RERANK_ID}/pricing",
                 f"/v1/models/{RERANK_ID}/endpoints", "/models/voyage/voyage-3-large",
             )
+            paths += tuple(url for model_id in sorted(rerank_ids) for url in (
+                f"/models/{model_id}", f"/models/{model_id}/pricing",
+                f"/v1/models/{model_id}/endpoints",
+            ))
             for url in paths:
                 response = client.get(url)
-                assert response.status_code == (404 if url.startswith(f"/models/{RERANK_ID}") else 200), url
+                assert response.status_code == (404 if any(url.startswith(f"/models/{key}") for key in rerank_ids) else 200), url
                 outputs[url] = (response.status_code, response.content, response.headers.get("etag"))
             providers_html = client.get("/providers", headers={"accept": "text/html"})
             assert providers_html.status_code == 200
@@ -331,9 +362,10 @@ def test_rerank_catalog_public_and_routing_differential(
             outputs["internal_key"] = requests_internal_model({"model": RERANK_ID})
             assert not outputs["internal_key"]
             outputs["choose"] = choose_catalog_payload(test_mode=True)
+            outputs["provider_og"] = all_provider_og_facts()
             outputs["counts"] = seo_catalog_evidence("openrouter", test_mode=True)
             for route in (routing.chat_route_endpoint_candidates, routing.embeddings_route_endpoint_candidates):
-                for model_id in (RERANK_ID, "trustedrouter/auto", "voyage/voyage-3-large"):
+                for model_id in sorted(set(registry["MODELS"]) | rerank_ids | {"trustedrouter/auto"}):
                     try:
                         candidates = route({"model": model_id}, test_settings)
                         value = [(model.id, endpoint.id) for model, endpoint in candidates]
@@ -347,7 +379,7 @@ def test_rerank_catalog_public_and_routing_differential(
                 plane=Plane(cloud="gcp", region="us-central1"), inputs=inputs,
             )
             outputs["snapshot"] = canonical_snapshot_bytes(snapshot)
-            assert RERANK_ID.encode() not in outputs["snapshot"]
+            assert all(key.encode() not in outputs["snapshot"] for key in rerank_ids)
             response = client.post("/v1/rerank", json={"model": RERANK_ID, "query": "q", "documents": ["d"]})
             assert response.status_code == 501
             outputs["rerank"] = response.json()

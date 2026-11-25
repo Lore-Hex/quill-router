@@ -159,7 +159,7 @@ def launch_offer_facts() -> LaunchOfferFacts | None:
     """Return live offer facts, or None whenever the banner gate is off."""
     if not fortanix_launch_offer():
         return None
-    from trusted_router.catalog import MODELS, PROVIDERS, endpoints_for_model
+    from trusted_router.catalog import MODELS, PROVIDERS, endpoints_for_model, is_publicly_listed
 
     model = MODELS[MODEL_ID]
     route = endpoints_for_model(MODEL_ID)[0]
@@ -169,7 +169,7 @@ def launch_offer_facts() -> LaunchOfferFacts | None:
         endpoint
         for other in MODELS.values()
         if other.id != MODEL_ID
-        and not other.internal_only
+        and is_publicly_listed(other)
         and other.id.casefold().endswith(GLM_FLASH_ID_SUFFIX)
         for endpoint in endpoints_for_model(other.id)
         if endpoint.usage_type == "Credits"

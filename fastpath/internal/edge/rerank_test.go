@@ -14,7 +14,7 @@ func TestRerankAndAbsentModelsPassToPython(t *testing.T) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Cases) != 4 {
+	if len(f.Cases) != 3 {
 		t.Fatal("missing rerank vectors")
 	}
 	for _, c := range f.Cases {

@@ -2482,6 +2482,7 @@ PROVIDERS: dict[str, Provider] = {
         slug="voyage",
         name="Voyage AI",
         supports_embeddings=True,
+        supports_rerank=True,
         supports_prepaid=True,
         stores_content=False,
         provider_zero_data_retention=True,
@@ -4276,6 +4277,16 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "voyage": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Voyage AI",
+        source_url="https://www.voyageai.com/privacy",
+        note=(
+            "Voyage AI Innovations, Inc. owns and operates the service. Its February 20, 2025 "
+            "privacy policy says information from users outside the United States may be "
+            "transferred to and processed in the United States."
+        ),
+    ),
     "reflection": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="Reflection AI",
