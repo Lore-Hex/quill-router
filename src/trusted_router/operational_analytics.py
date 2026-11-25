@@ -586,7 +586,7 @@ SELECT
   topK(1)(app)[1] AS app,
   min(created_at) AS first_seen,
   max(created_at) AS last_seen
-FROM activity_generations
+FROM activity_generations FINAL
 WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
   AND session_id IS NOT NULL AND session_id != ''
   AND workspace_id != ''

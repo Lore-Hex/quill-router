@@ -5513,6 +5513,14 @@
     "storage_account_closure:txn:1": {
       "fingerprint": "f881176c215bb568ebcb767fb98a043b6bf2d5c29750a5fd10038cb48fda79d9",
       "reason": "PostgreSQL-only account closure transaction; positional bindings and row locks, exercised by PostgreSQL conformance."
+    },
+    "operational_analytics:concentrated_model_spend:1": {
+      "fingerprint": "845ea7f0e622ca3f3bbabe3b86546d78b5462fb9bf9264f7a6fe9e40dbe7ce17",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
+    "operational_analytics:shared_client_sessions:1": {
+      "fingerprint": "e28a1e448221673a9a59623744dfc6746ed66d4b329ce6eef7adcf4ac36d2a6c",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     }
   }
 }
