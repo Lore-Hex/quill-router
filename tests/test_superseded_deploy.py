@@ -527,7 +527,7 @@ def _finalize_outcome(needs: dict) -> tuple[str, int]:
 
 
 def _needs(**overrides: dict) -> dict:
-    names = ("admit-cloud", "confirm-regions-ready", "migrate-schema", "sync-runtime-secrets",
+    names = ("admit-cloud", "confirm-regions-ready", "migrate-schema", "sync-runtime-secrets", "sync-public-snapshots",
              "confirm-current-main", "confirm-still-on-main", "deploy", "rollout-secondaries",
              "public-surface-companion", "settle-drain-worker", "verify-cloud-complete", "select-release")
     assert set(names) == set(_workflow()["jobs"]["finalize-cloud"]["needs"])
@@ -546,9 +546,11 @@ def test_finalize_releases_cleanly_after_an_ancestry_refusal() -> None:
     needs = _needs(**{
         "confirm-still-on-main": {"result": "success", "outputs": {"on_main": "false"}},
         "deploy": skipped, "rollout-secondaries": skipped, "public-surface-companion": skipped,
-        "verify-cloud-complete": skipped, "settle-drain-worker": skipped,
+        "verify-cloud-complete": skipped, "settle-drain-worker": skipped, "sync-public-snapshots": skipped,
     })
     assert _finalize_outcome(needs) == ("success", 0)
+    needs["sync-public-snapshots"] = {"result": "success", "outputs": {}}
+    assert _finalize_outcome(needs) == ("failure", 1)
 
 
 @pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
@@ -558,6 +560,7 @@ def test_finalize_blocks_the_lease_on_any_other_failure() -> None:
     cases = {
         "worker failed": _needs(**{"settle-drain-worker": {"result": "failure", "outputs": {}}}),
         "worker skipped": _needs(**{"settle-drain-worker": skipped}),
+        "snapshot job cancelled": _needs(**{"sync-public-snapshots": {"result": "cancelled", "outputs": {}}}),
         "deploy failed": _needs(**{"deploy": {"result": "failure", "outputs": {}}, "rollout-secondaries": skipped,
                                    "public-surface-companion": skipped, "verify-cloud-complete": skipped}),
         "ancestry job failed": _needs(**{"confirm-still-on-main": {"result": "failure", "outputs": {}},
@@ -575,15 +578,15 @@ def test_finalize_blocks_the_lease_on_any_other_failure() -> None:
         assert _finalize_outcome(needs) == ("failure", 1), name
 
 
-AFTER_DEPLOY = ("deploy", "rollout-secondaries", "public-surface-companion", "settle-drain-worker",
-                "verify-cloud-complete")
+SERVING_OR_SNAPSHOT_JOBS = ("deploy", "rollout-secondaries", "public-surface-companion", "settle-drain-worker",
+                            "verify-cloud-complete", "sync-public-snapshots")
 
 
 def _unstarted_train(selection: str = "success") -> dict:
     skipped = {"result": "skipped", "outputs": {}}
     return _needs(**{
         "select-release": {"result": selection, "outputs": {"proceed": "false"}},
-        **{name: skipped for name in (*AFTER_DEPLOY, "confirm-regions-ready", "confirm-still-on-main",
+        **{name: skipped for name in (*SERVING_OR_SNAPSHOT_JOBS, "confirm-regions-ready", "confirm-still-on-main",
                                       "migrate-schema", "sync-runtime-secrets")},
     })
 
@@ -598,7 +601,7 @@ def test_unstarted_or_already_delivered_train_releases_lease(selection):
 
 @pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
 @pytest.mark.parametrize("selection", ["success", "failure", "cancelled"])
-@pytest.mark.parametrize("mutation", [*AFTER_DEPLOY, "migrate-schema", "sync-runtime-secrets"])
+@pytest.mark.parametrize("mutation", [*SERVING_OR_SNAPSHOT_JOBS, "migrate-schema", "sync-runtime-secrets"])
 def test_unstarted_train_never_releases_after_an_unexpected_mutation(selection, mutation):
     needs = _unstarted_train(selection)
     needs[mutation] = {"result": "success", "outputs": {}}
@@ -612,7 +615,7 @@ def test_skipped_selector_is_not_evidence_of_safe_coalescing():
 def _regions_refused(**overrides: dict) -> dict:
     skipped = {"result": "skipped", "outputs": {}}
     return _needs(**{"confirm-regions-ready": {"result": "failure", "outputs": {}},
-                     **{name: skipped for name in AFTER_DEPLOY}, **overrides})
+                     **{name: skipped for name in SERVING_OR_SNAPSHOT_JOBS}, **overrides})
 
 
 @pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
@@ -640,8 +643,8 @@ def test_finalize_blocks_the_lease_when_a_refused_region_is_not_the_whole_story(
             **{"sync-runtime-secrets": {"result": "cancelled", "outputs": {}}}),
         "the check was skipped, not failed": _regions_refused(**{"confirm-regions-ready": skipped}),
         "the check was cancelled": _regions_refused(**{"confirm-regions-ready": {"result": "cancelled", "outputs": {}}}),
-        **{f"{name} ran anyway": _regions_refused(**{name: success}) for name in AFTER_DEPLOY},
-        **{f"{name} failed": _regions_refused(**{name: failure}) for name in AFTER_DEPLOY},
+        **{f"{name} ran anyway": _regions_refused(**{name: success}) for name in SERVING_OR_SNAPSHOT_JOBS},
+        **{f"{name} failed": _regions_refused(**{name: failure}) for name in SERVING_OR_SNAPSHOT_JOBS},
     }
     for name, needs in cases.items():
         assert _finalize_outcome(needs) == ("failure", 1), name

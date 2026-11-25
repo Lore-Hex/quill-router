@@ -1,5 +1,25 @@
 # CI and production rollout latency
 
+## November 25: publish analytics snapshots alongside primary rollout
+
+The last step of the schema job was an analytics worker upload, not a schema
+migration. Its measured step times were 145s, 90s and 76s in full releases
+[45505800208](https://github.com/Lore-Hex/quill-router/actions/runs/45505800208),
+[45523293985](https://github.com/Lore-Hex/quill-router/actions/runs/45523293985)
+and [45531631746](https://github.com/Lore-Hex/quill-router/actions/runs/45531631746).
+All that time preceded the first API warmup. The publisher now uses its own
+runner, checks out the selected commit, asserts the existing GCP reservation,
+and starts alongside the primary once schema, readiness and ancestry pass.
+Finalization still joins it. A publication error still produces a warning;
+an interrupted job is not a clean release.
+
+To measure the effect, compare time from cloud admission to primary warmup
+on **traffic-moving** runs. Check that snapshot publication and the primary
+overlap and that the worker reports all five snapshot products. Don't count
+queue time as a saving, or subtract the upload from a release where a different
+gate was slower. Schema changes are still serial and complete before either
+branch starts. Traffic ramps, canaries and revision retention are unchanged.
+
 ## Publishing just the TrustedRouter website
 
 Merge a PR that modifies existing homepage HTML or copy
