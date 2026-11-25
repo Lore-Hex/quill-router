@@ -41,6 +41,7 @@ print(response.choices[0].message.content)</code></pre>
   <ul>
     <li><a href="/docs">Chat</a>: <code>POST /v1/chat/completions</code>.</li>
     <li><a href="/models/openai/text-embedding-3-small">Embeddings</a>: <code>POST /v1/embeddings</code>, including <code>openai/text-embedding-3-small</code>.</li>
+    <li><a href="/docs#rerank">Reranking</a> is available through <code>POST /v1/rerank</code> with Voyage rerank models, prepaid, on the GCP API hosts; it is not yet served on the AWS or Azure API hosts.</li>
     <li><a href="/docs#transcription">Transcription</a>: <code>POST /v1/audio/transcriptions</code>, including <code>openai/whisper-large-v3-turbo</code> on Tinfoil.</li>
     <li><a href="/docs/batch">Batch</a>: asynchronous requests with a separate encrypted retention boundary.</li>
     <li><a href="/docs/video">Video</a>: asynchronous generation through <code>POST /v1/videos</code>.</li>
@@ -51,7 +52,6 @@ print(response.choices[0].message.content)</code></pre>
 <section class="content-section" id="not-a-model-host">
   <h2>What TrustedRouter is not</h2>
   <ul>
-    <li>There is no reranking endpoint today.</li>
     <li>TrustedRouter does not offer fine-tuning.</li>
     <li>It does not run inference GPUs itself. Routes go to named upstream providers.</li>
     <li>Gateway attestation does not make every upstream provider confidential. <a href="/who-can-see-your-data">Who can see your data</a> explains each party and its retention boundary.</li>

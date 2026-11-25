@@ -4,16 +4,13 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 
 from trusted_router.errors import error_response, not_supported
+from trusted_router.rerank_public import RERANK_OPENAPI
 from trusted_router.routes.catalog import public_video_models
 
 
 def register_compat_stub_routes(router: APIRouter) -> None:
     @router.post("/audio/transcriptions")
     def audio_transcriptions() -> JSONResponse:
-        return not_supported()
-
-    @router.post("/rerank")
-    def rerank() -> JSONResponse:
         return not_supported()
 
     @router.get("/private/models/{author}/{slug}")
@@ -36,6 +33,10 @@ def register_compat_stub_routes(router: APIRouter) -> None:
 
 def register_gateway_compat_stub_routes(router: APIRouter) -> None:
     """Control-plane stubs for media operations implemented by the gateway."""
+
+    @router.post("/rerank", openapi_extra=RERANK_OPENAPI)
+    def rerank() -> JSONResponse:
+        return not_supported()
 
     @router.post(
         "/tools/fetch",

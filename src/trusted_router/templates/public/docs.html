@@ -99,7 +99,7 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "Hello"}],
     extra_body={"provider": {"min_privacy": "confidential"}},
 )</code></pre>
-  <p>Chat Completions, Responses, and Anthropic Messages use the same hard confidential filter, including internal orchestration calls and fallback candidates. If no eligible endpoint remains, the request fails instead of using an ordinary provider. Hosted web search, batch/files, embeddings, and media APIs are not supported on this hostname.</p>
+  <p>Chat Completions, Responses, and Anthropic Messages use the same hard confidential filter, including internal orchestration calls and fallback candidates. If no eligible endpoint remains, the request fails instead of using an ordinary provider. Hosted web search, batch/files, embeddings, rerank, and media APIs are not supported on this hostname.</p>
   <p>The equivalent mirror base URLs are <code>https://api.confidential.quillrouter.com/v1</code>, <code>https://api.confidential.allyrouter.com/v1</code>, and <code>https://api.confidential.uptimerouter.com/v1</code>. They require the same explicit setting. Health, attestation, and public catalog discovery remain available without it; the catalog is not a filtered list of eligible endpoints.</p>
   <p>The ordinary API hostname is unchanged. A hostname and HTTPS alone are not independent proof of confidential execution: clients that verify hardware attestation should still follow the <a href="/security">attestation verification guide</a>.</p>
 </section>
@@ -211,6 +211,25 @@ GET /v1/models/changes?upcoming=true</code></pre>
   <p>Routing aliases such as <code>trustedrouter/auto</code>, orchestration models, and hidden routes omit the object because their selected models and internal calls can vary. Absence is not a declaration of no support. A routing pool (<code>trustedrouter/auto</code>, <code>cheap</code>, <code>fast</code>, <code>frontier</code>, <code>advanced</code>, <code>professional</code>, <code>efficient</code>, <code>eu</code>, <code>zdr</code>, <code>e2e</code>, <code>green</code>) lists a parameter in <code>supported_parameters</code> only when every model it can route to has one of the pool's routes that accepts it, so a request that sends it with <code>provider.require_parameters: true</code> keeps every model in the pool. Its <code>architecture.input_modalities</code> lists what any of its routes accepts; routing sends image input only to routes that accept images. Its <code>context_length</code> is the largest window among the models it routes to: chat routing sends a request only to models whose window holds its estimated prompt plus <code>max_tokens</code>, and answers <code>400</code> <code>context_length_exceeded</code> when none does. Otherwise the legacy <code>supported_parameters</code> union and <code>architecture.input_modalities</code> remain discovery fields; they need not describe every endpoint.</p>
 </section>
 
+<section class="marketing-section" id="embeddings">
+  <h2>{{ topic("embeddings", "Embeddings") }}</h2>
+  <p>Use <code>POST /v1/embeddings</code> with an embedding model from <code>GET /v1/embeddings/models</code>.</p>
+</section>
+
+<section class="marketing-section" id="rerank">
+  <h2>{{ topic("rerank", "Rerank") }}</h2>
+  <p>Use <code>POST /v1/rerank</code> with Voyage rerank models from <code>GET /v1/rerank/models</code> to rank text documents for a query.</p>
+  <p>Rerank is served on the GCP API hosts: the default <code>{{ api_base_url }}</code> and EU regional <code>https://api-europe-west4.quillrouter.com/v1</code>. It is not yet served on the AWS API host <code>https://api-aws.trustedrouter.com/v1</code> or Azure API host <code>https://api-azure.trustedrouter.com/v1</code>.</p>
+  <p>Send a non-empty <code>query</code> and 1 to 1,000 <code>documents</code>, each a string or an object containing only a string <code>text</code>; image documents are refused. Optional <code>top_n</code> is a positive integer capped at the document count, and <code>return_documents</code> is a boolean defaulting to <code>true</code>. Optional <code>user</code>, <code>session_id</code>, and <code>provider</code> preferences work as for embeddings, limited to prepaid.</p>
+  {% if rerank_example_model %}<pre><code>curl {{ api_base_url }}/rerank \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"{{ rerank_example_model }}","query":"Which city is in France?","documents":["Paris is in France.",{"text":"Tokyo is in Japan."}],"top_n":2}'</code></pre>{% endif %}
+  <p>The response contains <code>id</code>, <code>model</code>, <code>provider</code>, <code>results</code>, and <code>usage</code>. Results are sorted by <code>relevance_score</code> descending, ties by <code>index</code>, and cut to <code>top_n</code>; each contains <code>index</code>, <code>relevance_score</code>, and a <code>document</code> object with the request's <code>text</code>, omitted when <code>return_documents</code> is false. Usage contains <code>total_tokens</code> and the same cost fields as the embeddings response.</p>
+  <p>Billing uses prepaid credits only at the model's listed price per input token, counting the query once per document plus every document.</p>
+  <p>Rerank is synchronous and is not available through Batch, the confidential-only hostname, or a customer's own provider key.</p>
+</section>
+
 <section style="margin-top:48px">
   <h2 class="section-center" id="api-reference">{{ topic("api-reference", "API reference") }}</h2>
   <div class="marketing-grid two">
@@ -220,7 +239,8 @@ GET /v1/models/changes?upcoming=true</code></pre>
       <ul class="check-list">
         <li><code>POST /v1/chat/completions</code></li>
         <li><code>POST /v1/responses</code></li>
-        <li><code>POST /v1/embeddings</code></li>
+        <li><a href="#embeddings"><code>POST /v1/embeddings</code></a></li>
+        <li><a href="#rerank"><code>POST /v1/rerank</code></a> — GCP API hosts, prepaid</li>
         <li><a href="#text-to-speech"><code>POST /v1/audio/speech</code></a></li>
         <li><a href="#transcription"><code>POST /v1/audio/transcriptions</code></a></li>
             <li><code>POST {{ decide_path }}</code> — decision models: shared <code>state</code> plus typed <code>questions</code> (boolean, choice, score) in, verified answers with probabilities out. Like chat completions, <code>trustedrouter.routing</code> identifies the model and provider that served the decision, omitting fields the gateway cannot establish. It also answers to the paths Vercel AI Gateway (<code>/v1/evaluate</code>) and OpenRouter (<code>/api/alpha/decisions</code>) use for the same request. Use <code>trustedrouter/trev-1.0</code>, <code>typesafe-ai/jev</code>, or any chat model. See <a href="/docs/decide">/docs/decide</a>.</li>

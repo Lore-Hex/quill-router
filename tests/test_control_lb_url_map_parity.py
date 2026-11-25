@@ -252,6 +252,10 @@ def test_disabled_renderer_differential_against_base(
     assert not {"/requests", "/requests/*"} & set(expected_control["paths"])
     index = expected_control["paths"].index("/activity") + 1
     expected_control["paths"][index:index] = ["/requests", "/requests/*"]
+    expected_public = next(r for r in expected["pathMatchers"][0]["pathRules"] if "/v1/embeddings/models" in r["paths"])
+    assert "/v1/rerank/models" not in expected_public["paths"]
+    index = expected_public["paths"].index("/v1/embeddings/models") + 1
+    expected_public["paths"][index:index] = ["/v1/rerank/models"]
     if shape == "authorize":
         # Base 5f6d67c3b drops authorize. Raw equality here conflicts with the
         # explicit ruling to retain the PR's authorize preservation. Expose and
@@ -330,3 +334,15 @@ def test_terminal_override_with_extra_key_is_never_discarded(
     })
     with pytest.raises(ValueError, match="ambiguous billing override"):
         _render(module, live)
+
+
+def test_rerank_catalog_routes_to_public_and_post_stays_control() -> None:
+    from tests.test_internal_surface_edge import _resolve_backend
+
+    rendered = _render(_module())
+    for path in ("/rerank/models", "/v1/rerank/models"):
+        assert _resolve_backend(rendered, "trustedrouter.com", path) == BASE_LINK + "trusted-router-public-backend"
+    for path in ("/rerank", "/v1/rerank"):
+        assert _resolve_backend(rendered, "trustedrouter.com", path) == CONTROL
+    assert any("/v1/rerank/models" in rule
+               for rule in _terraform_rule_paths("trusted-router-public-backend"))

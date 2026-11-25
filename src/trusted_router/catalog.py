@@ -343,7 +343,10 @@ def is_publicly_listed(model: Model, *, include_internal: bool = False) -> bool:
     The regional directory historically includes internal models; its explicit
     opt-in preserves that output while sharing capability visibility here.
     """
-    return not model.supports_rerank and (include_internal or not model.internal_only)
+    return (include_internal or not model.internal_only) and (
+        not model.supports_rerank
+        or bool((provider := PROVIDERS.get(model.provider)) and provider.supports_rerank)
+    )
 
 
 def orchestration_primitive(model_id: str) -> str | None:
@@ -1071,7 +1074,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         **({"aliases": router_model_aliases(model.id)} if router_model_aliases(model.id) else {}),
         "configuration_hidden": model.hidden_public_metadata,
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
-        # The public projection also hides catalog-only rerank metadata.
+        # Share provider and model visibility across public projections.
         "internal_only": not is_publicly_listed(model) or model.id == MONITOR_MODEL_ID,
         # Capability flags so OpenRouter-compat clients (and TR's own chat
         # picker) can tell an embedding model from a chat model without
@@ -1102,6 +1105,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         }
            if model.id == POLYPHEMUS_MODEL_ID else {}),
         "supports_embeddings": model.supports_embeddings,
+        "supports_rerank": model.supports_rerank,
         "supports_video": model.supports_video,
         # True for hosted decision models AND for the chat models the gateway
         # drives as decision models on POST /v1/decide.

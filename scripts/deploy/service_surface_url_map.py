@@ -26,6 +26,7 @@ PUBLIC_PATH_PATTERNS = (
     "/v1/coverage/openrouter",
     "/v1/analytics/events",
     "/v1/embeddings/models",
+    "/v1/rerank/models",
     # Anonymous image-catalog reads (#693). Exact-and-under patterns beat the
     # authenticated /images/* control wildcard by specificity, exactly as
     # /v1/models/* beats /v1/*; image GENERATION stays on control.

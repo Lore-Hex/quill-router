@@ -1734,7 +1734,7 @@ def _embedding_models() -> dict[str, Model]:
 
 
 def _rerank_models() -> dict[str, Model]:
-    """Load priced rerank metadata while its public routes remain disabled."""
+    """Load priced rerank metadata for providers with rerank enabled."""
     models: dict[str, Model] = {}
     for path in sorted(_PROVIDER_MODELS_DIR.glob("*.json")):
         provider_slug = path.stem

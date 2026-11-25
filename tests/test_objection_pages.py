@@ -129,7 +129,7 @@ def test_data_page_leads_with_verifiable_gateway_facts(client: TestClient) -> No
 
 
 @pytest.mark.parametrize("path", (*PAGES, *LLMS_DOCUMENTS))
-def test_objection_pages_and_agent_text_do_not_claim_reranking(
+def test_objection_pages_and_agent_text_scope_reranking(
     client: TestClient, path: str,
 ) -> None:
     response = client.get(path)
@@ -138,16 +138,17 @@ def test_objection_pages_and_agent_text_do_not_claim_reranking(
             BeautifulSoup(response.text, "html.parser").select_one(".content-document")
             .get_text(" ", strip=True)).lower()
     if path != PAGES[0]:
-        assert "no reranking endpoint today" in text
-    # Permit the explicit limitation, but no other reranking capability claim.
-    assert "rerank" not in text.replace("no reranking endpoint today", "")
+        for claim in ("post /v1/rerank", "voyage", "prepaid", "gcp api hosts",
+                      "not yet served on the aws or azure api hosts"):
+            assert claim in text
+    assert "no reranking endpoint today" not in text
 
 
 def test_simple_start_scopes_capabilities_and_business_claims(client: TestClient) -> None:
     soup = BeautifulSoup(client.get(PAGES[1]).text, "html.parser")
     text = soup.select_one(".content-document").get_text(" ", strip=True)
     for claim in (
-        "Embeddings", "Transcription", "no reranking endpoint today", "Batch", "Video",
+        "Embeddings", "Transcription", "POST /v1/rerank", "Voyage", "prepaid", "GCP API hosts", "Batch", "Video",
         "does not offer fine-tuning", "does not run inference GPUs",
         "SOC 2 is in its observation window", "SLA, MSA and DPA",
         "preferences, not guarantees or timeouts", "independent of OpenRouter",
@@ -169,5 +170,7 @@ def test_vercel_comparison_no_longer_denies_supported_modalities(client: TestCli
     assert "TrustedRouter equivalent and would stay on Vercel" not in text
     assert "We do not match Vercel's realtime voice, speech, transcription, or reranking" not in text
     assert "TrustedRouter supports speech and transcription" in text
-    assert "realtime voice sessions and reranking do not carry over" in text
+    assert "realtime voice sessions do not carry over" in text
+    assert "Reranking is available through POST /v1/rerank with Voyage rerank models, prepaid, on the GCP API hosts" in text
+    assert "not yet served on the AWS or Azure API hosts" in text
     assert "TrustedRouter supports speech, transcription, and reranking" not in text

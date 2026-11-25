@@ -90,7 +90,7 @@ resource "google_compute_url_map" "control" {
     path_rule {
       paths = [
         "/analytics/events", "/notify/texml", "/v1/health", "/v1/ready", "/v1/coverage/openrouter",
-        "/v1/analytics/events", "/v1/embeddings/models", "/images/models", "/images/models/*",
+        "/v1/analytics/events", "/v1/embeddings/models", "/v1/rerank/models", "/images/models", "/images/models/*",
         "/v1/images/models", "/v1/images/models/*", "/v1/models", "/v1/models/count", "/v1/models/picker",
         "/v1/models/*", "/v1/notify/texml", "/v1/endpoints/zdr", "/v1/regions", "/v1/providers",
       ]

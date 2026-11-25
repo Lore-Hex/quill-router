@@ -59,6 +59,7 @@
           {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
           {% if model.supports_decide %}<span class="pill">decide</span>{% endif %}
           {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
+          {% if model.supports_rerank %}<a href="/docs#rerank" class="pill">rerank</a>{% endif %}
           {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
         </td>
         {% endfor %}

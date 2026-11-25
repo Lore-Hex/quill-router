@@ -319,8 +319,8 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
             "remap creator/model slugs, and translate providerOptions.gateway fields to "
             "provider preferences. AI SDK apps configure our provider package explicitly, "
             "since plain model strings default to Vercel's Gateway. Realtime sessions, "
-            "reranking, OIDC-token auth, Gateway routing rules, and dashboard budgets and "
-            "BYOK keys do not carry over."
+            "OIDC-token auth, Gateway routing rules, and dashboard budgets and "
+            "BYOK keys do not carry over. Reranking is available through POST /v1/rerank with Voyage rerank models, prepaid, on the GCP API hosts; it is not yet served on the AWS or Azure API hosts."
         ),
         deployment=(
             "Proprietary hosted service run by Vercel on AWS; no self-host; needs a Vercel team"
@@ -405,7 +405,7 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
                     "explicitly, because plain model strings default to Vercel's Gateway. "
                     "TrustedRouter supports speech and transcription. Check the "
                     "simple-start guide and endpoint documentation for request formats; "
-                    "realtime voice sessions and reranking do not carry over."
+                    "realtime voice sessions do not carry over. Reranking is available through POST /v1/rerank with Voyage rerank models, prepaid, on the GCP API hosts; it is not yet served on the AWS or Azure API hosts."
                 ),
             ),
         ),
@@ -436,11 +436,11 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
 <li>Attestation covers our gateway build, not downstream model providers. Provider retention is a cited policy tier on both platforms; the exception is <span class="mono">trustedrouter/e2e</span> routes (tinfoil, phala), where the provider's own confidential-compute and E2EE mechanisms apply.</li>
 <li>We publish no SOC 2 or HIPAA certification today. Vercel's platform holds SOC 2 Type 2 and ISO 27001:2022. If a certificate is a procurement gate, they clear it and we currently do not.</li>
 <li>We are young. Our public repos date from late April 2026, benchmark history from June 2026, and detailed on-page uptime covers about 72 hours plus monthly rollups against a 99.99% availability target on <a href="/status">/status</a>.</li>
-<li>Our catalog of 600+ models across 100+ providers includes text, embeddings, speech, transcription, and video. See <a href="/docs/simple-start">simple start</a> for supported calls and documentation. Realtime voice sessions and reranking do not carry over.</li>
+<li>Our catalog of 600+ models across 100+ providers includes text, embeddings, speech, transcription, and video. See <a href="/docs/simple-start">simple start</a> for supported calls and documentation. Realtime voice sessions do not carry over. Reranking is available through POST /v1/rerank with Voyage rerank models, prepaid, on the GCP API hosts; it is not yet served on the AWS or Azure API hosts.</li>
 </ul>
 
 <h2>Migration reality</h2>
-<p>OpenAI-compatible and Anthropic-SDK callers move with a base URL and key change, then remap <span class="mono">creator/model</span> slugs to the ids on <a href="/models">/models</a>. Gateway-specific <span class="mono">providerOptions.gateway</span> fields do not carry over as-is: <span class="mono">only</span> maps to our <span class="mono">provider.only</span>, and <span class="mono">zeroDataRetention</span> maps to <span class="mono">provider.min_privacy</span> or the <span class="mono">trustedrouter/zdr</span> route. AI SDK apps need an explicit provider, because plain model strings default to Vercel's Gateway; our MIT-licensed AI SDK provider package handles that. Not carried over: realtime sessions, reranking, OIDC-token auth from Vercel deployments, Gateway routing rules, and dashboard budgets and BYOK keys, which are Vercel-side configuration you would recreate. We do not yet have a dedicated migrate-from-Vercel doc. Start with one streamed request and compare output, latency, and billed usage on both sides.</p>""",
+<p>OpenAI-compatible and Anthropic-SDK callers move with a base URL and key change, then remap <span class="mono">creator/model</span> slugs to the ids on <a href="/models">/models</a>. Gateway-specific <span class="mono">providerOptions.gateway</span> fields do not carry over as-is: <span class="mono">only</span> maps to our <span class="mono">provider.only</span>, and <span class="mono">zeroDataRetention</span> maps to <span class="mono">provider.min_privacy</span> or the <span class="mono">trustedrouter/zdr</span> route. AI SDK apps need an explicit provider, because plain model strings default to Vercel's Gateway; our MIT-licensed AI SDK provider package handles that. Not carried over: realtime sessions, OIDC-token auth from Vercel deployments, Gateway routing rules, and dashboard budgets and BYOK keys, which are Vercel-side configuration you would recreate. Reranking is available through POST /v1/rerank with Voyage rerank models, prepaid, on the GCP API hosts; it is not yet served on the AWS or Azure API hosts. We do not yet have a dedicated migrate-from-Vercel doc. Start with one streamed request and compare output, latency, and billed usage on both sides.</p>""",
         custom_page=True,
     ),
     _comparison(
