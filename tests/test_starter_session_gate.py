@@ -16,7 +16,7 @@ from trusted_router.services import starter_session_gate
 from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_models import AcquisitionAttribution
 
-SESSION = "ses_relay_conversation_0001"
+SESSION = "ses_df6da8c96ffeDTQAdczFv5jnFd"
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ def test_second_fresh_account_cannot_continue_the_same_session(harness_budget: N
 
     # The second account is free to start its own conversation, and the first
     # account keeps its session.
-    assert _authorize(client, second, "r4", "ses_its_own_conversation").status_code == 200
+    assert _authorize(client, second, "r4", "ses_e15e61300ffe5OPONVQoqDZPdB").status_code == 200
     assert _authorize(client, first, "r5", SESSION).status_code == 200
 
 
@@ -292,3 +292,26 @@ def test_a_failing_replay_lookup_fails_open(monkeypatch: pytest.MonkeyPatch) -> 
             request, workspace, SESSION, settings, has_existing_authorization=lambda: False,  # type: ignore[arg-type]
         )
     assert getattr(refused.value, "status_code", None) == 402
+
+
+def test_caller_chosen_session_names_are_not_enforced(harness_budget: None, client: TestClient) -> None:
+    # Two unrelated users copying the docs' example name must not collide.
+    first = _key(client, "docs-one@example.com")
+    second = _key(client, "docs-two@example.com")
+    assert _authorize(client, first, "r1", "research-session-42").status_code == 200
+    assert _authorize(client, second, "r2", "research-session-42").status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("session_id", "distinctive"),
+    [
+        ("ses_df6da8c96ffeDTQAdczFv5jnFd", True),
+        ("3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c", True),
+        ("research-session-42", False),
+        ("my-session", False),
+        ("session_000000000000000001", False),
+        ("ALLUPPERCASE1234567890", False),
+    ],
+)
+def test_distinctive_session_ids(session_id: str, distinctive: bool) -> None:
+    assert starter_session_gate.distinctive_session_id(session_id) is distinctive

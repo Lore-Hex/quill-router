@@ -10,7 +10,9 @@ A request is checked only when all of these hold, so established and paying
 customers never reach a store read:
 
 * it can spend credits (the gateway skips BYOK-only requests) and carries a
-  client ``session_id``;
+  distinctive client ``session_id`` (``distinctive_session_id``): caller-chosen
+  strings like ``research-session-42`` from the docs collide between unrelated
+  users, so only machine-generated identifiers count as one conversation;
 * its workspace was created within ``NEW_WORKSPACE_AGE``;
 * the workspace has never bought credits: no ``first_purchase_at`` on its
   acquisition record, and no more than its starter credit plus
@@ -42,6 +44,7 @@ import dataclasses
 import datetime as dt
 import hashlib
 import logging
+import re
 from typing import Any
 
 from trusted_router.services.abuse_tripwires import parse_time
@@ -72,6 +75,27 @@ class GateDecision:
 
 
 EXEMPT = GateDecision()
+
+
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+DISTINCTIVE_MIN_LENGTH = 20
+
+
+def distinctive_session_id(session_id: str) -> bool:
+    """A machine-generated id two unrelated callers will not both send.
+
+    A UUID, or at least ``DISTINCTIVE_MIN_LENGTH`` characters mixing upper case,
+    lower case and digits (agent session ids such as ``ses_df6da8c96ffeDTQAdcz``).
+    Human-chosen names and short counters are left alone.
+    """
+    if _UUID.fullmatch(session_id):
+        return True
+    return (
+        len(session_id) >= DISTINCTIVE_MIN_LENGTH
+        and any(char.islower() for char in session_id)
+        and any(char.isupper() for char in session_id)
+        and any(char.isdigit() for char in session_id)
+    )
 
 
 def session_key(session_id: str) -> str:
@@ -106,7 +130,7 @@ def check(
     starter_credit_microdollars: int,
 ) -> GateDecision:
     """Read-only: whether this request is exempt, may claim, or must be refused."""
-    if not session_id:
+    if not session_id or not distinctive_session_id(session_id):
         return EXEMPT
     created = parse_time(getattr(workspace, "created_at", None))
     if created is None or now - created > NEW_WORKSPACE_AGE:
