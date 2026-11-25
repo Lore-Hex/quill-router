@@ -220,7 +220,7 @@ def test_throttled_successful_calls_do_not_read_reward_storage(monkeypatch):
 def test_delegated_and_disabled_signup_keep_existing_amounts():
     for email, next_target, enabled, expected in [
         ("delegated@gmail.com", "/auth?callback_url=https%3A%2F%2Fexample.com%2Fcallback", True, 0),
-        ("disabled@gmail.com", None, False, 300_000),
+        ("disabled@gmail.com", None, False, 30_000),
     ]:
         login = _persist_login(OAUTH_PROVIDERS["google"], _settings(social_rewards_enabled=enabled),
                                OAuthUserInfo(sub=email, email=email, email_verified=True), next_target)
@@ -427,14 +427,14 @@ def test_pause_signup_cohort_stays_excluded_while_existing_enrollment_resumes():
 
     info = OAuthUserInfo(sub="paused", email="paused@gmail.com", email_verified=True)
     signup = _persist_login(OAUTH_PROVIDERS["google"], paused, info, None)
-    assert signup.attribution is not None and signup.attribution[1] == 300_000
+    assert signup.attribution is not None and signup.attribution[1] == 30_000
     returning = _persist_login(OAUTH_PROVIDERS["google"], settings, info, None)
     assert not returning.first_time and returning.user_id == signup.user_id
     assert STORE.get_social_reward_enrollment(signup.user_id) is None
     with pytest.raises(HTTPException) as error:
         claim(signup.user_id, "github", settings)
     assert error.value.status_code == 403
-    assert live_credit_summary(signup.attribution[0])["total_credits"] == 300_000
+    assert live_credit_summary(signup.attribution[0])["total_credits"] == 30_000
 
     claim(enrolled.user.id, "github", settings)
     resumed = claim(enrolled.user.id, "youtube", settings)

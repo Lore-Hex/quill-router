@@ -29,7 +29,7 @@ from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_postgres import PostgresStore
 from trusted_router.typed_balance import live_credit_summary
 
-CREDIT = 300_000
+CREDIT = 30_000
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,18 @@ from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
 
 
+def test_default_signup_grant_does_not_change_historical_credit(store: Store, unique: str) -> None:
+    old_email = f"old-starter-{unique}@example.com"
+    old = store.signup(email=old_email, trial_credit_microdollars=300_000)
+    new = store.signup(email=f"new-starter-{unique}@example.com")
+    assert old is not None and new is not None
+    assert new.trial_credit_microdollars == 30_000
+    assert store.signup(email=old_email) is None
+    for signup, expected in ((old, 300_000), (new, 30_000)):
+        summary = live_credit_summary(signup.workspace.id, store=store)
+        assert summary is not None and summary["total_credits"] == expected
+
+
 def test_social_enrollment_keeps_initial_destination_and_cohort(store: Store, unique: str) -> None:
     user = store.ensure_user(
         f"social-{unique}@example.com",
