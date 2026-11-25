@@ -120,7 +120,11 @@ assignment, same-module helpers, method results and common builtins, and it
 counts as writing every limit column wherever it sees the text meet an
 operand, a receiver, a callee or a class it cannot prove builtin, or leave
 by any other route (another callee, a return, an attribute, a key, a
-global, a namespace read such as `locals()`, `globals()` or a frame). What
+global, a namespace read such as `locals()`, `globals()` or a frame). It
+decides what a name or callee is (a builtin, `getattr`, a plain decorator, a
+namespace reader, a same-module helper) by the name's bindings in the
+module, never by its spelling: a name any binding of which resolves to
+something else is not known, and the scan fails closed there. What
 it does not model is listed in the scanner's docstring and left to code
 review: user-defined special-method adapters it does not see meet the text,
 namespaces and frames reached from another module, callees taken for

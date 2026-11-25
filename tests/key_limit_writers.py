@@ -42,11 +42,24 @@ parser.
 A scope is an outermost function with every function, lambda, comprehension
 and class body nested in it (_Module.outer), or a module statement or class
 body outside any function, or a text file. getattr(obj, "name") with a
-literal name, where getattr is the builtin (through any alias of it the
-module binds to nothing else, or builtins.getattr), and
+literal name, where getattr is the builtin by every binding (below), and
 obj.__getattribute__("name") are read as obj.name before either layer runs
 (_Fetches). A function's defaults, decorators and annotations belong to the
 scope around it.
+
+What a name or callee is (a builtin, getattr, a plain decorator, a namespace
+or frame reader, the module's own helper, an executor's alias) is decided by
+one resolver (_Identities), by the name's bindings, never by its spelling:
+a name has a known identity only when every binding of it anywhere in the
+module, in any form and any scope (an assignment, a walrus anywhere,
+annotations and defaults included, an import with or without as, a
+parameter, a def or class, a loop, with, except, match, del or type
+parameter target), resolves to the same thing; a builtin's name bound
+anywhere is the builtin nowhere; a module's attribute (functools.cache)
+only while nothing in the module may rebind it; and no name is known in a
+module that imports * or may write its own namespace. A rule that clears
+needs a known identity, so any rebinding fails it closed; a rule that adds
+findings counts every identity a name may have, and its spelling too.
 
 The escape rule (_escape_routes) decides where SQL text naming the table may
 go. A value whose rendering may name the table (a string constant, f-string,
@@ -61,7 +74,12 @@ may leave its scope only by:
 - a call to a helper of the module that derived_sinks follows, at a
   parameter shown to reach only executors (clean_sinks: every use of it,
   and of each name it is bound to or put into, is one of these routes, so
-  a helper that returns it, or a method result holding it, is not clean).
+  a helper that returns it, or a method result holding it, is not clean),
+  the callee being that def by every binding (_helper: no other binding of
+  its name in the module, no attribute of that name bound, as an attribute
+  only of its class or a method's self or cls there, and undecorated or
+  plainly decorated). An executor or mutation call counts only where the
+  callee is settled (_settled_callee: a name bound only to such callees).
 
 The steps it allows are chosen so that, in the code shapes it models, no
 code the scanner cannot see receives it: every other operand, receiver,
@@ -116,9 +134,11 @@ name on a name an import binds), a function's __globals__, or vars(),
 dir() or __dict__ of any object for a module name or a top-level class's;
 and any frame read (sys._getframe, inspect's frames, f_locals, a
 traceback's tb_frame or capture_locals, a closure's cells, gc's object
-walks) for any name. A reader counts reached through builtins too
-(builtins.locals(), __builtins__["eval"]), and passed on uncalled it is a
-frame read. (A plain class is itself only ever read for an attribute.)
+walks) for any name. A reader counts by every identity it may have (the
+builtin of its name, an import of it under any name, a name bound to it,
+an attribute of builtins, __builtins__["eval"]), passed on uncalled it is a
+frame read, and a module's locals() is its globals(). (A plain class is
+itself only ever read for an attribute.)
 
 Provably builtin (_builtin_value) is syntactic and meant to fail closed:
 only a
@@ -137,8 +157,9 @@ every use of it, of its elements and of what its methods return keeps
 what it holds provably builtin (_inert_use). A call, an attribute, a
 parameter, an unpacked target, a with, except, import, def, class or match
 binding, and a builtin type's name used as a value are not provably
-builtin; a builtin's name means the builtin only where nothing binds it
-(_is_builtin_name).
+builtin; a builtin's name means the builtin only where nothing in the
+module binds it, in any form or scope, or every binding is that builtin
+(_builtin_name, through the identity resolver below).
 
 User code an allowed step could reach, and how each is handled:
 
@@ -220,9 +241,11 @@ writes to the table is understood.
   .format argument, a str method's result, a nested function's parameter)
   fails closed whatever is known around it. A statement given to a helper
   that may change it (one that builds on the parameter, is decorated other
-  than by a decorator resolved to the builtin or stdlib one of its name
-  (_plain_decorator), holds exec, eval or compile, or calls by a computed
-  name) fails closed in such a scope or wherever it names the table. The one form that clears is
+  than by a decorator whose identity is the builtin or stdlib one
+  (_plain_decorator: singledispatch imported as cache is not cache), holds
+  exec, eval or compile, or calls by a computed name), or given to a callee
+  that is not that helper by every binding, fails closed in such a scope or
+  wherever it names the table. The one form that clears is
   f"SET LOCAL statement_timeout = {<int>}", its value provably an int.
 - In a scope that mentions the table, these fail closed (key_limit.indirect,
   every column): getattr, attrgetter, methodcaller or __getattribute__ given
@@ -263,9 +286,10 @@ flow of SQL text naming the table through names, containers, augmented
 assignment, the module's own helpers, method results and common builtins,
 and it fails closed (key_limit.escape) wherever it sees the value meet an
 operand, a receiver, a callee or a class it cannot prove builtin. It is not
-a soundness guarantee for arbitrary Python: twelve review rounds each found
-another corner, most of them in the inference of provably builtin, and each
-was closed; others surely remain.
+a soundness guarantee for arbitrary Python: thirteen review rounds each
+found another corner, most of them in the inference of provably builtin or
+in taking a name for what its spelling says, and each was closed; others
+surely remain.
 
 Not modelled (code review covers these):
 
@@ -274,8 +298,12 @@ Not modelled (code review covers these):
   scanner does not see the meeting, or that it wrongly takes for builtin;
 - namespaces and frames reached from another module: a module's or a
   class's names read or rebound through the module object there
-  (vars(module), module.__dict__, a computed getattr or setattr,
-  sys.modules), a builtin rebound so, and a callee, tracer, debugger or
+  (vars(module), module.__dict__, module.name = ..., a computed getattr or
+  setattr, sys.modules), a builtin or a module's attribute rebound so (a
+  helper's name bound as an attribute in any scanned module does count),
+  a name imported from a scanned module (identities are not followed
+  across modules: such a name is not known, so a namespace reader
+  imported so is not seen as one), and a callee, tracer, debugger or
   error reporter reading a caller's locals (sys._getframe, inspect, the
   tb_frame of a traceback; f_locals writes through from Python 3.13);
 - callees taken for executors by their names (execute, execute_sql, ...):
@@ -298,6 +326,7 @@ the mirror changes only through the guarded functions above.
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 import itertools
 import re
@@ -731,11 +760,22 @@ _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
 
+def _annotations(function: ast.AST) -> list[ast.expr]:
+    """A function's parameter and return annotations (none for a lambda)."""
+    if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return []
+    arguments = function.args
+    every = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+             *([arguments.vararg] if arguments.vararg else []), *([arguments.kwarg] if arguments.kwarg else [])]
+    return [annotation for annotation in [*(arg.annotation for arg in every), function.returns]
+            if annotation is not None]
+
+
 def _scope_nodes(start: Iterable[ast.AST]) -> Iterator[ast.AST]:
     """The nodes of one scope, from its statements: a nested function's or
     lambda's body, a class body and a comprehension are other scopes (their
-    decorators, defaults, bases and first iterable are this one's, and so is
-    a walrus inside a comprehension)."""
+    decorators, defaults, annotations, bases and first iterable are this
+    one's, and so is a walrus inside a comprehension or an annotation)."""
     queue = list(start)
     while queue:
         node = queue.pop()
@@ -744,7 +784,7 @@ def _scope_nodes(start: Iterable[ast.AST]) -> Iterator[ast.AST]:
             arguments = node.args
             queue += [*arguments.defaults, *(d for d in arguments.kw_defaults if d is not None)]
             if not isinstance(node, ast.Lambda):
-                queue += node.decorator_list
+                queue += [*node.decorator_list, *_annotations(node)]
         elif isinstance(node, ast.ClassDef):
             queue += [*node.decorator_list, *node.bases, *(keyword.value for keyword in node.keywords)]
         elif isinstance(node, _COMPREHENSIONS):
@@ -822,77 +862,425 @@ def _collect(node: ast.AST, found: dict[str, list[ast.AST]], appended: dict[str,
 _FRAME_CALLS = frozenset({"_getframe", "_current_frames", "currentframe", "stack", "trace", "getouterframes",
                           "getinnerframes", "walk_stack", "walk_tb", "settrace", "setprofile", "getframeinfo",
                           "get_referrers", "get_referents", "get_objects"})
-#: The modules whose attributes are the namespace readers themselves.
-_BUILTINS_MODULES = frozenset({"builtins", "__builtins__"})
+#: The modules the frame readers above come from, when one is reached by
+#: identity (from inspect import stack as s) rather than as an attribute.
+_FRAME_MODULES = frozenset({"sys", "inspect", "traceback", "gc"})
 _FRAME_ATTRIBUTES = frozenset({"f_locals", "f_globals", "f_builtins", "f_back", "tb_frame", "gi_frame", "cr_frame",
                                "ag_frame", "__closure__", "cell_contents"})
 _OBJECT_READERS = frozenset({"getmembers", "getmembers_static", "getattr_static"})
 _NAMESPACE_BUILTINS = frozenset({"locals", "globals", "vars", "dir", "eval", "exec", "breakpoint"})
+#: The builtins a reference to which can rebind a module's names.
+_REBINDERS = frozenset({"globals", "eval", "exec", "breakpoint"})
+#: The builtins' names: a name no binding in the module settles otherwise is
+#: the builtin of that name.
+_BUILTIN_NAMES = frozenset(dir(builtins))
+#: An identity no binding settles (a parameter, a call's result, an import
+#: from a scanned module, a name bound nowhere that is not a builtin).
+_UNKNOWN_IDENTITY = "?"
+_TYPE_PARAMS = tuple(getattr(ast, kind) for kind in ("TypeVar", "ParamSpec", "TypeVarTuple") if hasattr(ast, kind))
+
+#: One binding of a name or an attribute: ("value", the expression it is
+#: assigned), ("identity", a dotted path or a definition's) or ("unknown",
+#: None).
+_Binding = tuple[str, ast.AST | str | None]
+_UNBOUND: _Binding = ("unknown", None)
 
 
-def _namespace_kind(node: ast.AST) -> str | None:
-    """What a node reads the names of: "locals" (the calling scope's),
-    "globals" (the module's), "scope" (both), "object" (an object's, a
-    module or a class perhaps), "modules" (a module object by name) or
-    "frame" (any scope's); "rebind" for a write by a computed name; else
-    None."""
-    if isinstance(node, ast.Call):
-        func = node.func
-        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
-        if any(keyword.arg == "capture_locals" for keyword in node.keywords):
-            return "frame"  # traceback's summaries keep every frame's locals
-        if isinstance(func, ast.Attribute) and (name in ("locals", "globals", "vars") or (
-                name in _NAMESPACE_BUILTINS and (isinstance(func.value, ast.Call) or (
-                    isinstance(func.value, ast.Name) and func.value.id in _BUILTINS_MODULES)))):
-            func = ast.Name(id=name, ctx=ast.Load())  # builtins.locals(), import_module("builtins").eval(...)
-        if (name in ("getattr", "vars", "dir") and node.args and isinstance(node.args[0], ast.Name)
-                and node.args[0].id in _BUILTINS_MODULES):
-            return "frame"  # any namespace reader, by a name computed at run time
-        if isinstance(func, ast.Name):
-            if name in ("locals", "vars", "dir") and not node.args and not node.keywords:
-                return "locals"
-            if name == "globals":
-                return "globals"
-            if name in ("vars", "dir"):
-                return "object"
-            if name in ("eval", "exec"):
-                return "scope"
-            if name == "breakpoint":
-                return "frame"
-        elif name in _FRAME_CALLS:
-            return "frame"
-        if name in _OBJECT_READERS:
-            return "object"
-        if name in ("__import__", "import_module"):
-            return "modules"
-        if name in ("setattr", "delattr") and not (len(node.args) >= 2 and _literal_name(node.args[1])):
-            return "rebind"  # a name computed at run time (setattr by a literal one the index records)
-    elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in _BUILTINS_MODULES:
-        return "frame"  # __builtins__["eval"]
-    elif isinstance(node, ast.Attribute):
-        if node.attr in _FRAME_ATTRIBUTES:
-            return "frame"
-        if isinstance(node.value, ast.Name) and node.value.id in _BUILTINS_MODULES and node.attr == "__dict__":
-            return "frame"  # every namespace reader, by name
-        if node.attr == "__dict__":
-            return "object"
-        if node.attr in ("__setattr__", "__delattr__"):
-            return "rebind"
-        if node.attr == "__globals__":
-            return "globals"
-        if node.attr == "modules" and isinstance(node.value, ast.Name) and node.value.id == "sys":
-            return "modules"
-    return None
+def _assigned(target: ast.AST, parent: ast.AST | None) -> _Binding:
+    """What a name or attribute target is bound to: the value of a plain
+    assignment or a walrus; anything else (unpacked, a loop, with, +=, del,
+    an annotation alone) is not known."""
+    if isinstance(parent, ast.Assign) and any(target is other for other in parent.targets):
+        return ("value", parent.value)
+    if isinstance(parent, (ast.AnnAssign, ast.NamedExpr)) and parent.target is target and parent.value is not None:
+        return ("value", parent.value)
+    return _UNBOUND
 
 
-def _rebinder_reference(node: ast.AST) -> bool:
-    """A reference to a builtin that can rebind a module's names (globals,
-    eval, exec, breakpoint), by name or as an attribute of builtins, called
-    or passed on."""
-    rebinders = ("globals", "eval", "exec", "breakpoint")
-    return (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in rebinders) or (
-        isinstance(node, ast.Attribute) and node.attr in rebinders and isinstance(node.value, ast.Name)
-        and node.value.id in _BUILTINS_MODULES)
+# Where the scanner still reads a name as written, and why (every other
+# identity decision goes through _Identities below):
+#
+# - rules that add findings read the spelling beside the identity, so a
+#   name that may be a namespace or frame reader, a reflection builtin,
+#   setattr, an executor or a helper counts either way (_namespace_kinds,
+#   _builtin, _refers_to, _callee_names, _statements_run, scope_marks);
+# - executors and mutations are recognised by their own names (the
+#   documented limit: the DB-API objects are outside the scan); the escape
+#   rule stops at one only when the callee is settled (_settled_callee);
+# - a method of a receiver proven builtin (a str, or a container made in the
+#   function) is that type's method by its name, the receiver's type fixing
+#   it (_step, _argument_step, _builtin_value, _inert_use); string renderings
+#   read str methods by name, and a receiver not resolved to literals
+#   renders as a part not known (_Module.texts);
+# - a keyword argument binds the parameter of its name (_sink_arguments),
+#   an executor's statement keywords are its API's (_executed_statement),
+#   and a helper _helper resolved is matched to its own sinks by its name;
+# - a local name is matched to another of its spelling only where both
+#   resolve to the same scope (_dict_fields, _sink_entries,
+#   _parameters_reached, _bindings_within);
+# - syntax and sentinels (import *, "<parameter>", "<unknown>") are not names;
+# - a fingerprint holds every statement binding a name, by its spelling, on
+#   purpose (_rebindings).
+
+
+def _spelled(func: ast.AST) -> str:
+    """A callee's own name as written: read only by rules that add findings
+    (beside its identity), never by a rule that clears."""
+    return func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+
+
+def _definition_identity(node: ast.AST) -> str:
+    return ("class:" if isinstance(node, ast.ClassDef) else "def:") + str(id(node))
+
+
+class _Identities:
+    """What a name or an attribute is, decided by its bindings, never by its
+    spelling: the one resolver every identity decision of the scanner goes
+    through (builtin names, the getattr rewrite, plain decorators, the
+    module's helpers, namespace and frame readers, setattr and executor
+    aliases).
+
+    An identity is a dotted path (builtins.len, functools.cache, sys, a
+    module and an attribute of it) or a definition of the module (def: or
+    class: and the node). Bindings are collected module wide, whatever scope
+    they are in: a plain assignment or a walrus anywhere (an annotation, a
+    default, a decorator or a comprehension included) binds the value; an
+    import binds the module or the name it imports (followed with or without
+    as); a def or class binds itself; a parameter, a loop, with, except,
+    match, del, +=, unpacked or type-parameter target binds something not
+    known. Attribute bindings are collected the same way (obj.x = ...,
+    setattr(obj, "x", ...), del obj.x), with the receiver.
+
+    of(node) is the identity every binding gives a name, followed through
+    names and module attributes, or None (not known: every rule that relies
+    on an identity then fails closed). A name no binding anywhere in the
+    module touches is the builtin of its name; any binding of it, in any
+    form and any scope, must resolve to the same identity; and no name is
+    known in a module that imports * or may write its own namespace. A
+    module attribute (functools.cache) is not known once anything in the
+    module may rebind that attribute of that module.
+
+    may(node) is every identity a name or attribute may have, for the rules
+    that add findings: a builtin's name may be that builtin wherever it is
+    read, bound or not, and a binding adds what it may be."""
+
+    def __init__(self, tree: ast.Module, local: Iterable[str] = ()) -> None:
+        self.tree = tree
+        self.local = set(local)
+        #: Every node of the tree (breadth first, as ast.walk), and each one's parent.
+        self.nodes: list[ast.AST] = [tree]
+        self.parents: dict[int, ast.AST] = {}
+        for node in self.nodes:
+            for child in ast.iter_child_nodes(node):
+                self.parents[id(child)] = node
+                self.nodes.append(child)
+        self.names: dict[str, list[_Binding]] = {}
+        #: Each attribute binding, by attribute name, with its receiver.
+        self.attributes: dict[str, list[tuple[ast.AST, _Binding]]] = {}
+        #: The module's defs and classes, by identity.
+        self.definitions: dict[str, ast.AST] = {}
+        #: The identities an import binds as a module (import x, import x as y).
+        self.modules: set[str] = set()
+        self.star = False
+        self.rewrites = False
+        #: Whether code may rebind any attribute of any object (setattr by a
+        #: computed name, __setattr__, __dict__, vars(obj), exec, a frame).
+        self.any_attribute = False
+        self._may: dict[object, frozenset[str]] = {}
+        self._of: dict[object, str | None] = {}
+        for node in self.nodes:
+            self._record(node)
+        for node in self.nodes:
+            if isinstance(node, ast.Call) and (self.may_builtins(node.func) | {_spelled(node.func)}) & {
+                    "setattr", "delattr"}:
+                if len(node.args) >= 2 and _literal_name(node.args[1]):
+                    value = ("value", node.args[2]) if len(node.args) == 3 else _UNBOUND
+                    name = str(cast(ast.Constant, node.args[1]).value)
+                    self.attributes.setdefault(name, []).append((node.args[0], value))
+                else:
+                    self.any_attribute = True
+        self._may.clear()  # an attribute's may reads the bindings setattr adds
+        #: Every node reading a namespace (_namespace_kinds), and its kind.
+        self.namespace_reads: list[tuple[ast.AST, str]] = [
+            (node, kind) for node in self.nodes for kind in sorted(self._namespace_kinds(node))]
+        kinds = {kind for _node, kind in self.namespace_reads}
+        # A module object in hand (sys.modules, __import__, a computed getattr on
+        # a module) may have any of its names set as attributes.
+        self.rewrites = bool(kinds & {"globals", "scope", "frame", "rebind", "modules"})
+        self.any_attribute = self.any_attribute or bool(kinds & {"rebind", "object", "scope", "frame"})
+        #: Whether the module refers to a builtin that can rebind its names.
+        self.rebinder = any(isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load)
+                            and self.may_builtins(node) & _REBINDERS for node in self.nodes)
+        self._of.clear()
+
+    def _bind(self, name: str, binding: _Binding) -> None:
+        self.names.setdefault(name, []).append(binding)
+
+    def _record(self, node: ast.AST) -> None:
+        parent = self.parents.get(id(node))
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            self._bind(node.id, _assigned(node, parent))
+        elif isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load):
+            self.attributes.setdefault(node.attr, []).append((node.value, _assigned(node, parent)))
+        elif isinstance(node, ast.arg):
+            self._bind(node.arg, _UNBOUND)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            identity = _definition_identity(node)
+            self.definitions[identity] = node
+            self._bind(node.name, ("identity", identity))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                module = alias.name if alias.asname else alias.name.split(".")[0]
+                self.modules.add(module)
+                self._bind(alias.asname or module, ("identity", module))
+        elif isinstance(node, ast.ImportFrom):
+            # From a scanned module (relative, or a top-level name of the
+            # scan): its names' identities are not followed, so not known.
+            scanned = node.level > 0 or not node.module or node.module.split(".")[0] in self.local
+            for alias in node.names:
+                if alias.name == "*":
+                    self.star = True
+                else:
+                    self._bind(alias.asname or alias.name,
+                               _UNBOUND if scanned else ("identity", f"{node.module}.{alias.name}"))
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar, ast.ExceptHandler, *_TYPE_PARAMS)):
+            name = getattr(node, "name", None)
+            if isinstance(name, str):
+                self._bind(name, _UNBOUND)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            self._bind(node.rest, _UNBOUND)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                self.names.setdefault(name, [])  # bound elsewhere, by the statements collected there
+
+    # -- what a name may be (for rules that add findings) ----------------
+
+    def may(self, node: ast.AST, visiting: frozenset[object] = frozenset()) -> frozenset[str]:
+        if isinstance(node, ast.Name):
+            key: object = ("name", node.id)
+        elif isinstance(node, ast.Attribute):
+            key = id(node)
+        else:
+            return frozenset({_UNKNOWN_IDENTITY})
+        if not visiting and key in self._may:
+            return self._may[key]
+        if key in visiting:
+            return frozenset()  # a cycle adds nothing the other bindings do not
+        if len(visiting) > 12:
+            return frozenset({_UNKNOWN_IDENTITY})
+        found: set[str] = set()
+        inner = visiting | {key}
+        if isinstance(node, ast.Name):
+            if node.id in _BUILTIN_NAMES:
+                found.add("builtins." + node.id)
+            if node.id in ("builtins", "__builtins__"):
+                found.add("builtins")
+            bindings = self.names.get(node.id) or []
+            if self.star or not bindings:
+                found.add(_UNKNOWN_IDENTITY)
+            for binding in bindings:
+                found |= self._may_binding(binding, inner)
+        else:
+            attribute = cast(ast.Attribute, node)
+            for base in self.may(attribute.value, inner):
+                found.add(_UNKNOWN_IDENTITY if base == _UNKNOWN_IDENTITY or base.startswith(("def:", "class:"))
+                          else f"{base}.{attribute.attr}")
+            for _receiver, binding in self.attributes.get(attribute.attr, []):
+                found |= self._may_binding(binding, inner)
+        result = frozenset(found)
+        if not visiting:
+            self._may[key] = result
+        return result
+
+    def _may_binding(self, binding: _Binding, visiting: frozenset[object]) -> set[str]:
+        kind, payload = binding
+        if kind == "identity":
+            return {cast(str, payload)}
+        if kind == "value" and isinstance(payload, ast.AST):
+            return self._may_value(payload, visiting)
+        return {_UNKNOWN_IDENTITY}
+
+    def _may_value(self, value: ast.AST, visiting: frozenset[object]) -> set[str]:
+        if isinstance(value, (ast.Name, ast.Attribute)):
+            return set(self.may(value, visiting))
+        if isinstance(value, ast.NamedExpr):
+            return self._may_value(value.value, visiting)
+        if isinstance(value, ast.IfExp):
+            return self._may_value(value.body, visiting) | self._may_value(value.orelse, visiting)
+        if isinstance(value, ast.BoolOp):
+            return set().union(*(self._may_value(part, visiting) for part in value.values))
+        return {_UNKNOWN_IDENTITY}
+
+    def bound_may(self, node: ast.AST) -> set[str]:
+        """What the bindings of a name may give it (its spelling aside)."""
+        if not isinstance(node, ast.Name):
+            return set(self.may(node))
+        visiting = frozenset({("name", node.id)})
+        return set().union(*(self._may_binding(binding, visiting) for binding in self.names.get(node.id, [])))
+
+    def may_builtins(self, node: ast.AST) -> set[str]:
+        """The builtins a name or attribute may be, by name."""
+        return {identity[len("builtins."):] for identity in self.may(node)
+                if identity.startswith("builtins.") and identity.count(".") == 1}
+
+    def may_from(self, node: ast.AST, modules: Iterable[str]) -> set[str]:
+        """The names, in those modules, a name or attribute may be."""
+        modules = set(modules)
+        return {identity.rpartition(".")[2] for identity in self.may(node) if identity.rpartition(".")[0] in modules}
+
+    # -- what a name is (for rules that clear) ---------------------------
+
+    def of(self, node: ast.AST, visiting: frozenset[object] = frozenset()) -> str | None:
+        if isinstance(node, ast.Name):
+            key: object = ("name", node.id)
+        elif isinstance(node, ast.Attribute):
+            key = id(node)
+        else:
+            return None
+        if not visiting and key in self._of:
+            return self._of[key]
+        if key in visiting or len(visiting) > 12:
+            return None  # a cycle, or too deep: not known
+        result = self._of_now(node, visiting | {key})
+        if not visiting:
+            self._of[key] = result
+        return result
+
+    def _of_now(self, node: ast.AST, visiting: frozenset[object]) -> str | None:
+        if isinstance(node, ast.Name):
+            if self.star or self.rewrites or any(
+                    self.may(receiver) & self.modules for receiver, _binding in self.attributes.get(node.id, [])):
+                return None  # (module.len = ..., module an import, this module perhaps)
+            builtin = "builtins" if node.id == "__builtins__" else (
+                "builtins." + node.id if node.id in _BUILTIN_NAMES else None)
+            bindings = self.names.get(node.id)
+            if bindings is None:
+                return builtin
+            found = {self._of_binding(binding, visiting) for binding in bindings}
+            if builtin is not None:
+                found.add(builtin)  # a read where no binding reaches it is the builtin
+            return found.pop() if len(found) == 1 else None
+        attribute = cast(ast.Attribute, node)
+        base = self.of(attribute.value, visiting)
+        if base is None or base.startswith(("def:", "class:")) or self._attribute_rebound(attribute.attr, base):
+            return None
+        return f"{base}.{attribute.attr}"
+
+    def _of_binding(self, binding: _Binding, visiting: frozenset[object]) -> str | None:
+        kind, payload = binding
+        if kind == "identity":
+            return cast(str, payload)
+        value = payload
+        while isinstance(value, ast.NamedExpr):
+            value = value.value
+        if kind == "value" and isinstance(value, (ast.Name, ast.Attribute)):
+            return self.of(value, visiting)
+        return None
+
+    def _in_function(self, node: ast.AST) -> bool:
+        """Whether a node runs in a function's own scope (its body; a
+        default, decorator or annotation runs in the scope around it)."""
+        child, parent = node, self.parents.get(id(node))
+        while parent is not None:
+            if isinstance(parent, _FUNCTIONS):
+                body = parent.body if isinstance(parent.body, list) else [parent.body]
+                if any(child is item for item in body):
+                    return True
+            child, parent = parent, self.parents.get(id(parent))
+        return False
+
+    def _attribute_rebound(self, attr: str, base: str) -> bool:
+        """Whether the module may rebind an attribute of that name of the
+        module base: any attribute binding of it whose receiver may be that
+        module or is not known, or any rebinding by a computed name."""
+        if self.any_attribute:
+            return True
+        return any(base in may or _UNKNOWN_IDENTITY in may
+                   for may in (self.may(receiver) for receiver, _binding in self.attributes.get(attr, [])))
+
+    def builtin(self, node: ast.AST) -> str | None:
+        """The builtin a name or attribute is, by every binding, else None."""
+        identity = self.of(node)
+        if identity is not None and identity.startswith("builtins.") and identity.count(".") == 1:
+            return identity[len("builtins."):]
+        return None
+
+    # -- namespace readers -----------------------------------------------
+
+    def _namespace_kinds(self, node: ast.AST) -> set[str]:
+        """What a node reads the names of: "locals" (the calling scope's),
+        "globals" (the module's), "scope" (both), "object" (an object's, a
+        module or a class perhaps), "modules" (a module object by name) or
+        "frame" (any scope's); "rebind" for a write by a computed name.
+        These add findings, so a callee counts by every identity it may have
+        (the builtin of its name wherever it is read, through an import with
+        or without as, a name bound to it, an attribute of builtins) and by
+        its spelling too (any object's locals(), a frame reader named as an
+        attribute); a reader referred to other than by calling it is a frame
+        read (it may be called anywhere)."""
+        kinds: set[str] = set()
+        if isinstance(node, ast.Call):
+            func = node.func
+            spelled = _spelled(func)
+            readers = self.may_builtins(func)
+            if isinstance(func, ast.Attribute) and (spelled in ("locals", "globals", "vars") or (
+                    spelled in _NAMESPACE_BUILTINS and isinstance(func.value, ast.Call))):
+                readers.add(spelled)  # any object's locals(), import_module("builtins").eval(...)
+            if any(keyword.arg == "capture_locals" for keyword in node.keywords):
+                kinds.add("frame")  # traceback's summaries keep every frame's locals
+            if readers & {"getattr", "vars", "dir"} and node.args and "builtins" in self.may(node.args[0]):
+                kinds.add("frame")  # any namespace reader, by a name computed at run time
+            if readers & {"locals", "vars", "dir"} and not node.args and not node.keywords:
+                kinds.add("locals")
+                if not self._in_function(node):
+                    kinds |= {"globals", "object"}  # a module's locals() is its globals(), a class body's its namespace
+            if "globals" in readers:
+                kinds.add("globals")
+            if readers & {"vars", "dir"} and (node.args or node.keywords):
+                kinds.add("object")
+            if readers & {"eval", "exec"}:
+                kinds.add("scope")
+            if "breakpoint" in readers:
+                kinds.add("frame")
+            if (isinstance(func, ast.Attribute) and spelled in _FRAME_CALLS) or (
+                    self.may_from(func, _FRAME_MODULES) & _FRAME_CALLS):
+                kinds.add("frame")
+            if spelled in _OBJECT_READERS or self.may_from(func, {"inspect"}) & _OBJECT_READERS:
+                kinds.add("object")
+            if spelled in ("__import__", "import_module") or "__import__" in readers or (
+                    "import_module" in self.may_from(func, {"importlib"})):
+                kinds.add("modules")
+            setters = readers & {"setattr", "delattr"} or ({spelled} & {"setattr", "delattr"})
+            computed = not (len(node.args) >= 2 and _literal_name(node.args[1]))
+            if setters and computed:
+                kinds.add("rebind")  # a name computed at run time (setattr by a literal one binds an attribute)
+            if ((readers | {spelled}) & {"getattr", "setattr", "delattr"} and len(node.args) >= 2 and computed
+                    and self.may(node.args[0]) & self.modules):
+                kinds.add("modules")  # a computed name on a module object (this module itself, perhaps)
+        elif isinstance(node, ast.Subscript):
+            if "builtins" in self.may(node.value):
+                kinds.add("frame")  # __builtins__["eval"]
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _FRAME_ATTRIBUTES:
+                kinds.add("frame")
+            if node.attr == "__dict__":
+                kinds.add("frame" if "builtins" in self.may(node.value) else "object")  # every reader, by name
+            if node.attr in ("__setattr__", "__delattr__"):
+                kinds.add("rebind")
+            if node.attr == "__globals__":
+                kinds.add("globals")
+            if node.attr == "modules" and ("sys" in self.may(node.value) or (
+                    isinstance(node.value, ast.Name) and node.value.id == "sys")):
+                kinds.add("modules")
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
+            parent = self.parents.get(id(node))
+            if not (isinstance(parent, ast.Call) and parent.func is node) and (
+                    self.may_builtins(node) & _NAMESPACE_BUILTINS
+                    or self.may_from(node, _FRAME_MODULES) & _FRAME_CALLS):
+                kinds.add("frame")  # a namespace or frame reader passed on, to be called anywhere
+            if "sys.modules" in self.may(node):
+                kinds.add("modules")
+        return kinds
 
 
 class _Index:
@@ -900,14 +1288,20 @@ class _Index:
     constants, ``self.x = ...`` attributes and imported names resolve through
     it; a name assigned in several places takes every value."""
 
-    def __init__(self, trees: Iterable[ast.Module], local: Iterable[str] = ()) -> None:
+    def __init__(self, trees: Iterable[ast.Module], local: Iterable[str] = (),
+                 identities: dict[int, _Identities] | None = None) -> None:
         self.globals: dict[str, list[ast.AST]] = {}
-        #: getattr and the names bound to it (_getattr_aliases).
-        self.getattrs: set[str] = {"getattr"}
         self.attribute_aliases: dict[str, set[str]] = {}
         #: The top-level names of the scanned modules (an import from one
         #: resolves through the index; from anywhere else it is not known).
         self.local: set[str] = set(local)
+        #: Each module's identity resolver, by id of its tree.
+        self.identities: dict[int, _Identities] = dict(identities or {})
+        #: The modules (by id of the tree) that bind an attribute of each
+        #: name (obj.x = ..., setattr(obj, "x", ...), del obj.x), and those
+        #: whose class bodies bind it (a method, perhaps a subclass's override).
+        self.attribute_stores: dict[str, set[int]] = {}
+        self.class_members: dict[str, set[int]] = {}
         #: Module names bound somewhere by a form the index does not record
         #: as a value (unpacked, a loop, with, except, import, def, class,
         #: match, a statement inside if or try, a function's global): never
@@ -928,9 +1322,16 @@ class _Index:
         self.carries: dict[int, bool] = {}
         for tree in trees:
             self._tree = id(tree)
-            parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-            exposes = False
-            for node in ast.walk(tree):
+            ids = self.identities.setdefault(id(tree), _Identities(tree, self.local))
+            parents = ids.parents
+            for attr in ids.attributes:
+                self.attribute_stores.setdefault(attr, set()).add(id(tree))
+            for cls in ids.nodes:
+                if isinstance(cls, ast.ClassDef):
+                    for item in cls.body:
+                        for member in _class_bindings(item):
+                            self.class_members.setdefault(member, set()).add(id(tree))
+            for node in ids.nodes:
                 if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Attribute):
                     self.globals.setdefault(node.target.attr, []).append(ast.Name(id="<parameter>"))
                 elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
@@ -938,9 +1339,11 @@ class _Index:
                     for target in targets:
                         if isinstance(target, ast.Attribute):
                             self._record(target.attr, node.value)
-                elif (isinstance(node, ast.Call) and _callee(node) == "setattr" and len(node.args) == 3
+                elif (isinstance(node, ast.Call) and len(node.args) == 3
+                      and "setattr" in ids.may_builtins(node.func) | {_spelled(node.func)}
                       and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)):
-                    # setattr(obj, "name", value) binds obj.name like an assignment.
+                    # setattr(obj, "name", value), by any name setattr may have
+                    # (its own spelling too), binds obj.name like an assignment.
                     self._record(node.args[1].value, node.args[2])
                 elif isinstance(node, ast.alias) and node.asname and node.asname != node.name.rsplit(".", 1)[-1]:
                     # import x as y, from m import x as y: y is another name for x.
@@ -954,8 +1357,7 @@ class _Index:
                     if isinstance(parent, ast.Attribute) and parent.value is node and not (
                             parent.attr.startswith("__") and parent.attr.endswith("__")):
                         self.attribute_uses[name] = self.attribute_uses.get(name, 0) + 1
-                if _namespace_kind(node) is not None or _rebinder_reference(node):
-                    exposes = True
+            exposes = bool(ids.namespace_reads) or ids.rebinder
             names: set[str] = set()
             body = {id(node) for node in tree.body}
             for node in tree.body:
@@ -1001,10 +1403,10 @@ class _Module:
         self.path = path
         self.tree = tree
         self.index = index
-        self.parents: dict[int, ast.AST] = {}
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                self.parents[id(child)] = node
+        #: The module's identity resolver: every identity decision (a builtin's
+        #: name, a decorator, a helper, a namespace reader) goes through it.
+        self.ids = index.identities.get(id(tree)) or _Identities(tree, index.local)
+        self.parents: dict[int, ast.AST] = self.ids.parents
         self.names: dict[int, str] = {}
         self.functions: dict[int, list[ast.AST]] = {}
         #: The outermost function around a node (a nested def, lambda,
@@ -1016,7 +1418,7 @@ class _Module:
         # A function's defaults, decorators and annotations run in the scope
         # around it, not in its own (outer functions first: ast.walk is
         # breadth first).
-        for function in ast.walk(tree):
+        for function in self.ids.nodes:
             if isinstance(function, _FUNCTIONS):
                 arguments = function.args
                 outside: list[ast.AST | None] = [*arguments.defaults, *arguments.kw_defaults]
@@ -1047,18 +1449,10 @@ class _Module:
         #: The ClassDef and comprehension nodes, by id (their names are scopes
         #: of their own: _binding_scope).
         self.scope_nodes: dict[int, ast.AST] = {}
-        #: The names the module binds outside functions (an import, def or
-        #: class too), and whether it imports *: they shadow a builtin.
-        self.shadowed: set[str] = set()
-        self.star = False
-        #: Whether the module may write its own namespace (globals(), eval,
-        #: exec, a frame, setattr by a computed name): globals()["len"] = ...
-        #: rebinds a builtin's name with no assignment the rule sees.
-        self.rewrites_names = False
-        self.imports_only: dict[tuple[str, tuple[str, ...], bool], bool] = {}
-        #: Every node reading a namespace (_namespace_kind), and its kind.
-        self.namespace_reads: list[tuple[ast.AST, str]] = []
-        for node in ast.walk(tree):
+        self.star = self.ids.star
+        #: Every node reading a namespace (_Identities._namespace_kinds), and its kind.
+        self.namespace_reads: list[tuple[ast.AST, str]] = list(self.ids.namespace_reads)
+        for node in self.ids.nodes:
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                 self.loads.setdefault(node.id, []).append(node)
             elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
@@ -1068,40 +1462,10 @@ class _Module:
                 self.attribute_loads.setdefault(node.attr, []).append(node)
             elif isinstance(node, (ast.ClassDef, *_COMPREHENSIONS)):
                 self.scope_nodes[id(node)] = node
-            elif isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
-                self.star = True
-            kind = _namespace_kind(node)
-            if kind is not None:
-                self.namespace_reads.append((node, kind))
-        for node in _scope_nodes(tree.body):
-            found: dict[str, list[ast.AST]] = {}
-            _collect(node, found, found, index.local)
-            self.shadowed.update(found)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and not self.functions.get(id(node)):
-                self.shadowed.update(self._class_scope(node))
-        # A getattr or setattr by a computed name on a module object (a name an
-        # import binds: this module itself, perhaps) reads or writes its names.
-        imported = {alias.asname or alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
-                    for alias in node.names}
-        for node in ast.walk(tree):
-            if (isinstance(node, ast.Call) and _callee(node) in ("getattr", "setattr", "delattr") and len(node.args) >= 2
-                    and isinstance(node.args[0], ast.Name) and node.args[0].id in imported
-                    and not _literal_name(node.args[1])):
-                self.namespace_reads.append((node, "modules"))
-        for name in _NAMESPACE_BUILTINS:
-            for node in [*self.loads.get(name, []), *self.attribute_loads.get(name, [])]:
-                parent = self.parents.get(id(node))
-                reader = _is_builtin_name(self, node) if isinstance(node, ast.Name) else (
-                    isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
-                    and node.value.id in _BUILTINS_MODULES)
-                if reader and not (isinstance(parent, ast.Call) and parent.func is node):
-                    self.namespace_reads.append((node, "frame"))  # a namespace reader passed on
         #: Any frame read, and the functions whose own names a read sees
         #: (locals(), vars(), eval, exec in them or in a function nested in
         #: them): their names are never provably builtin.
         self.frames = any(kind == "frame" for _node, kind in self.namespace_reads)
-        self.rewrites_names = any(kind in ("globals", "scope", "frame", "rebind") for _node, kind in self.namespace_reads)
         self.exposed_scopes = {id(function) for node, kind in self.namespace_reads if kind in ("locals", "scope")
                                for function in self.functions.get(id(node), [])}
 
@@ -1491,7 +1855,7 @@ def _callee(call: ast.Call) -> str:
 
 def _top_level_strings(m: _Module) -> Iterator[ast.AST]:
     """Each string expression not inside a larger one, docstrings aside."""
-    for node in ast.walk(m.tree):
+    for node in m.ids.nodes:
         if not (isinstance(node, (ast.JoinedStr, ast.BinOp)) or (
                 isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes))) or (
                 isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
@@ -1548,8 +1912,9 @@ def _callee_names(m: _Module, func: ast.AST, seen: frozenset[int] = frozenset())
 
 
 def _getattr_default(m: _Module, call: ast.Call) -> ast.expr | None:
-    """The default of getattr(obj, "name", default), else None."""
-    if (_callee(call) in m.index.getattrs and len(call.args) == 3 and _literal_name(call.args[1])
+    """The default of getattr(obj, "name", default), getattr being the
+    builtin by every binding (_Identities.of), else None."""
+    if (m.ids.of(call.func) == "builtins.getattr" and len(call.args) == 3 and _literal_name(call.args[1])
             and not call.keywords):
         return call.args[2]
     return None
@@ -1584,24 +1949,26 @@ _REFLECTION_MODULES = frozenset({"builtins", "operator"})
 
 def _builtin(m: _Module, func: ast.AST) -> str | None:
     """Which builtin that reaches code by a name or text computed at run
-    time a callee is (getattr, setattr, exec, eval, compile, attrgetter,
-    methodcaller), by name or through a name bound to it, or as an
-    attribute of builtins or operator; or any object's __getattribute__."""
-    if isinstance(func, ast.Attribute):
-        if func.attr == "__getattribute__":
-            return func.attr
-        receiver = func.value
-        if isinstance(receiver, ast.Name) and receiver.id in _REFLECTION_MODULES and func.attr in _REFLECTION:
-            return func.attr
+    time a callee may be (getattr, setattr, exec, eval, compile, attrgetter,
+    methodcaller): by any identity it may have (_Identities.may: the builtin
+    of its name, an import of one under any name, a name bound to one, an
+    attribute of builtins or operator) or by its own name (this adds
+    findings, so spelling counts too); or any object's __getattribute__ (the
+    attribute protocol's own dunder)."""
+    if isinstance(func, ast.Attribute) and func.attr == "__getattribute__":
+        return func.attr
+    if not isinstance(func, (ast.Name, ast.Attribute)):
         return None
-    if not isinstance(func, ast.Name):
-        return None
-    names = {func.id}
-    for value in m.bindings(func, func.id) or []:
-        if isinstance(value, ast.Name):
-            names.add(value.id)
-        elif isinstance(value, ast.Attribute):
-            names.add(_builtin(m, value) or "")
+    names = m.ids.may_from(func, _REFLECTION_MODULES)
+    if isinstance(func, ast.Name):
+        names.add(func.id)
+        for value in m.bindings(func, func.id) or []:
+            if isinstance(value, ast.Name):
+                names.add(value.id)
+            elif isinstance(value, ast.Attribute):
+                names.add(_builtin(m, value) or "")
+    elif isinstance(func.value, ast.Name) and func.value.id in _REFLECTION_MODULES:
+        names.add(func.attr)  # builtins.exec spelled so (obj.compile(...) is a method)
     hits = sorted(names & _REFLECTION)
     return hits[0] if hits else None
 
@@ -1691,16 +2058,20 @@ def _dict_fields(m: _Module, node: ast.AST) -> dict[str, ast.AST]:
             for key, value in zip(source.keys, source.values, strict=True):
                 if isinstance(key, ast.Constant) and isinstance(key.value, str):
                     fields[key.value] = value
-        elif isinstance(source, ast.Call) and _callee(source) == "dict":
+        elif isinstance(source, ast.Call) and _builtin_name(m, source.func) == "dict":
             fields.update({kw.arg: kw.value for kw in source.keywords if kw.arg})
     if isinstance(node, ast.Name):
         for function in m.functions.get(id(node), [])[-1:]:
             for sub in ast.walk(function):
                 if isinstance(sub, ast.Assign):
                     for target in sub.targets:
+                        # The same variable: its name resolves to the same scope
+                        # there (a nested function's own name of that spelling is
+                        # another dict).
                         if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
                                 and target.value.id == node.id and isinstance(target.slice, ast.Constant)
-                                and isinstance(target.slice.value, str)):
+                                and isinstance(target.slice.value, str)
+                                and _binding_scope(m, target.value, node.id) == _binding_scope(m, node, node.id)):
                             fields[target.slice.value] = sub.value
     return fields
 
@@ -1783,7 +2154,7 @@ def scope_marks(m: _Module) -> dict[str, tuple[set[str], ast.AST]]:
         key = m.outer(node)
         return marks.setdefault(key, (set(), m.outer_nodes.get(key, node)))[0]
 
-    for node in ast.walk(m.tree):
+    for node in m.ids.nodes:
         seen = at(node)
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             if _is_docstring(node, m.parents):
@@ -1833,7 +2204,7 @@ def _statement_calls(m: _Module, mentions: set[str]) -> Iterator[_Finding]:
     closed, whatever is known around it; and a statement given to a helper
     that may change it before it runs fails closed in such a scope, or
     wherever it names the table."""
-    for node in ast.walk(m.tree):
+    for node in m.ids.nodes:
         if not isinstance(node, ast.Call):
             continue
         mentioned = m.outer(node) in mentions
@@ -1844,7 +2215,7 @@ def _statement_calls(m: _Module, mentions: set[str]) -> Iterator[_Finding]:
                     yield _Finding("key_limit.sql", node, changed or assigns_limit_column(text))
             if changed and (mentioned or any(names_table(text) for text in texts)):
                 yield _Finding("key_limit.sql", node, True)
-            elif mentioned and any(UNKNOWN in text for text in texts) and not _timeout_setting(statement):
+            elif mentioned and any(UNKNOWN in text for text in texts) and not _timeout_setting(m, statement):
                 yield _Finding("key_limit.sql", node, True)
 
 
@@ -1868,9 +2239,13 @@ def _statements_run(m: _Module, call: ast.Call) -> list[tuple[ast.AST, bool]]:
         first = _executed_statement(m, call)
         statements += [(statement, False)
                        for statement in (_elements(first) if first is not None else [ast.Name(id="<parameter>")])]
+    helper = _helper(m, call.func)
     for name in sorted(verbs - _EXECUTORS):
+        # A callee that is not, by every binding, the helper of that name
+        # (run = with_limit(run)) may change the statement.
+        changes = helper is None or helper.name != name
         for sink in m.sinks.get(name, ()):
-            statements += [(statement, sink.changes) for argument in _sink_arguments(call, sink)
+            statements += [(statement, sink.changes or changes) for argument in _sink_arguments(call, sink)
                            for statement in _elements(argument) if _may_be_text(m, statement)]
     run = {id(statement) for statement, _changed in statements}
     for argument in [*call.args, *(kw.value for kw in call.keywords)]:
@@ -1900,7 +2275,7 @@ def _indirect_uses(m: _Module, mentions: set[str]) -> Iterator[_Finding]:
       (functools.partial, a decorator applied to it) instead of called or
       bound to a name or attribute (whose calls are followed)."""
     targets = _INDIRECT_TARGETS | m.sinks.keys()
-    for node in ast.walk(m.tree):
+    for node in m.ids.nodes:
         if m.outer(node) not in mentions:
             continue
         if isinstance(node, ast.Call):
@@ -1944,9 +2319,13 @@ def _refers_to(m: _Module, node: ast.Name | ast.Attribute, targets: Iterable[str
     one it is bound to."""
     reach = set(targets) | _REFLECTION
     if isinstance(node, ast.Attribute):
-        return bool(_callee_names(m, node) & reach)
+        return bool((_callee_names(m, node) | m.ids.may_from(node, _REFLECTION_MODULES)) & reach)
     aliased = _callee_names(m, node) - {node.id}
-    return bool(aliased & reach) or (node.id in reach and not m.bindings(node, node.id))
+    # By identity too: a name an import or another name binds to one of the
+    # reflection builtins (from builtins import getattr as fetch).
+    bound = {identity.rpartition(".")[2] for identity in m.ids.bound_may(node)
+             if identity.rpartition(".")[0] in _REFLECTION_MODULES}
+    return bool((aliased | bound) & reach) or (node.id in reach and not m.bindings(node, node.id))
 
 
 def _called_or_bound(m: _Module, node: ast.AST) -> bool:
@@ -1974,67 +2353,38 @@ class _Sink(NamedTuple):
     rest: bool = False
 
 
-#: Decorators that do not wrap the function they are applied to.
 #: Decorators that do not change the arguments a function is called with,
-#: and the module each is from (builtins: by its builtin name).
-_PLAIN_DECORATORS = {"staticmethod": ("builtins",), "classmethod": ("builtins",), "property": ("builtins",),
-                     "cached_property": ("functools",), "cache": ("functools",), "lru_cache": ("functools",),
-                     "abstractmethod": ("abc",), "overload": ("typing", "typing_extensions"),
-                     "override": ("typing", "typing_extensions")}
-
-
-def _only_imported(m: _Module, name: str, modules: tuple[str, ...], as_module: bool) -> bool:
-    """Whether every binding of a name anywhere in the module is an import
-    of it from one of those modules (as_module: import of that module), with
-    no other binding and no import *."""
-    key = (name, modules, as_module)
-    if key not in m.imports_only:
-        sites = 0
-        clean = not m.star
-        for node in ast.walk(m.tree):
-            if isinstance(node, ast.arg):
-                clean = clean and node.arg != name
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                for alias in node.names:
-                    if (alias.asname or alias.name.split(".")[0]) != name:
-                        continue
-                    sites += 1
-                    clean = clean and alias.asname in (None, name) and (
-                        (isinstance(node, ast.Import) and as_module and alias.name in modules) or (
-                            isinstance(node, ast.ImportFrom) and not as_module and node.module in modules))
-            else:
-                found: dict[str, list[ast.AST]] = {}
-                _collect(node, found, found, set())
-                clean = clean and name not in found
-        m.imports_only[key] = clean and sites > 0
-    return m.imports_only[key]
+#: by identity (_Identities.of: a builtin's name nothing binds, a name only
+#: imported from its module under any name, an attribute of that module
+#: only imported as a module).
+_PLAIN_DECORATORS = frozenset({
+    "builtins.staticmethod", "builtins.classmethod", "builtins.property", "functools.cached_property",
+    "functools.cache", "functools.lru_cache", "abc.abstractmethod", "typing.overload",
+    "typing_extensions.overload", "typing.override", "typing_extensions.override"})
 
 
 def _plain_decorator(m: _Module, function: ast.AST, decorator: ast.expr) -> bool:
-    """A decorator provably one of _PLAIN_DECORATORS (resolved: a builtin's
-    name nothing binds, a name only imported from its module, or an
-    attribute of that module only imported as itself), or a property's
-    setter, getter or deleter in the class that defines the property."""
+    """A decorator whose identity, by every binding, is one of
+    _PLAIN_DECORATORS (from functools import singledispatch as cache is
+    singledispatch, whatever its name), or a property's setter, getter or
+    deleter in the class that defines the property: every binding of the
+    property's name in the module a def of that class, one of them
+    decorated by the builtin property."""
     target = decorator.func if isinstance(decorator, ast.Call) else decorator
-    if isinstance(target, ast.Name):
-        modules = _PLAIN_DECORATORS.get(target.id)
-        if modules is None:
-            return False
-        return _is_builtin_name(m, target) if modules == ("builtins",) else _only_imported(m, target.id, modules, False)
-    if not (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)):
+    if m.ids.of(target) in _PLAIN_DECORATORS:
+        return True
+    # setter, getter and deleter: the property object's own methods.
+    if not (isinstance(target, ast.Attribute) and target.attr in ("setter", "getter", "deleter")
+            and isinstance(target.value, ast.Name)):
         return False
-    receiver = target.value.id
-    if target.attr in ("setter", "getter", "deleter"):
-        cls = m.parents.get(id(function))
-        if not isinstance(cls, ast.ClassDef):
-            return False
-        sites = [item for item in cls.body if receiver in _class_bindings(item)]
-        return bool(sites) and all(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) for item in sites) and any(
-            any(isinstance(d, ast.Name) and d.id == "property" and _is_builtin_name(m, d)
-                for d in cast(ast.FunctionDef, item).decorator_list) for item in sites)
-    modules = _PLAIN_DECORATORS.get(target.attr)
-    return modules is not None and modules != ("builtins",) and receiver in modules and _only_imported(
-        m, receiver, (receiver,), True)
+    cls = m.parents.get(id(function))
+    sites = m.ids.names.get(target.value.id) or []
+    definitions = [m.ids.definitions.get(cast(str, payload)) for kind, payload in sites if kind == "identity"]
+    return (isinstance(cls, ast.ClassDef) and bool(sites) and len(definitions) == len(sites) and all(
+        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.parents.get(id(item)) is cls
+        for item in definitions) and any(
+        m.ids.of(d) == "builtins.property" for item in definitions
+        for d in cast(ast.FunctionDef, item).decorator_list))
 
 
 def _class_bindings(item: ast.AST) -> set[str]:
@@ -2053,7 +2403,7 @@ def _parameters(m: _Module, function: ast.FunctionDef | ast.AsyncFunctionDef) ->
     arguments = function.args
     positional = [a.arg for a in [*arguments.posonlyargs, *arguments.args]]
     if positional and isinstance(m.parents.get(id(function)), ast.ClassDef) and not any(
-            getattr(d, "id", "") == "staticmethod" for d in function.decorator_list):
+            m.ids.of(d) == "builtins.staticmethod" for d in function.decorator_list):
         positional = positional[1:]
     found = {name: _Sink(index, name, False) for index, name in enumerate(positional)}
     for argument in arguments.kwonlyargs:
@@ -2112,7 +2462,7 @@ def derived_sinks(m: _Module) -> dict[str, list[_Sink]]:
     name; one that holds exec, eval or compile may run any parameter,
     changed. (A helper in another module is outside the threat model.)"""
     functions: list[_Calls] = []
-    for node in ast.walk(m.tree):
+    for node in m.ids.nodes:
         if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("__")
                 and _parameters(m, node)):
             calls = [(call, _verbs(m, call),
@@ -2225,7 +2575,7 @@ def _may_be_text(m: _Module, node: ast.AST, depth: int = 0) -> bool:
 _TIMEOUT_SETTING = re.compile(r"\s*set\s+local\s+statement_timeout\s*=\s*", re.IGNORECASE)
 
 
-def _timeout_setting(statement: ast.AST) -> bool:
+def _timeout_setting(m: _Module, statement: ast.AST) -> bool:
     """The one statement with a part not known that clears:
     f"SET LOCAL statement_timeout = {<int>}", its value provably an int
     (int(...), or min/max of ints)."""
@@ -2235,17 +2585,18 @@ def _timeout_setting(statement: ast.AST) -> bool:
     return (isinstance(head, ast.Constant) and isinstance(head.value, str)
             and _TIMEOUT_SETTING.fullmatch(head.value) is not None
             and isinstance(value, ast.FormattedValue) and value.conversion == -1 and value.format_spec is None
-            and _provably_int(value.value))
+            and _provably_int(m, value.value))
 
 
-def _provably_int(node: ast.AST) -> bool:
+def _provably_int(m: _Module, node: ast.AST) -> bool:
     if isinstance(node, ast.Constant):
         return isinstance(node.value, int) and not isinstance(node.value, bool)
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
-        if node.func.id == "int" and len(node.args) == 1:
+    if isinstance(node, ast.Call) and not node.keywords:
+        builtin = _builtin_name(m, node.func)
+        if builtin == "int" and len(node.args) == 1:
             return True
-        if node.func.id in ("min", "max") and node.args:
-            return all(_provably_int(argument) for argument in node.args)
+        if builtin in ("min", "max") and node.args:
+            return all(_provably_int(m, argument) for argument in node.args)
     return False
 
 
@@ -2366,19 +2717,21 @@ def _is_unknown(value: ast.AST) -> bool:
     return isinstance(value, ast.Name) and value.id in ("<parameter>", _UNKNOWN_BINDING)
 
 
-def _is_builtin_name(m: _Module, node: ast.AST) -> bool:
-    """A name read where nothing binds it (no assignment, parameter, import,
-    def or class in any scope it may resolve to, no import *, and a module
-    that never writes its own namespace): the builtin of that name."""
-    return (isinstance(node, ast.Name) and not m.bindings(node, node.id) and node.id not in m.shadowed
-            and not m.star and not m.rewrites_names)
+def _builtin_name(m: _Module, node: ast.AST) -> str | None:
+    """The builtin a callee or value is by every binding (_Identities.of):
+    a name nothing in the module binds, in any form or scope (no import *,
+    and a module that never writes its own namespace), or one bound only to
+    that builtin (from builtins import len as size, size = len); its name,
+    else None. Every rule that clears dispatches on this name, never on the
+    spelling."""
+    return m.ids.builtin(node)
 
 
 def _builtin_type(m: _Module, node: ast.AST) -> bool:
     """A builtin type by its builtin name, or a tuple of them."""
     if isinstance(node, ast.Tuple):
         return bool(node.elts) and all(_builtin_type(m, element) for element in node.elts)
-    return isinstance(node, ast.Name) and node.id in _BUILTIN_TYPES and _is_builtin_name(m, node)
+    return _builtin_name(m, node) in _BUILTIN_TYPES
 
 
 # -- provably builtin values -----------------------------------------------
@@ -2455,7 +2808,7 @@ def _builtin_value(m: _Module, node: ast.AST, seen: frozenset[int] = frozenset()
             # partition returns its separator object, maketrans its values,
             # format and format_map their arguments' __format__ results.
             return func.attr not in _ARGUMENT_KEEPING or all(_builtin_value(m, a, seen) for a in arguments)
-        if isinstance(func, ast.Name) and func.id in ("str", "repr", "format", "len") and _is_builtin_name(m, func):
+        if _builtin_name(m, func) in ("str", "repr", "format", "len"):
             return all(_builtin_value(m, argument, seen) for argument in arguments)
         return False
     if isinstance(node, ast.Name):
@@ -2495,8 +2848,7 @@ def _flat(m: _Module, node: ast.AST) -> bool:
     if isinstance(node, ast.Dict):
         return all(part is not None and _immutable(part) for part in [*node.keys, *node.values])
     return (isinstance(node, ast.Call) and not node.args and not node.keywords
-            and isinstance(node.func, ast.Name) and node.func.id in ("list", "dict", "set")
-            and _is_builtin_name(m, node.func))
+            and _builtin_name(m, node.func) in ("list", "dict", "set"))
 
 
 def _immutable(node: ast.AST) -> bool:
@@ -2624,9 +2976,8 @@ def _inert_use(m: _Module, node: ast.AST, seen: frozenset[int], visiting: frozen
             isinstance(parent, ast.FormattedValue) and node is parent.value) or (
             isinstance(parent, (ast.If, ast.While, ast.Assert)) and node is parent.test):
         return True
-    if isinstance(parent, ast.Call) and node is not parent.func and not parent.keywords and _is_builtin_name(
-            m, parent.func):
-        name = cast(ast.Name, parent.func).id
+    name = _builtin_name(m, parent.func) if isinstance(parent, ast.Call) else None
+    if isinstance(parent, ast.Call) and node is not parent.func and not parent.keywords and name is not None:
         if name in ("len", "bool") and len(parent.args) == 1:
             return True
         if name in ("list", "tuple", "sorted", "reversed", "set", "frozenset") and len(parent.args) == 1:
@@ -2703,7 +3054,7 @@ def _plain_class(m: _Module, cls: ast.ClassDef, target: ast.AST) -> bool:
     attribute (Cls.x), in every scanned module: passed on, given to vars()
     or instantiated, its namespace may be read."""
     if cls.keywords or cls.decorator_list or not all(
-            isinstance(base, ast.Name) and base.id == "object" and _is_builtin_name(m, base) for base in cls.bases):
+            _builtin_name(m, base) == "object" for base in cls.bases):
         return False
     statement = target
     while m.parents.get(id(statement)) is not cls:
@@ -2763,8 +3114,7 @@ def _bind_container(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tupl
             if isinstance(value, ast.Name) and not _is_unknown(value):
                 queue.append(value)
             elif not (isinstance(value, (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)) or (
-                    isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-                    and value.func.id in ("list", "dict", "set") and _is_builtin_name(m, value.func))):
+                    isinstance(value, ast.Call) and _builtin_name(m, value.func) in ("list", "dict", "set"))):
                 return _ESCAPE
             else:
                 queue += _sharing(m, value)  # x = y = []: x is the same container
@@ -2909,21 +3259,24 @@ def _argument_step(m: _Module, node: ast.AST, call: ast.Call, clean: set[tuple[s
                    binds: list[TaintKey]) -> tuple[str, ast.AST | None]:
     """A value given to a call, positionally, by keyword or spread."""
     verbs = _verbs(m, call)
-    if verbs & _EXECUTORS or _mutation_parts(m, call) is not None:
+    if (verbs & _EXECUTORS or _mutation_parts(m, call) is not None) and _settled_callee(m, call.func):
         return _STOP  # judged by the executor and mutation rules
+    helper = _helper(m, call.func)
     for name in sorted(verbs & m.sinks.keys()):
         for sink in m.sinks[name]:
-            if (name, sink) in clean and any(given is node for given in _sink_arguments(call, sink)):
-                return _STOP  # a followed helper of the module that only runs it
+            if (helper is not None and helper.name == name and (name, sink) in clean
+                    and any(given is node for given in _sink_arguments(call, sink))):
+                return _STOP  # a followed helper of the module, by every binding, that only runs it
     func = call.func
-    if (_is_builtin_name(m, func) and cast(ast.Name, func).id == "isinstance" and len(call.args) == 2
+    builtin = _builtin_name(m, func)
+    if (builtin == "isinstance" and len(call.args) == 2
             and call.args[0] is node and not call.keywords and _builtin_type(m, call.args[1])):
         return _STOP  # its class is a builtin type's: no __instancecheck__
     others = [argument for argument in _arguments(call) if argument is not node]
     if not all(_builtin_value(m, other) for other in others):
         return _ESCAPE  # beside a callback, a stream (file=), a key, a mapping: user code may receive it
-    if _is_builtin_name(m, func):
-        name = cast(ast.Name, func).id
+    if builtin is not None:
+        name = builtin
         if name in _ABSORBING_BUILTINS and not others:
             return _STOP
         if name in _TEXT_BUILTINS:
@@ -3063,7 +3416,7 @@ def _table_values(m: _Module) -> list[ast.AST]:
     (docstrings aside), and names and attributes any of whose bindings (in
     any module) is such text or a list, tuple, dict or set holding it."""
     seeds: list[ast.AST] = [node for node in _top_level_strings(m) if _carries_table(m.texts(node))]
-    for node in ast.walk(m.tree):
+    for node in m.ids.nodes:
         # Every string literal and f-string too, not only the outermost
         # expression: each operator and call it passes through is judged.
         if (isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes))
@@ -3085,13 +3438,110 @@ def _holds_table(m: _Module, value: ast.AST) -> bool:
         if isinstance(sub, ast.JoinedStr) or (isinstance(sub, ast.Constant) and isinstance(sub.value, str)))
 
 
+def _helper(m: _Module, func: ast.AST) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The module's own def a callee is, else None. By a name (or a name
+    bound to one): every binding of it in the module, in any form and any
+    scope, is that def (_Identities.of), and no attribute of that name is
+    bound anywhere. As an attribute (self.run, Runner.run): of the class
+    that defines the def or of a method's self or cls there (_own_receiver),
+    every binding of the def's name in the module that def, and no
+    attribute of that name bound in the module or, as an attribute or a
+    class member (a subclass's override), in any other scanned module. Only
+    a def undecorated or plainly decorated (_plain_decorator) is one."""
+    ids = m.ids
+    if isinstance(func, ast.Name):
+        definition = ids.definitions.get(ids.of(func) or "")
+        names = {func.id}
+    elif isinstance(func, ast.Attribute):
+        definition = ids.definitions.get(ids.of(ast.Name(id=func.attr, ctx=ast.Load())) or "")
+        cls = m.parents.get(id(definition)) if definition is not None else None
+        if not isinstance(cls, ast.ClassDef) or not _own_receiver(m, func.value, cls) or (
+                m.index.class_members.get(func.attr, set()) - {id(m.tree)}):
+            return None
+        names = {func.attr}
+    else:
+        return None
+    if not isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    names.add(definition.name)
+    if ids.any_attribute or any(ids.attributes.get(name) or m.index.attribute_stores.get(name, set()) - {id(m.tree)}
+                                for name in names):
+        return None
+    if not all(_plain_decorator(m, definition, decorator) for decorator in definition.decorator_list):
+        return None
+    return definition
+
+
+def _own_receiver(m: _Module, receiver: ast.AST, cls: ast.ClassDef) -> bool:
+    """Whether an attribute's receiver is a class, or its instance, whose
+    attribute of a name is its own def: the class itself (a name every
+    binding of which is it), or the first parameter of a method defined in
+    its body (not a staticmethod) that nothing else in that method binds."""
+    if not isinstance(receiver, ast.Name):
+        return False
+    if m.ids.of(receiver) == _definition_identity(cls):
+        return True
+    method = next((function for function in reversed(m.functions.get(id(receiver), []))
+                   if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and m.parents.get(id(function)) is cls), None)
+    if method is None or any(m.ids.of(d) == "builtins.staticmethod" for d in method.decorator_list):
+        return False
+    positional = [*method.args.posonlyargs, *method.args.args]
+    return bool(positional) and positional[0].arg == receiver.id and _bindings_within(method, receiver.id) == [
+        positional[0]]
+
+
+def _bindings_within(function: ast.AST, name: str) -> list[ast.AST]:
+    """Every node binding a name inside a function, its parameters and every
+    nested scope included (whatever scope each binds in)."""
+    found: list[ast.AST] = []
+    for node in ast.walk(function):
+        if node is function:
+            continue
+        if (isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load) and node.id == name) or (
+                isinstance(node, ast.arg) and node.arg == name) or (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name) or (
+                isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) == name) or (
+                isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names) or (
+                getattr(node, "name", None) == name and isinstance(node, (ast.ExceptHandler, ast.MatchAs,
+                                                                           ast.MatchStar, *_TYPE_PARAMS))) or (
+                isinstance(node, ast.MatchMapping) and node.rest == name):
+            found.append(node)
+    return found
+
+
+def _settled_callee(m: _Module, func: ast.AST, depth: int = 0) -> bool:
+    """Whether a callee is all the names _callee_names gives it, so the
+    escape rule may stop at it as an executor or a mutation: an attribute
+    (taken by its name: the documented limit), a name spelled as an
+    executor or a mutation API (by its name too) or bound nowhere in the
+    module, getattr(obj, "name", default) with such a default, or a name
+    every binding of which, in the module, is a name, an attribute or such
+    a getattr settled in turn (run = conn.execute). A name with any other
+    binding (a lambda, a call's result, a parameter, an import, a def) may
+    be code those names do not describe."""
+    if isinstance(func, ast.Call):
+        default = _getattr_default(m, func)
+        return default is not None and depth < 6 and _settled_callee(m, default, depth + 1)
+    if not isinstance(func, ast.Name) or func.id in _INDIRECT_TARGETS:
+        return True
+    bindings = m.ids.names.get(func.id)
+    if bindings is None:
+        return not m.ids.star and not m.ids.rewrites
+    return depth < 6 and not m.ids.star and not m.ids.rewrites and all(
+        kind == "value" and isinstance(payload, (ast.Name, ast.Attribute, ast.Call))
+        and _settled_callee(m, payload, depth + 1) for kind, payload in bindings)
+
+
 def clean_sinks(m: _Module) -> set[tuple[str, _Sink]]:
     """The module's helper parameters shown to reach only executors: every
     use of the parameter, and of each name it is bound to or put into, goes
     to an executor or mutation call, or to another such parameter, or keeps
-    none of its text."""
+    none of its text. A call reaches one only when it is that def by every
+    binding (_helper), so never a def decorated other than plainly (the
+    decorator's wrapper receives the statement first)."""
     entries = [(name, sink, function) for name, sinks in m.sinks.items() for sink in sinks
-               for function in ast.walk(m.tree)
+               for function in m.ids.nodes
                if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and function.name == name]
     clean = {(name, sink) for name, sink, _function in entries}
     changed = True
@@ -3123,7 +3573,7 @@ def _string_findings(m: _Module) -> Iterator[_Finding]:
                 yield _Finding("sql.dynamic", node, True)
 
     inside_strings = {id(sub) for node in strings for sub in ast.walk(node) if sub is not node}
-    for node in ast.walk(m.tree):
+    for node in m.ids.nodes:
         if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load) and (
                 id(node) not in inside_strings):
             resolved = m.values(node)
@@ -3309,7 +3759,7 @@ def _scope_fingerprint(m: _Module, where: str) -> str:
     if outer == "<module>":
         return fingerprint(m.tree)
     statements: dict[int, ast.AST] = {
-        id(node): node for node in ast.walk(m.tree)
+        id(node): node for node in m.ids.nodes
         if isinstance(node, _DEFINITIONS) and m.names.get(id(node)) == outer
         and m.names.get(id(m.parents.get(id(node)))) != outer}
     if not statements:
@@ -3322,19 +3772,33 @@ def _scope_fingerprint(m: _Module, where: str) -> str:
 
 def _rebindings(m: _Module, outer: str) -> list[ast.AST]:
     """Each statement binding a definition's name in the module or class body
-    it is defined in."""
+    it is defined in, and, for a method, each binding of that attribute of
+    its class by the class's name (Cls.name = ..., setattr(Cls, "name", ...)).
+    By spelling, deliberately: the fingerprint holds every statement that
+    binds the name, whatever it binds it to."""
     if outer.startswith("<module>."):
         namespace, bare = "", outer.split(".", 1)[1]
     else:
         namespace, _, bare = outer.rpartition(".")
-    found = []
-    for node in ast.walk(m.tree):
+    owner = namespace.rpartition(".")[2]
+    found: list[ast.AST] = []
+    for node in m.ids.nodes:
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             binds = node.id == bare
         elif isinstance(node, ast.alias):
             binds = (node.asname or node.name.split(".", 1)[0]) == bare
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             binds = node.name == bare
+        elif owner and isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load):
+            binds = node.attr == bare and isinstance(node.value, ast.Name) and node.value.id == owner
+            if binds:
+                found.append(node)
+                binds = False
+        elif owner and isinstance(node, ast.Call) and _spelled(node.func) in ("setattr", "delattr") and len(
+                node.args) >= 2 and isinstance(node.args[0], ast.Name) and node.args[0].id == owner:
+            binds = False
+            if isinstance(node.args[1], ast.Constant) and node.args[1].value == bare:
+                found.append(node)
         else:
             binds = False
         if binds and _namespace(m, node, bare) == namespace:
@@ -3342,101 +3806,57 @@ def _rebindings(m: _Module, outer: str) -> list[ast.AST]:
             while not isinstance(statement, ast.stmt) and id(statement) in m.parents:
                 statement = m.parents[id(statement)]
             found.append(statement)
+    for index, node in enumerate(found):
+        while not isinstance(node, ast.stmt) and id(node) in m.parents:
+            node = m.parents[id(node)]
+        found[index] = node
     return found
 
 
 def _namespace(m: _Module, node: ast.AST, bare: str) -> str | None:
     """The module ("") or class body (its qualified name) a binding is in,
-    or None for a function's local."""
-    parent = m.parents.get(id(node))
+    or None for a function's local. A function's decorators, defaults and
+    annotations, and a class's bases, keywords and decorators, are in the
+    scope around it (a walrus there binds outside)."""
+    child, parent = node, m.parents.get(id(node))
     while parent is not None:
-        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        body = parent.body if isinstance(parent, (*_FUNCTIONS, ast.ClassDef)) else None
+        inside = any(child is item for item in (body if isinstance(body, list) else [body]))
+        if isinstance(parent, _FUNCTIONS) and inside:
             declared = any(isinstance(sub, ast.Global) and bare in sub.names for sub in ast.walk(parent))
             return "" if declared else None
-        if isinstance(parent, ast.ClassDef):
+        if isinstance(parent, ast.ClassDef) and inside:
             return m.names.get(id(parent), "")
-        parent = m.parents.get(id(parent))
+        child, parent = parent, m.parents.get(id(parent))
     return ""
 
 
-def _getattr_aliases(trees: list[ast.Module]) -> set[str]:
-    """getattr and every name bound to it, in any module (ga = getattr,
-    from builtins import getattr as ga)."""
-    edges: list[tuple[str, str]] = []
-    for tree in trees:
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, (ast.Name, ast.Attribute)):
-                source = node.value.id if isinstance(node.value, ast.Name) else node.value.attr
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                edges += [(target.id, source) for target in targets if isinstance(target, ast.Name)]
-            elif isinstance(node, ast.alias) and node.asname:
-                edges.append((node.asname, node.name.rsplit(".", 1)[-1]))
-    aliases = {"getattr"}
-    grown = True
-    while grown:
-        grown = False
-        for alias, source in edges:
-            if source in aliases and alias not in aliases:
-                aliases.add(alias)
-                grown = True
-    return aliases
-
-
-def _shadowed_getattrs(tree: ast.Module, aliases: set[str]) -> set[str]:
-    """The names of getattr (and its aliases) a module binds to anything
-    else, in any scope: a parameter, an assignment of another value, a def,
-    a loop, an import not of builtins.getattr. A call through such a name is
-    not getattr's, so it is not rewritten."""
-    def alias_value(value: ast.AST) -> bool:
-        return (isinstance(value, ast.Name) and value.id in aliases) or (
-            isinstance(value, ast.Attribute) and value.attr in aliases and isinstance(value.value, ast.Name)
-            and value.value.id in _BUILTINS_MODULES)
-
-    shadowed: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.arg):
-            if node.arg in aliases:
-                shadowed.add(node.arg)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                bound = alias.asname or alias.name.split(".")[0]
-                if bound in aliases and not (isinstance(node, ast.ImportFrom) and node.module == "builtins"
-                                             and alias.name in aliases):
-                    shadowed.add(bound)
-        else:
-            found: dict[str, list[ast.AST]] = {}
-            _collect(node, found, found, set())
-            shadowed.update(name for name, values in found.items()
-                            if name in aliases and not all(alias_value(value) for value in values))
-    return shadowed
-
-
 class _Fetches(ast.NodeTransformer):
-    """Reads getattr(obj, "name") (through any alias of getattr the module
-    does not also bind to something else, or builtins.getattr) and
-    obj.__getattribute__("name") (object.__getattribute__(obj, "name")) as
-    obj.name before any rule runs, so every rule treats them exactly as the
-    attribute."""
+    """Reads getattr(obj, "name") (getattr being the builtin by every
+    binding: _Identities.of, so through any alias of it the module binds to
+    nothing else, an import of it under any name, or builtins.getattr with
+    builtins the module) and obj.__getattribute__("name")
+    (object.__getattribute__(obj, "name"), object the builtin) as obj.name
+    before any rule runs, so every rule treats them exactly as the
+    attribute. A getattr whose identity is not known is left a call: a
+    value given to it escapes."""
 
-    def __init__(self, aliases: set[str], shadowed: frozenset[str] | set[str] = frozenset()) -> None:
-        self.aliases = aliases
-        self.shadowed = shadowed
+    def __init__(self, ids: _Identities) -> None:
+        self.ids = ids
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         func = node.func
         target: ast.expr | None = None
         attribute: ast.expr | None = None
-        builtin = (isinstance(func, ast.Name) and func.id in self.aliases and func.id not in self.shadowed) or (
-            isinstance(func, ast.Attribute) and func.attr in self.aliases and isinstance(func.value, ast.Name)
-            and func.value.id in _BUILTINS_MODULES)
-        if builtin and len(node.args) == 2 and not node.keywords:
+        if self.ids.of(func) == "builtins.getattr" and len(node.args) == 2 and not node.keywords:
             target, attribute = node.args
         elif isinstance(func, ast.Attribute) and func.attr == "__getattribute__" and not node.keywords:
+            # The attribute protocol's own dunder, by its name: obj.name calls
+            # type(obj).__getattribute__ too.
             if len(node.args) == 1:
                 target, attribute = func.value, node.args[0]
-            elif (len(node.args) == 2 and isinstance(func.value, ast.Name) and func.value.id == "object"
-                  and "object" not in self.shadowed):
+            elif len(node.args) == 2 and self.ids.builtin(func.value) == "object":
                 target, attribute = node.args
         if target is not None and attribute is not None and _literal_name(attribute):
             fetched = ast.Attribute(value=target, attr=str(cast(ast.Constant, attribute).value), ctx=ast.Load())
@@ -3448,14 +3868,16 @@ def scan_paths_detail(python: Iterable[Path], text: Iterable[Path]) -> ScanDetai
     """Every finding, with whether its scope may write a limit column."""
     python = list(python)
     sources = [p.read_text(encoding="utf-8") for p in python]
+    local = {part.removesuffix(".py") for path in python
+             for part in (path.relative_to(ROOT).parts if path.is_relative_to(ROOT) else path.parts[-2:])}
     trees = [ast.parse(source) for source in sources]
-    getattrs = _getattr_aliases(trees)
-    trees = [cast(ast.Module, _Fetches(getattrs, _shadowed_getattrs(tree, getattrs | {"object"})).visit(tree))
-             for tree in trees]
-    index = _Index(trees, {part.removesuffix(".py") for path in python
-                           for part in (path.relative_to(ROOT).parts if path.is_relative_to(ROOT)
-                                        else path.parts[-2:])})
-    index.getattrs = getattrs
+    # Only a module that spells getattr or __getattribute__ can hold a call
+    # the rewrite reads as an attribute (an import of getattr under another
+    # name spells it too).
+    trees = [cast(ast.Module, _Fetches(_Identities(tree, local)).visit(tree))
+             if "getattr" in source or "__getattribute__" in source else tree
+             for tree, source in zip(trees, sources, strict=True)]
+    index = _Index(trees, local, {id(tree): _Identities(tree, local) for tree in trees})
     modules = [_Module(path, tree, index) for path, tree in zip(python, trees, strict=True)]
     index.modules = {id(m.tree): m for m in modules}
     for m in modules:

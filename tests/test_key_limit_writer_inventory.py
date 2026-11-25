@@ -603,7 +603,8 @@ KEY_LIMIT_FORMS = [
     ("dynamic dispatch",
      "def f(txn, verb, rows):\n    getattr(txn, verb)(table='tr_key_limit', columns=COLS, values=rows)\n"
      "COLS = ('key_hash', 'shard', 'month_limit_micro')\n",
-     {("key_limit.name", "f"): True, ("key_limit.indirect", "f"): True}),
+     # (and the value escapes: a callee reached by a computed name is no mutation the rule may stop at)
+     {("key_limit.name", "f"): True, ("key_limit.indirect", "f"): True, ("key_limit.escape", "f"): True}),
     ("%-formatted SQL",
      "def f(txn):\n    table = 'tr_key_limit'\n"
      "    txn.execute_update('UPDATE %s SET limit_micro=1 WHERE key_hash=@k AND shard=0' % table)\n",
@@ -736,7 +737,8 @@ KEY_LIMIT_FORMS = [
      {("key_limit.sql", "f"): False, ("key_limit.indirect", "f"): True, ("key_limit.escape", "f"): True}),
     ("a decorated helper of the module", "def with_cap(fn):\n    return lambda c, q: fn(c, q + ', day_limit_micro=1')\n"
      "@with_cap\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
-     {("key_limit.sql", "f"): True}),
+     # (and the value escapes: the decorator's wrapper, not the reviewed def, receives it)
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a helper of the module that changes the statement", "def run(c, q):\n    c.execute(q + ', day_limit_micro=1')\n"
      "def f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n", {("key_limit.sql", "f"): True}),
     ("a chain of helpers", "def run(c, q):\n    inner(c, q)\ndef inner(c, q):\n"
@@ -770,7 +772,8 @@ KEY_LIMIT_FORMS = [
      {("key_limit.sql", "f"): False, ("key_limit.sql", "f.run"): True}),
     ("a decorated nested helper", "def with_cap(fn):\n    return lambda q: fn(q + ', day_limit_micro=1')\n"
      "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    @with_cap\n    def run(q):\n"
-     "        c.execute(q)\n    run(sql)\n", {("key_limit.sql", "f"): True, ("key_limit.sql", "f.run"): True}),
+     "        c.execute(q)\n    run(sql)\n",
+     {("key_limit.sql", "f"): True, ("key_limit.sql", "f.run"): True, ("key_limit.escape", "f"): True}),
     ("a nested lambda", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n"
      "    run = lambda q: c.execute(q + ', day_limit_micro=1')\n    run(sql)\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a nested comprehension", "def add_cap(sql):\n    return sql + ', day_limit_micro=1'\n"
@@ -1208,7 +1211,7 @@ KEY_LIMIT_FORMS = [
      {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
     ('round 12 reviewer: decorator_shadow',
      "from functools import wraps\ndef cache(func):\n    @wraps(func)\n    def wrapper(c,q):\n        return func(c,q + ', day_limit_micro=1')\n    return wrapper\n@cache\ndef run(c,q):\n    c.execute(q)\ndef f(c):\n    run(c,'UPDATE tr_key_limit SET reserved=0')\n",
-     {('key_limit.sql', 'f'): True}),
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
     ('round 12 reviewer: default_locals',
      "run=lambda c,q: c.execute(q + ', day_limit_micro=1')\nsql='UPDATE tr_key_limit SET reserved=0'\ndef f(c,q=locals()['sql']):\n    run(c,q)\n",
      {('key_limit.escape', 'f'): True, ('key_limit.sql', '<module>.sql'): False}),
@@ -1271,22 +1274,53 @@ KEY_LIMIT_FORMS = [
      {('key_limit.sql', 'f'): False}),
     ('a decorator named like a stdlib one but bound otherwise',
      "cache = lambda func: lambda c, q: func(c, q + ', day_limit_micro=1')\n@cache\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
-     {('key_limit.sql', 'f'): True}),
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
     ('a method named getattr is not the builtin',
      "def f(c, obj):\n    obj.getattr('UPDATE tr_key_limit SET reserved=0', 'upper')()\n",
      {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
     ('a decorator named cache imported from elsewhere',
      "from mylib import cache\n@cache\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
-     {('key_limit.sql', 'f'): True}),
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
     ('a stdlib decorator imported, then rebound',
      "from functools import cache\ncache = lambda func: lambda c, q: func(c, q + ', day_limit_micro=1')\n@cache\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
-     {('key_limit.sql', 'f'): True}),
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
     ('getattr bound by a parameter',
      "def f(c, getattr):\n    getattr('UPDATE tr_key_limit SET reserved=0', 'upper')()\n",
      {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
     ('a lambda default reading locals()',
      "run = lambda c, q: c.execute(q + ', day_limit_micro=1')\ndef f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    g = lambda q=locals()['sql']: run(c, q)\n    g()\n",
      {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    # Review round 14: a walrus in an annotation binds in the scope around the
+    # function, so the module's constant of that name is not what f reads.
+    ('a walrus in an annotation rebinding a module constant locally',
+     "SEP = ', '\ndef f(c, make):\n    def g(x: (SEP := make())):\n        pass\n"
+     "    SEP.join(['UPDATE tr_key_limit SET reserved=0'])\n",
+     {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
+    # ... and eval reached as an attribute of builtins imported under another
+    # name is eval (key_limit.indirect) and a namespace read (the escape).
+    ('eval through builtins imported under another name',
+     "import builtins as b\ndef f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    b.eval('c.execute(sql)')\n",
+     {('key_limit.sql', 'f'): False, ('key_limit.indirect', 'f'): True, ('key_limit.escape', 'f'): True}),
+    # ... and getattr imported under another name inside a function, then
+    # passed on, is getattr passed on (key_limit.indirect).
+    ('getattr imported under another name in a function, passed on',
+     "def f(c):\n    from builtins import getattr as fetch\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n"
+     "    keep = [fetch]\n",
+     {('key_limit.sql', 'f'): False, ('key_limit.indirect', 'f'): True}),
+    # ... a helper rebound by another module's wrapper may change any statement
+    # it is given, so in a scope that mentions the table it fails closed even
+    # for text that does not name it.
+    ('a helper rebound by another module\'s wrapper',
+     "from wrappers import with_limit\ndef run(c, q):\n    c.execute(q)\nrun = with_limit(run)\n"
+     "def f(c):\n    c.execute('SELECT reserved FROM tr_key_limit')\n    run(c, 'SELECT 1')\n",
+     {('key_limit.sql', 'f'): True}),
+    # ... and a nested function's dict of the same spelling is another dict:
+    # its table is not the spread payload's.
+    ('a nested function\'s dict of the same name',
+     "def f(txn, rows):\n    payload = {'values': rows}\n    payload['table'] = 'tr_key_limit'\n"
+     "    def other():\n        payload = {}\n        payload['table'] = 'tr_other'\n        return payload\n"
+     "    txn.update(**payload)\n",
+     {('key_limit.name', 'f'): True, ('key_limit.escape', 'f'): True}),
 ]
 
 
@@ -1911,6 +1945,9 @@ def _redefined(how: str) -> str:
         return source + "\n\n" + mutant
     if how == "a rebinding":
         return source + "\n\nreserve_key_statement = release_key_statement\n"
+    if how == "a walrus in another function's default":
+        # A default runs in the scope around the function: this binds the module's name.
+        return source + "\n\ndef probe_signature(x=(reserve_key_statement := release_key_statement)):\n    return x\n"
     if how == "unparsed, unchanged":
         return ast.unparse(ast.parse(source))
     assert how == "an edit elsewhere in the module"
@@ -1921,6 +1958,7 @@ def _redefined(how: str) -> str:
     ("conditional definitions (the reviewer's)", True),
     ("a later definition", True),
     ("a rebinding", True),
+    ("a walrus in another function's default", True),
     ("unparsed, unchanged", False),
     ("an edit elsewhere in the module", False),
 ])
@@ -1943,6 +1981,20 @@ def test_a_class_bodys_duplicate_method_changes_the_exceptions_fingerprint(tmp_p
     where = source.index(_RELEASE_END)
     duplicate = "\n    def reserve_key_limit(self, *args, **kwargs):\n        return None\n"
     detail = _injected_detail(tmp_path, _PG, source[:where] + duplicate + source[where:])
+    scope = (_PG, "PostgresStore.reserve_key_limit.reserve")
+    assert detail.fingerprints[("storage_postgres.py", scope[1])] != REVIEWED_FINGERPRINTS[scope]
+
+
+@pytest.mark.parametrize("rebinding", [
+    "PostgresStore.reserve_key_limit = lambda self, *args, **kwargs: None\n",
+    "setattr(PostgresStore, 'reserve_key_limit', lambda self, *args, **kwargs: None)\n",
+])
+def test_a_method_rebound_through_its_class_changes_the_exceptions_fingerprint(tmp_path: Path,
+                                                                                rebinding: str) -> None:
+    """Review round 14: Cls.method = ... (or setattr) rebinds the method an
+    exception is nested in, so its fingerprint holds that statement too."""
+    source = (ROOT / _PG).read_text() + "\n\n" + rebinding
+    detail = _injected_detail(tmp_path, _PG, source)
     scope = (_PG, "PostgresStore.reserve_key_limit.reserve")
     assert detail.fingerprints[("storage_postgres.py", scope[1])] != REVIEWED_FINGERPRINTS[scope]
 
@@ -2232,3 +2284,194 @@ def test_the_round_13_injections_into_a_listed_scope_are_caught(tmp_path: Path, 
     writers = limit_column_writers(_injected_detail(tmp_path, _PG, source))
     assert any(path == "storage_postgres.py" and (where == scope or where.startswith((scope + ".", "probe")))
                for path, where in writers), label
+
+
+# Review round 14: the round-13 reviewer's five items, each an identity the
+# scanner decided by a name's spelling (a helper rebound, getattr shadowed or
+# a receiver spelled builtins, a decorator imported under a plain one's name,
+# a namespace builtin imported under another name, a binding in an
+# annotation). Every identity decision now goes through one resolver
+# (key_limit_writers._Identities). Each form is injected into
+# PostgresStore._release_key_hold_tx (helpers beside the module) and makes
+# the scope, or a helper it adds, a limit-column writer; each control, the
+# same shape with its identity intact, does not. An annotation's walrus runs
+# only with eager annotations, so for item 5 the copy drops the module's
+# postponed annotations (each injected module compiles).
+_R14_SQL = "'UPDATE tr_key_limit SET reserved=0'"
+_R14_RUN = "def probe_run(c, q):\n    c.execute(q)\n"
+_R14_STATIC_RUN = "class ProbeRunner:\n    @staticmethod\n    def probe_run(c, q):\n        c.execute(q)\n"
+_R14_MAKE = "def probe_make(c):\n    return lambda q, name=None: lambda: c.execute(q + ', day_limit_micro=1')\n"
+_R14_MAKE_LEN = "def probe_make_len(c):\n    return lambda q: c.execute(q + ', day_limit_micro=1')\n"
+_R14_CHANGE = "def probe_change(c, q):\n    c.execute(q + ', day_limit_micro=1')\n"
+_ROUND_14 = {
+    "1. a helper rebound by a decorator's call (the reviewer's)": (
+        f"probe_run(conn, {_R14_SQL})\n",
+        "def probe_with_limit(func):\n    def wrapped(c, q):\n        return func(c, q + ', day_limit_micro=1')\n"
+        "    return wrapped\n" + _R14_RUN + "probe_run = probe_with_limit(probe_run)\n", False),
+    "1. a helper rebound to a lambda (the reviewer's)": (
+        f"probe_run(conn, {_R14_SQL})\n",
+        _R14_RUN + "probe_run = lambda c, q: c.execute(q + ', day_limit_micro=1')\n", False),
+    "1. a class's method reassigned (the reviewer's)": (
+        f"ProbeRunner.probe_run(conn, {_R14_SQL})\n",
+        _R14_STATIC_RUN + "ProbeRunner.probe_run = lambda c, q: c.execute(q + ', day_limit_micro=1')\n", False),
+    "1. another object's method of the helper's name": (
+        f"probe_other.probe_run(conn, {_R14_SQL})\n",
+        "from types import SimpleNamespace\n" + _R14_STATIC_RUN
+        + "probe_other = SimpleNamespace(probe_run=lambda c, q: c.execute(q + ', day_limit_micro=1'))\n", False),
+    "1. self rebound before a call of the helper's name": (
+        "ProbeRunner().probe_call(conn)\n",
+        "from types import SimpleNamespace\n" + _R14_STATIC_RUN
+        + f"    def probe_call(self, c):\n        self = probe_other\n        self.probe_run(c, {_R14_SQL})\n"
+        + "probe_other = SimpleNamespace(probe_run=lambda c, q: c.execute(q + ', day_limit_micro=1'))\n", False),
+    "1. an executor's alias rebound": (
+        f"probe_execute = conn.execute\nprobe_execute = probe_make(conn)\nprobe_execute({_R14_SQL})()\n",
+        _R14_MAKE, False),
+    "2. getattr shadowed, then aliased (the reviewer's)": (
+        f"getattr = probe_make(conn)\nprobe_fetch = getattr\nprobe_fetch({_R14_SQL}, 'upper')()\n", _R14_MAKE,
+        False),
+    "2. a receiver spelled builtins (the reviewer's)": (
+        "probe_through(SimpleNamespace(getattr=probe_make(conn)))\n",
+        "from types import SimpleNamespace\n" + _R14_MAKE
+        + f"def probe_through(builtins):\n    probe_fetch = builtins.getattr\n    probe_fetch({_R14_SQL}, 'upper')()\n",
+        False),
+    "3. singledispatch imported as cache (the reviewer's)": (
+        f"probe_run({_R14_SQL}, conn)\n",
+        "from functools import singledispatch as cache\n@cache\ndef probe_run(q, c):\n    c.execute(q)\n"
+        "@probe_run.register(str)\ndef probe_run_text(q, c):\n    c.execute(q + ', day_limit_micro=1')\n", False),
+    "4. a builtin rebound through globals imported under another name (the reviewer's)": (
+        f"probe_install(conn)\nlen({_R14_SQL})\n",
+        "from builtins import globals as probe_snapshot\ndef probe_install(c):\n"
+        "    probe_snapshot()['len'] = lambda q: c.execute(q + ', day_limit_micro=1')\n", False),
+    "4. eval imported under another name (the reviewer's)": (
+        "probe_read(conn)\n",
+        f"from builtins import eval as probe_evaluate\nPROBE_SQL = {_R14_SQL}\n" + _R14_CHANGE
+        + "def probe_read(c):\n    probe_change(c, probe_evaluate('PROBE_SQL'))\n", False),
+    "4. a default reading locals imported under another name (the reviewer's)": (
+        "probe_default(conn)\n",
+        f"from builtins import locals as probe_snapshot\nPROBE_SQL = {_R14_SQL}\n" + _R14_CHANGE
+        + "def probe_default(c, q=probe_snapshot()['PROBE_SQL']):\n    probe_change(c, q)\n", False),
+    "5. a walrus in a parameter's annotation (the reviewer's)": (
+        f"def probe_annotated(x: (len := probe_make_len(conn))):\n    pass\nlen({_R14_SQL})\n", _R14_MAKE_LEN,
+        True),
+    "5. a walrus in a return annotation (the reviewer's)": (
+        f"def probe_annotated() -> (len := probe_make_len(conn)):\n    pass\nlen({_R14_SQL})\n", _R14_MAKE_LEN,
+        True),
+}
+_ROUND_14_CONTROLS = {
+    "1. the helper not rebound": (f"probe_run(conn, {_R14_SQL})\n", _R14_RUN, False),
+    "1. the class's own method, through the class and its self": (
+        f"ProbeRunner.probe_run(conn, {_R14_SQL})\nProbeRunner().probe_call(conn)\n",
+        _R14_STATIC_RUN + f"    def probe_call(self, c):\n        self.probe_run(c, {_R14_SQL})\n", False),
+    "1. an executor's alias not rebound": (f"probe_execute = conn.execute\nprobe_execute({_R14_SQL})\n", "", False),
+    "2. the builtin getattr aliased": (f"probe_fetch = getattr\nprobe_fetch({_R14_SQL}, 'upper')()\n", "", False),
+    "3. functools.cache imported under another name": (
+        f"probe_run({_R14_SQL}, conn)\n",
+        "from functools import cache as probe_cached\n@probe_cached\ndef probe_run(q, c):\n    c.execute(q)\n", False),
+    "4. len imported from builtins under another name": (
+        f"probe_size({_R14_SQL})\n", "from builtins import len as probe_size\n", False),
+    "5. an annotation that binds nothing": (f"def probe_annotated(x: int):\n    pass\nlen({_R14_SQL})\n", "", True),
+}
+
+
+def _round_14_writers(tmp_path: Path, change: str, helpers: str, eager: bool) -> set[str]:
+    source = (ROOT / _PG).read_text()
+    if eager:
+        assert source.count("from __future__ import annotations\n") == 1
+        source = source.replace("from __future__ import annotations\n", "", 1)
+    where = source.index(_RELEASE_END)
+    source = (source[:where] + "\n" + textwrap.indent(textwrap.dedent(change), "        ") + source[where:]
+              + "\n\n" + helpers)
+    compile(source, _PG, "exec", dont_inherit=True)  # (this module's own postponed annotations aside)
+    scope = "PostgresStore._release_key_hold_tx"
+    return {where for path, where in limit_column_writers(_injected_detail(tmp_path, _PG, source))
+            if path == "storage_postgres.py" and (where == scope or where.startswith((scope + ".", "probe", "Probe")))}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_14))
+def test_the_round_14_identity_forms_injected_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    assert _round_14_writers(tmp_path, *_ROUND_14[label]), label
+
+
+@pytest.mark.parametrize("label", list(_ROUND_14_CONTROLS))
+def test_the_round_14_controls_with_their_identity_intact_are_not_writers(tmp_path: Path, label: str) -> None:
+    assert not _round_14_writers(tmp_path, *_ROUND_14_CONTROLS[label]), label
+
+
+# The resolver itself: what a name or attribute is, by its bindings.
+_IDENTITY_CASES = [
+    ("a builtin's name bound nowhere", "len\n", "len", "builtins.len"),
+    ("a builtin imported under another name", "from builtins import len as size\nsize\n", "size", "builtins.len"),
+    ("a name bound to a builtin", "size = len\nsize\n", "size", "builtins.len"),
+    ("a builtin's name bound in some function", "def f():\n    len = str\nlen\n", "len", None),
+    ("a builtin's name a parameter somewhere", "def f(len):\n    pass\nlen\n", "len", None),
+    ("a builtin's name bound in an annotation", "def f(x: (len := str)):\n    pass\nlen\n", "len", None),
+    ("a builtin's name a loop target", "for len in ():\n    pass\nlen\n", "len", None),
+    ("a builtin's name deleted", "len = len\ndel len\nlen\n", "len", None),
+    ("a builtin's name an except target", "try:\n    pass\nexcept Exception as len:\n    pass\nlen\n", "len",
+     None),
+    ("a module that imports *", "from os import *\nlen\n", "len", None),
+    ("a module that writes its globals", "globals()['len'] = str\nlen\n", "len", None),
+    ("a module's own locals written", "locals()['len'] = str\nlen\n", "len", None),
+    ("a module object in hand", "import sys\nsys.modules[__name__].len = str\nlen\n", "len", None),
+    ("a module's attribute of the name set", "import probe\nprobe.len = str\nlen\n", "len", None),
+    ("an import with as", "from functools import singledispatch as cache\ncache\n", "cache",
+     "functools.singledispatch"),
+    ("a module attribute", "import functools as tools\ntools.cache\n", "tools.cache", "functools.cache"),
+    ("a module attribute rebound on an unknown receiver", "import functools as tools\ndef f(o):\n    o.cache = 1\n"
+     "tools.cache\n", "tools.cache", None),
+    ("builtins as a module", "import builtins as b\nb.getattr\n", "b.getattr", "builtins.getattr"),
+    ("a parameter spelled builtins", "def f(builtins):\n    builtins.getattr\n", "builtins.getattr", None),
+    ("getattr shadowed, then aliased", "def f(c):\n    getattr = c\n    fetch = getattr\nfetch\n", "fetch", None),
+    ("an alias of an alias", "a = len\nb = a\nb\n", "b", "builtins.len"),
+    ("a cycle", "a = b\nb = a\na\n", "a", None),
+    ("a walrus alias", "(size := len)\nsize\n", "size", "builtins.len"),
+    ("an import from a scanned module", "from .local import len\nlen\n", "len", None),
+]
+
+
+@pytest.mark.parametrize(("name", "source", "expression", "expected"), _IDENTITY_CASES,
+                         ids=[case[0] for case in _IDENTITY_CASES])
+def test_the_identity_resolver_decides_by_bindings_not_spelling(name: str, source: str, expression: str,
+                                                                expected: str | None) -> None:
+    import ast
+
+    from tests.key_limit_writers import _Identities
+
+    ids = _Identities(ast.parse(source))
+    assert ids.of(ast.parse(expression, mode="eval").body) == expected, name
+
+
+def test_the_identity_resolver_follows_a_def_only_while_every_binding_is_it() -> None:
+    import ast
+
+    from tests.key_limit_writers import _Identities
+
+    tree = ast.parse("def run():\n    pass\nrun\n")
+    definition = tree.body[0]
+    assert _Identities(tree).of(ast.Name(id="run", ctx=ast.Load())) == f"def:{id(definition)}"
+    for rebinding in ("run = wrap(run)\n", "run = lambda: 0\n", "def g(run):\n    pass\n",
+                      "if x:\n    def run():\n        pass\n"):
+        assert _Identities(ast.parse("def run():\n    pass\n" + rebinding)).of(
+            ast.Name(id="run", ctx=ast.Load())) is None, rebinding
+
+
+@pytest.mark.parametrize(("source", "kinds"), [
+    ("from builtins import globals as snapshot\nsnapshot()\n", {"globals"}),
+    ("from builtins import eval as evaluate\nevaluate('x')\n", {"scope"}),
+    ("from builtins import vars as names\nnames(object)\n", {"object"}),
+    ("def f():\n    from builtins import locals as snapshot\n    snapshot()\n", {"locals"}),
+    ("locals()\n", {"locals", "globals", "object"}),
+    ("from inspect import stack as frames\nframes()\n", {"frame"}),
+    ("import builtins as b\nb.globals()\n", {"globals"}),
+    ("snapshot = globals if x else locals\nsnapshot()\n", {"globals", "locals", "frame", "object"}),
+    ("from sys import modules as loaded\nloaded\n", {"modules"}),
+    ("from importlib import import_module as load\nload('x')\n", {"modules"}),
+    ("len()\n", set()),
+], ids=["globals as", "eval as", "vars as", "locals as", "module locals", "inspect.stack as", "builtins module",
+        "either reader", "sys.modules as", "import_module as", "not a reader"])
+def test_a_namespace_reader_counts_by_any_identity_it_may_have(source: str, kinds: set[str]) -> None:
+    import ast
+
+    from tests.key_limit_writers import _Identities
+
+    assert {kind for _node, kind in _Identities(ast.parse(source)).namespace_reads} == kinds
