@@ -86,7 +86,7 @@ HEALTH_PROBE_PATHS = frozenset({"/health", "/v1/health"})
 # keys or fetch release records, and where the route is not mounted the path
 # is a 404 page render.
 CONTROL_PLANE_EVIDENCE_PATH = "/trust/control-plane.json"
-CONTROL_PLANE_EVIDENCE_SURFACES = frozenset({"combined", "public", "observer"})
+CONTROL_PLANE_EVIDENCE_SURFACES = frozenset({"combined", "public", "observer", "control"})
 # The public status document every cloud's peer_monitor fetches
 # (synthetic/fleet.py), and the surfaces that mount it (the same
 # register_public_routes surfaces as the evidence route). It is metered in its
@@ -100,7 +100,7 @@ CONTROL_PLANE_EVIDENCE_SURFACES = frozenset({"combined", "public", "observer"})
 # the body is served from the status response cache, and a flood of this one
 # path still exhausts only this one bucket.
 STATUS_DOCUMENT_PATH = "/status.json"
-STATUS_DOCUMENT_SURFACES = CONTROL_PLANE_EVIDENCE_SURFACES
+STATUS_DOCUMENT_SURFACES = frozenset({"combined", "public", "observer"})
 STATUS_HOST_EXACT_PATHS = frozenset(
     {
         "/",

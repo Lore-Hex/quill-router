@@ -93,7 +93,11 @@ from trusted_router.routes.oauth_authorized_apps import register_oauth_authorize
 from trusted_router.routes.oauth_keys import register_oauth_key_routes
 from trusted_router.routes.payouts import register_payout_routes
 from trusted_router.routes.provider_portal import register_provider_portal_routes
-from trusted_router.routes.public import register_public_action_routes, register_public_routes
+from trusted_router.routes.public import (
+    register_control_plane_evidence,
+    register_public_action_routes,
+    register_public_routes,
+)
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
 from trusted_router.routes.settlements import register_settlement_routes
 from trusted_router.routes.signup import register_signup_routes
@@ -793,6 +797,8 @@ def create_app(
 
     if surface in {"combined", "public", "observer"}:
         register_public_routes(app, settings)
+    elif surface == "control":
+        register_control_plane_evidence(app, settings)
     if surface in {"combined", "public"}:
         register_bedrock_group_buy_public_routes(app, settings)
         register_advisor_mcp_routes(app, settings)

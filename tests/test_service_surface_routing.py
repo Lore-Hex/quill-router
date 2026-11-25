@@ -404,6 +404,11 @@ def test_anonymous_actions_leave_the_public_renderer(path: str) -> None:
     assert URL_MAP.route_surface(path.removesuffix("/inquiry")) == "public"
 
 
+def test_control_release_evidence_follows_api_not_website() -> None:
+    assert _emitted_backend(_emitted_map(), "/trust/control-plane.json") == LEGACY_BACKEND
+    assert _emitted_backend(_emitted_map(), "/trust/gcp-release.json") == PUBLIC_BACKEND
+
+
 def test_enterprise_download_is_an_action_not_a_static_asset() -> None:
     assert URL_MAP.route_surface("/token-exchange") == "public"
     assert URL_MAP.route_surface("/token-exchange/brief") == "actions"

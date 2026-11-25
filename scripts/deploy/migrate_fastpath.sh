@@ -53,7 +53,16 @@ PROJECT_ARG=()
 
 log() { printf '%s %s\n' "[migrate_fastpath]" "$*"; }
 
+SCHEMA_PRESENCE=""
+if [ "${TR_BATCH_SCHEMA_CHECKS:-}" = true ]; then
+  SCHEMA_PRESENCE="$(python3 "$(dirname "${BASH_SOURCE[0]}")/schema_presence.py" \
+    "$DATABASE" "$INSTANCE" "${GCP_PROJECT_ID:-}" tr_lease tr_lease_donor tr_lease_hold tr_lease_handoff tr_lease_winners \
+  tr_lease_drain tr_lease_record tr_lease_staged tr_fastpath_workspace tr_fastpath_member \
+    tr_fastpath_edge_decide tr_fastpath_workspace_hold tr_fastpath_kill)" || SCHEMA_PRESENCE=""
+fi
+
 table_exists() {
+  [[ "$SCHEMA_PRESENCE" == *"|$1|"* ]] && return 0
   local name="$1" n
   n=$(gcloud spanner databases execute-sql "$DATABASE" \
         --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
@@ -72,12 +81,14 @@ index_exists() {
 }
 
 apply_ddl() {
+  SCHEMA_PRESENCE=""
   log "applying: $1"
   gcloud spanner databases ddl update "$DATABASE" \
     --instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$1"
 }
 
 column_exists() {
+  [[ "$SCHEMA_PRESENCE" == *"|$1.$2|"* ]] && return 0
   local table="$1" column="$2" n
   n=$(gcloud spanner databases execute-sql "$DATABASE" \
         --instance="$INSTANCE" "${PROJECT_ARG[@]}" \

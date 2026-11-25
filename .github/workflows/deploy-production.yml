@@ -202,8 +202,12 @@ jobs:
       EMERGENCY_INCIDENT: ${{ inputs.emergency_incident }}
       INCIDENT_SOURCE: ${{ needs.build-image.outputs.source }}
       TR_TRAIN_HOTFIX: ${{ inputs.hotfix == true }}
+      TR_TRAIN_LOCAL_ANCESTRY: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
       - name: Freeze newest compatible prepared green release
         id: train
         run: python3 -m scripts.deploy.release_train select
@@ -251,6 +255,8 @@ jobs:
     needs: [gate-on-ci, admit-cloud, select-release]
     if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.select-release.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      TR_BATCH_SCHEMA_CHECKS: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1418,7 +1424,21 @@ jobs:
         continue-on-error: true
         run: python3 -m scripts.deploy.public_rollout_report before
 
+      - name: Verify independent website release for worker-only changes
+        id: website
+        if: steps.public_stage.outputs.stage == 'routed' && github.event_name == 'push'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_IMAGE: ${{ needs.select-release.outputs.image }}
+          EXPECTED_COMMIT: ${{ needs.select-release.outputs.commit }}
+        run: |
+          bash scripts/deploy/deploy_mutex.sh assert
+          python3 -m scripts.deploy.public_reuse plan
+
       - name: Deploy isolated T1 public service
+        if: steps.website.outcome != 'success' || steps.website.outputs.reuse != 'true'
         run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"
 
       - name: Smoke isolated T1 public service
@@ -1449,6 +1469,24 @@ jobs:
           EXPECTED_IMAGE: ${{ needs.select-release.outputs.image }}
           EXPECTED_COMMIT: ${{ needs.select-release.outputs.commit }}
         run: python3 -m scripts.deploy.public_rollout_report after
+
+      - name: Certify full website publication after smoke tests
+        id: website_receipt
+        if: success() && steps.public_stage.outputs.stage == 'routed' && github.event_name == 'push' && steps.website.outputs.reuse != 'true'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_IMAGE: ${{ needs.select-release.outputs.image }}
+          EXPECTED_COMMIT: ${{ needs.select-release.outputs.commit }}
+        run: python3 -m scripts.deploy.public_reuse record
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: success() && steps.website_receipt.outputs.certified == 'true'
+        continue-on-error: true
+        with:
+          name: website-release-${{ github.run_attempt }}
+          path: website-receipt/release.json
+          retention-days: 7
 
   settle-drain-worker:
     # Follow every successful router rollout with the same serving image/SA.
