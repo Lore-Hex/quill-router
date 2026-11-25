@@ -19,6 +19,7 @@ from trusted_router.storage_models import iso_now
 
 NOW = dt.datetime(2026, 11, 25, 12, 0, tzinfo=dt.UTC)
 USD = 1_000_000
+FUNDED_LINE = tw.FUNDED_MIN_WORKSPACE_SPEND_MICRODOLLARS
 
 
 class FakeReader:
@@ -247,6 +248,8 @@ def test_new_github_signup_alert(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert len(alerts) == 1
     assert "workspace=ws-1" in alerts[0][0] and "signals=new_github_account" in alerts[0][0]
+    assert alerts[0][1] == ["abuse-tripwire", "new_github_account"]
+    assert alerts[0][2]["workspace_id"] == "ws-1"
 
 
 def test_parse_time_accepts_clickhouse_and_iso_forms() -> None:
@@ -285,4 +288,112 @@ def test_clickhouse_reads_bind_every_value_as_a_parameter() -> None:
         body = request.content.decode()
         assert start not in body
         assert "FROM activity_generations" in body
-    assert "usage_type = 'Credits'" in seen[1].content.decode()
+        assert "usage_type = 'Credits'" in body
+    assert "max_workspace_microdollars" in seen[0].content.decode()
+
+
+def _session(session_id: str, workspace_ids: list[str], *, max_spend: int | str | None, app: str = "attested-gateway") -> dict[str, Any]:
+    row: dict[str, Any] = {"session_id": session_id, "workspace_ids": workspace_ids, "app": app}
+    if max_spend is not None:
+        row["max_workspace_microdollars"] = max_spend  # ClickHouse JSON quotes Int64
+    return row
+
+
+def test_unfunded_session_is_a_starter_credit_farm_not_a_payment_ring(monkeypatch: pytest.MonkeyPatch) -> None:
+    alerts = _capture(monkeypatch)
+    farm = [_workspace(f"farm{i}@example.com") for i in range(6)]
+    ring = [_workspace("r1@example.com"), _workspace("r2@example.com")]
+    reader = FakeReader(sessions=[
+        # Six fresh accounts in turn, each spending under its signup credit.
+        _session("ses_farm", farm, max_spend="280000"),
+        _session("ses_ring", ring, max_spend=str(90 * USD), app="Ring Client"),
+    ])
+
+    assert len(tw.run_tripwire_sweep(reader, STORE, now=NOW)) == 2
+
+    by_signal = {tags["abuse_signal"]: (message, fingerprint, tags) for message, fingerprint, tags in alerts}
+    message, fingerprint, tags = by_signal["starter_credit_farm"]
+    assert message.startswith("abuse.tripwire starter_credit_farm ")
+    assert "signals=starter_credit_farm" in message and "shared_session" not in message
+    assert all(workspace in message for workspace in farm)
+    assert fingerprint == ["abuse-tripwire", "starter_credit_farm"]
+    assert tags["abuse_workspaces"] == "6" and tags["abuse_app"] == "attested-gateway"
+    message, fingerprint, tags = by_signal["shared_session"]
+    assert "signals=shared_session" in message and all(workspace in message for workspace in ring)
+    assert fingerprint == ["abuse-tripwire", "shared_session"]
+
+
+@pytest.mark.parametrize(("max_spend", "topup", "signal"), [
+    (FUNDED_LINE, False, "starter_credit_farm"),  # at the line: unfunded
+    (FUNDED_LINE + 1, False, "shared_session"),
+    (0, True, "shared_session"),          # a top-up on record outweighs low spend
+    (None, False, "shared_session"),      # a reader without spend keeps the ring alert
+    ("garbage", False, "shared_session"),
+])
+def test_funded_classification(
+    monkeypatch: pytest.MonkeyPatch, max_spend: int | str | None, topup: bool, signal: str,
+) -> None:
+    alerts = _capture(monkeypatch)
+    a = _workspace("a@example.com", first_topup=NOW - dt.timedelta(days=1) if topup else None)
+    b = _workspace("b@example.com")
+
+    tw.run_tripwire_sweep(FakeReader(sessions=[_session("s", [a, b], max_spend=max_spend)]), STORE, now=NOW)
+
+    assert [tags["abuse_signal"] for _, _, tags in alerts] == [signal]
+
+
+def test_each_signal_type_is_one_sentry_issue(monkeypatch: pytest.MonkeyPatch) -> None:
+    alerts = _capture(monkeypatch)
+    workspaces = [_workspace(f"w{i}@example.com", first_topup=NOW - dt.timedelta(days=1)) for i in range(4)]
+    reader = FakeReader(
+        sessions=[
+            _session("s1", workspaces[:2], max_spend=40 * USD),
+            _session("s2", workspaces[2:], max_spend=40 * USD),
+        ],
+        spend=[_spend(w, total=40 * USD, top=40 * USD, models=1) for w in workspaces[:2]],
+    )
+
+    assert len(tw.run_tripwire_sweep(reader, STORE, now=NOW)) == 4
+
+    fingerprints = {tuple(fingerprint) for _, fingerprint, _ in alerts}
+    assert fingerprints == {
+        ("abuse-tripwire", "shared_session"), ("abuse-tripwire", "single_model_concentration"),
+    }
+    # The operator still sees which workspaces each event is about.
+    assert {tags.get("workspace_id") for _, _, tags in alerts if tags["abuse_signal"] != "shared_session"} == set(workspaces[:2])
+    assert len({tags["abuse_session"] for _, _, tags in alerts if tags["abuse_signal"] == "shared_session"}) == 2
+
+
+def test_payment_rings_go_out_before_farms_under_the_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    alerts = _capture(monkeypatch)
+    monkeypatch.setattr(tw, "MAX_ALERTS_PER_SWEEP", 1)
+    farm = [_workspace(f"f{i}@example.com") for i in range(3)]
+    ring = [_workspace("r1@example.com"), _workspace("r2@example.com")]
+    reader = FakeReader(sessions=[_session("farm", farm, max_spend=0), _session("ring", ring, max_spend=50 * USD)])
+
+    tw.run_tripwire_sweep(reader, STORE, now=NOW)
+
+    assert alerts[0][2]["abuse_signal"] == "shared_session"
+    assert any("deferred=1" in message for message, _, _ in alerts)
+
+
+def test_shared_fingerprint_does_not_collapse_findings_inside_alerts_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.synthetic.alerts import alerts_once
+
+    claimed: set[tuple[str, ...]] = set()
+
+    def claim(key: list[str]) -> bool:
+        if tuple(key) in claimed:
+            return False
+        claimed.add(tuple(key))
+        return True
+
+    workspaces = [_workspace(f"w{i}@example.com") for i in range(4)]
+    reader = FakeReader(sessions=[
+        _session("s1", workspaces[:2], max_spend=40 * USD), _session("s2", workspaces[2:], max_spend=40 * USD),
+    ])
+    with alerts_once(claim):
+        assert len(tw.run_tripwire_sweep(reader, STORE, now=NOW)) == 2
+
+    assert len(claimed) == 2
+    assert all(key[:3] == ("abuse-tripwire", "shared_session", key[2]) and key[2].startswith("session:") for key in claimed)

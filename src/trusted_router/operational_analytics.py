@@ -605,7 +605,10 @@ FORMAT JSON
 
         Abuse tripwire input: one conversation carried across accounts is an
         operator hopping workspaces. Only workspace ids, the session id, the
-        most common app name and first/last times leave ClickHouse.
+        most common app name, first/last times and the largest member
+        workspace's Credits spend in the window leave ClickHouse. The spend
+        tells a payment ring (funded accounts) from a starter-credit farm
+        (accounts that never spent past their signup credit).
         """
         return self._query(
             """
@@ -615,8 +618,18 @@ SELECT
   uniqExact(workspace_id) AS workspaces,
   topK(1)(app)[1] AS app,
   min(created_at) AS first_seen,
-  max(created_at) AS last_seen
+  max(created_at) AS last_seen,
+  max(spend.ws_spend) AS max_workspace_microdollars
 FROM activity_generations FINAL
+LEFT JOIN
+(
+  SELECT workspace_id, sum(total_cost_microdollars) AS ws_spend
+  FROM activity_generations FINAL
+  WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+    AND usage_type = 'Credits'
+    AND workspace_id != ''
+  GROUP BY workspace_id
+) AS spend USING (workspace_id)
 WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
   AND session_id IS NOT NULL AND session_id != ''
   AND workspace_id != ''
