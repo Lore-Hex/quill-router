@@ -51,6 +51,7 @@ from trusted_router.signup_gate import (
     github_account_old_enough,
     google_starter_credit_domain_limit,
     require_new_account_creation,
+    require_non_disposable_email,
     starter_credit_for_email,
 )
 from trusted_router.social_rewards import SIGNUP_MICRODOLLARS, campaign_enabled
@@ -200,6 +201,9 @@ def _persist_login(
         # Creation-only global brake: provider login/state/profile validation
         # still runs, and returning users never enter this branch.
         require_new_account_creation(settings)
+        # Matched on the provider's verified primary address, the one the
+        # account is created with, for Google and GitHub alike.
+        require_non_disposable_email(info.email)
         # The provider has already asserted the address is verified (the
         # caller rejects anything else), so the account is CREATED verified.
         # That replaces the separate mark_user_email_verified commit that
