@@ -234,7 +234,14 @@ cleared only when what it writes to the table is understood.
   alternative; a format spec or conversion (.format, an f-string, %) is
   applied to a known text exactly, and a str method (strip, rstrip,
   removesuffix, replace, join, ...) is computed with literal arguments;
-  with any other argument, or a spec not literal, the part is not known. Any call given SQL text naming the table, any executor (by
+  with any other argument, or a spec not literal, the part is not known.
+  A construction is rendered whole or not known, never as partial text: a
+  % or .format field parsed as CPython parses it (any mapping key, an empty
+  precision, a * consuming its own argument), and one it cannot parse,
+  arguments that do not match, or a field opened by a part not known make
+  that part or the rendering not known; past MAX_RENDERINGS renderings, one
+  with each varying part not known stands for the rest; and DML whose
+  target holds a part not known is dynamic. Any call given SQL text naming the table, any executor (by
   name, or through a name or attribute bound to one: run = conn.execute,
   self.run = conn.execute, setattr(obj, "run", conn.execute)), and any of
   the module's own helpers that runs a statement it is given (derived_sinks:
@@ -290,8 +297,10 @@ checks that each one exists):
    test_reads_and_mentions_are_not_writes.
 2. SQL built from literal parts: concatenation, f-strings, str.format and
    % (format specs and conversions applied), str methods with literal
-   arguments; a part not known fails closed in a scope that names the
-   table. test_each_way_to_write_tr_key_limit_is_found[concatenated table
+   arguments; a field not understood whole, or a bound on the renderings,
+   makes the part not known, and a part not known fails closed in a scope
+   that names the table (or makes a DML target dynamic).
+   test_each_way_to_write_tr_key_limit_is_found[concatenated table
    name | f-string table from a constant | format() SQL | %-formatted SQL |
    named format alternatives | str.replace SQL | % with an unknown argument |
    .format with an unknown argument | a join of non-literals],
@@ -299,7 +308,13 @@ checks that each one exists):
    .format precision (the reviewer's) | 4. an f-string precision | 4. a
    %-format precision | 5. rstrip with a literal argument (the reviewer's) |
    5. replace and join with literal arguments | 5. rstrip with an argument
-   not known].
+   not known],
+   test_the_round_16_forms_injected_into_a_listed_scope_are_caught[1. a
+   %-mapping key with punctuation (the reviewer's) | 1. an empty %-precision
+   (the reviewer's) | 2. a * width before another field (the reviewer's) |
+   3. 64 literal alternatives (the reviewer's) | a table with a part not
+   known], test_each_construction_is_rendered_whole_or_not_known,
+   test_a_bound_on_renderings_adds_one_standing_for_the_rest.
 3. Names and containers made in the same function holding the SQL.
    test_each_way_to_write_tr_key_limit_is_found[a walrus | an element bound
    and given to a helper | appended to a list given to a helper | put into a
@@ -407,7 +422,7 @@ import hashlib
 import itertools
 import re
 import string
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -424,7 +439,7 @@ _READ_WORD = re.compile(r"\bselect\b|\b(?:create|alter|drop)\s+(?:table|index|un
 _DML = (r"(?:insert\s+or\s+update(?:\s+into)?|insert\s+or\s+ignore(?:\s+into)?|insert\s+into|insert|"
         r"update|merge(?:\s+into)?|upsert(?:\s+into)?|replace\s+into|delete\s+from|delete)")
 _HINT = r"(?:@\{[^}]*\}\s*)?"
-_PLACEHOLDER = r"""["'`]?(?:\{[^}]*\}|%s|%\(\w+\)s|\$\{?\w+\}?|\x00)["'`]?"""
+_PLACEHOLDER = r"""["'`]?(?:\{[^}]*\}|%s|%\(\w+\)s|\$\{?\w+\}?|[\w.$]*\x00[\w.$\x00]*)["'`]?"""
 
 
 def _dynamic_dml(placeholder: str) -> re.Pattern[str]:
@@ -1816,14 +1831,12 @@ class _Module:
 
     def texts(self, node: ast.AST, seen: frozenset[int] = frozenset()) -> list[str]:
         """Renderings of a string expression, with UNKNOWN for each part that
-        is not known (at most MAX_RENDERINGS)."""
-
-        def part(sub: ast.AST) -> list[str]:
-            resolved = self.values(sub, seen)
-            if not resolved or len(resolved) > MAX_RENDERINGS:
-                return [UNKNOWN]
-            return resolved
-
+        is not known. Each construct is either understood whole or rendered
+        (that part of it) not known, never shown as literal text it is not:
+        a field that cannot be parsed, an argument that cannot be placed, a
+        spec that cannot be applied. At most MAX_RENDERINGS: past that bound
+        the rest are stood for by one rendering, each part that varied not
+        known (_bounded)."""
         if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
             return self.values(node, seen) or [""]
         if isinstance(node, ast.JoinedStr):
@@ -1834,48 +1847,22 @@ class _Module:
                     continue
                 spec = _literal_spec(v.format_spec)
                 conversion = {-1: None, 115: "s", 114: "r", 97: "a"}.get(v.conversion, "?")
-                pieces.append([_formatted(text, spec, conversion) for text in part(v.value)])
+                alternatives = self._alternatives(v.value, seen)
+                pieces.append([UNKNOWN] if alternatives is None else list(dict.fromkeys(
+                    _formatted(alternative, spec, conversion) for alternative in alternatives)))
             return _combine(pieces)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             return _combine([self.texts(node.left, seen), self.texts(node.right, seen)])
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
-            if isinstance(node.right, ast.Dict):
-                keys = [k.value if isinstance(k, ast.Constant) and isinstance(k.value, str) else None
-                        for k in node.right.keys]
-                mapped = [part(v) for v in node.right.values]
-                rendered = []
-                for template in self.texts(node.left, seen):
-                    for choice in itertools.islice(itertools.product(*mapped), MAX_RENDERINGS):
-                        by_name = {k: v for k, v in zip(keys, choice, strict=True) if k is not None}
-                        rendered.append(_percent_named(template, by_name))
-                return rendered[:MAX_RENDERINGS] or [UNKNOWN]
-            arguments = node.right.elts if isinstance(node.right, ast.Tuple) else [node.right]
-            rendered = [
-                _percent(template, list(choice))
-                for template in self.texts(node.left, seen)
-                for choice in itertools.islice(itertools.product(*(part(a) for a in arguments)), MAX_RENDERINGS)
-            ]
-            return rendered[:MAX_RENDERINGS] or [UNKNOWN]
+            return self._percent_texts(node, seen)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            method = node.func.attr
-            if method == "format":
-                positional = [part(a) for a in node.args]
-                names = [kw.arg for kw in node.keywords if kw.arg]
-                named = [part(kw.value) for kw in node.keywords if kw.arg]
-                spread = any(kw.arg is None for kw in node.keywords)
-                rendered = []
-                for template in self.texts(node.func.value, seen):
-                    for choice in itertools.islice(itertools.product(*positional, *named), MAX_RENDERINGS):
-                        values = list(choice)
-                        by_name = dict(zip(names, values[len(positional):], strict=True))
-                        text = _brace(template, values[:len(positional)], by_name)
-                        rendered.append(text + UNKNOWN if spread else text)
-                return rendered[:MAX_RENDERINGS] or [UNKNOWN]
-            if method in _STRING_METHODS:
+            if node.func.attr == "format":
+                return self._format_texts(node, seen)
+            if node.func.attr in _STRING_METHODS:
                 return self._method_texts(node, seen)
         resolved = self.values(node, seen)
         if resolved:
-            return resolved
+            return _bounded(iter(resolved), lambda: _skeleton(resolved))
         if isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in seen:
             # A name not resolved to literals: what it is bound to, with the
             # parts not known in place, so the known SQL around them is kept.
@@ -1887,8 +1874,226 @@ class _Module:
                     through.append(UNKNOWN)
                 else:
                     through.extend(self.texts(value, seen | {id(node)}))
-            return through[:MAX_RENDERINGS] or [UNKNOWN]
+            return _bounded(iter(dict.fromkeys(through)), lambda: _skeleton(through)) or [UNKNOWN]
         return [UNKNOWN]
+
+    def _alternatives(self, node: ast.AST, seen: frozenset[int]) -> list[object] | None:
+        """The values a formatted argument may be: str literals (a name or
+        expression resolved to them), or an int or float literal; None when
+        it is not known, has more than MAX_RENDERINGS, or may be a container
+        (a tuple's text is not its elements')."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(
+                node.value, bool):
+            return [node.value]
+        if self._is_sequence(node, frozenset()):
+            return None
+        resolved = self.values(node, seen)
+        if not resolved or len(resolved) > MAX_RENDERINGS:
+            return None
+        return list(resolved)
+
+    def _percent_texts(self, node: ast.BinOp, seen: frozenset[int]) -> list[str]:
+        """template % arguments, as CPython formats it (_percent_tokens): each
+        field given exactly the arguments it consumes, a * width or precision
+        taking an int literal first. A template that cannot be parsed, or
+        arguments that do not match its fields (their count, a mapping for
+        keyed fields), make the rendering not known; a field whose argument
+        is not known, or whose arguments' count is not known (a name that
+        may hold a tuple, a part of the template not known before it), is
+        not known."""
+        templates = self.texts(node.left, seen)
+
+        def renderings() -> Iterator[str]:
+            done: set[str] = set()
+            for template in templates:
+                for text in self._percent_template(template, node.right, seen):
+                    if text not in done:
+                        done.add(text)
+                        yield text
+
+        return _bounded(renderings(), lambda: _skeleton([_percent_skeleton(t) for t in templates]))
+
+    def _percent_template(self, template: str, right: ast.AST, seen: frozenset[int]) -> Iterator[str]:
+        if UNKNOWN in template:
+            # The part not known may open a field the text after it closes.
+            yield _collapse(_percent_skeleton(template[:template.index(UNKNOWN)]) + UNKNOWN)
+        tokens = _percent_tokens(template)
+        if tokens is None:
+            yield UNKNOWN
+            return
+        fields = [token for token in tokens if isinstance(token, _PercentField)]
+        options = self._percent_options(fields, right, UNKNOWN in template, seen)
+        if options is None:
+            yield UNKNOWN
+            return
+        for choice in itertools.product(*options):
+            values = iter(choice)
+            yield "".join(token if isinstance(token, str) else _percent_apply(token, next(values))
+                          for token in tokens)
+
+    def _percent_options(self, fields: list[_PercentField], right: ast.AST, unknown_template: bool,
+                         seen: frozenset[int]) -> list[list[_PercentValue | None]] | None:
+        """Each field's alternatives (width, precision, value), [None] for a
+        field not known; None when CPython would refuse the arguments."""
+        if not fields:
+            return []
+        if len({field.key is None for field in fields}) > 1:
+            return None  # keyed and positional fields together
+        if fields[0].key is not None:
+            if any("*" in (field.width or "", field.precision or "") for field in fields):
+                return None  # a * needs a positional argument
+            if not isinstance(right, ast.Dict):
+                return [[None] for _field in fields]
+            known = {k.value: v for k, v in zip(right.keys, right.values, strict=True)
+                     if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            complete = len(known) == len(right.keys)
+            options: list[list[_PercentValue | None]] = []
+            for field in fields:
+                if field.key in known:
+                    options.append(self._percent_values(field, None, None, known[cast(str, field.key)], seen))
+                elif complete:
+                    return None  # a KeyError
+                else:
+                    options.append([None])
+            return options
+        arguments = None if unknown_template else self._percent_arguments(right, seen)
+        if arguments is None:
+            return [[None] for _field in fields]
+        if len(arguments) != sum(1 + (field.width == "*") + (field.precision == "*") for field in fields):
+            return None  # not all arguments converted, or not enough of them
+        remaining = iter(arguments)
+        options = []
+        for field in fields:
+            width = _int_literal(next(remaining)) if field.width == "*" else None
+            precision = _int_literal(next(remaining)) if field.precision == "*" else None
+            value = next(remaining)
+            if (field.width == "*" and width is None) or (field.precision == "*" and precision is None):
+                options.append([None])
+            else:
+                options.append(self._percent_values(field, width, precision, value, seen))
+        return options
+
+    def _percent_values(self, field: _PercentField, width: int | None, precision: int | None, value: ast.AST,
+                        seen: frozenset[int]) -> list[_PercentValue | None]:
+        if field.width not in (None, "*"):
+            width = int(cast(str, field.width))
+        if field.precision not in (None, "*"):
+            precision = int(field.precision or "0")
+        alternatives = self._alternatives(value, seen)
+        if alternatives is None:
+            return [None]
+        return [_PercentValue(width, precision, alternative) for alternative in alternatives]
+
+    def _percent_arguments(self, right: ast.AST, seen: frozenset[int]) -> list[ast.AST] | None:
+        """The arguments % gives the fields one by one: a tuple literal's
+        elements, or one value known not to be a tuple (a literal, or text
+        resolved to literals); None when their count is not known."""
+        if isinstance(right, ast.Tuple):
+            return None if any(isinstance(element, ast.Starred) for element in right.elts) else list(right.elts)
+        if isinstance(right, ast.Dict) or self._is_sequence(right, frozenset()):
+            return None
+        if isinstance(right, (ast.Constant, ast.JoinedStr)) or self.values(right, seen):
+            return [right]
+        return None
+
+    def _format_texts(self, node: ast.Call, seen: frozenset[int]) -> list[str]:
+        """template.format(...), each field parsed whole (string.Formatter)
+        and given exactly its argument: an automatic, numbered or named
+        field, a starred list or tuple literal and a ** dict literal
+        unpacked. A field naming an attribute or an index, holding a nested
+        spec, with a conversion or spec that cannot be applied, or whose
+        argument is not known, is not known; so is an automatic field after
+        a part of the template not known (it may hold fields of its own), or
+        any positional field after a starred argument that is not a literal.
+        Automatic and manual numbering together, a field with no argument,
+        or a template that cannot be parsed make the rendering not known."""
+        positional: list[ast.AST] | None = []
+        for argument in node.args:
+            if not isinstance(argument, ast.Starred):
+                positional = None if positional is None else [*positional, argument]
+            elif positional is not None and isinstance(argument.value, (ast.List, ast.Tuple)) and not any(
+                    isinstance(element, ast.Starred) for element in argument.value.elts):
+                positional = [*positional, *argument.value.elts]
+            else:
+                positional = None
+        named: dict[str, ast.AST] = {}
+        complete = True
+        for keyword in node.keywords:
+            if keyword.arg is not None:
+                named[keyword.arg] = keyword.value
+            elif isinstance(keyword.value, ast.Dict) and all(
+                    isinstance(k, ast.Constant) and isinstance(k.value, str) for k in keyword.value.keys):
+                named.update({cast(str, cast(ast.Constant, k).value): v
+                              for k, v in zip(keyword.value.keys, keyword.value.values, strict=True)})
+            else:
+                complete = False
+        templates = self.texts(cast(ast.Attribute, node.func).value, seen)
+
+        def renderings() -> Iterator[str]:
+            done: set[str] = set()
+            for template in templates:
+                for text in self._format_template(template, positional, named, complete, seen):
+                    if text not in done:
+                        done.add(text)
+                        yield text
+
+        return _bounded(renderings(), lambda: _skeleton([_format_skeleton(t) for t in templates]))
+
+    def _format_template(self, template: str, positional: list[ast.AST] | None, named: dict[str, ast.AST],
+                         complete: bool, seen: frozenset[int]) -> Iterator[str]:
+        if UNKNOWN in template:
+            # The part not known may open a field the text after it closes.
+            yield _collapse(_format_skeleton(template[:template.index(UNKNOWN)]) + UNKNOWN)
+        try:
+            parsed = list(string.Formatter().parse(template))
+        except ValueError:
+            yield UNKNOWN
+            return
+        layout: list[str | tuple[int, str | None, str | None]] = []
+        options: list[list[object | None]] = []
+        numbering: set[str] = set()
+        automatic = 0
+        unknown_before = False
+        for literal, field, spec, conversion in parsed:
+            layout.append(literal)
+            unknown_before = unknown_before or UNKNOWN in literal
+            if field is None:
+                continue
+            argument: ast.AST | None = None
+            if field == "":
+                numbering.add("automatic")
+                index, automatic = automatic, automatic + 1
+                if not unknown_before and positional is not None:
+                    if index >= len(positional):
+                        yield UNKNOWN  # an IndexError
+                        return
+                    argument = positional[index]
+            elif field.isdigit():
+                numbering.add("manual")
+                if positional is not None:
+                    if int(field) >= len(positional):
+                        yield UNKNOWN
+                        return
+                    argument = positional[int(field)]
+            elif field.isidentifier():
+                if field in named:
+                    argument = named[field]
+                elif complete:
+                    yield UNKNOWN  # a KeyError
+                    return
+            unknown_before = unknown_before or UNKNOWN in field or UNKNOWN in (spec or "")
+            if spec and "{" in spec:
+                argument = None
+            alternatives = self._alternatives(argument, seen) if argument is not None else None
+            layout.append((len(options), spec, conversion))
+            options.append(cast(list[object | None], alternatives) if alternatives is not None else [None])
+        if len(numbering) > 1:
+            yield UNKNOWN  # automatic and manual numbering together: a ValueError
+            return
+        for choice in itertools.product(*options):
+            yield "".join(item if isinstance(item, str) else (
+                UNKNOWN if choice[item[0]] is None or (item[1] and "{" in item[1])
+                else _formatted(choice[item[0]], item[1] or "", item[2] or None)) for item in layout)
 
     def _method_texts(self, node: ast.Call, seen: frozenset[int]) -> list[str]:
         """A str method's renderings: computed exactly, as Python does, when
@@ -1896,41 +2101,52 @@ class _Module:
         resolved to str literals; join's a list or tuple of such); else not
         known: the receiver's text with a part not known after it, and a
         rendering wholly not known (strip, replace and the like may remove
-        or make any text). A method that may remove text from a receiver
-        holding a part not known also adds that rendering wholly not
-        known."""
+        or make any text). A receiver holding a part not known keeps it in
+        place (a DML target holding one is dynamic: _DYNAMIC)."""
         method = cast(ast.Attribute, node.func).attr
         receivers = self.texts(cast(ast.Attribute, node.func).value, seen)
         arguments = self._literal_arguments(node, seen) if method in _EVALUATED_METHODS else None
         if arguments is None:
-            return [UNKNOWN, *(text + UNKNOWN for text in receivers)][:MAX_RENDERINGS]
-        rendered: list[str] = []
-        for text in receivers:
-            for choice in itertools.islice(itertools.product(*arguments), MAX_RENDERINGS):
-                try:
-                    rendered.append(getattr(text, method)(*choice))
-                except (TypeError, ValueError, OverflowError):
-                    return [UNKNOWN]
-                if UNKNOWN in text and method not in _CASE_METHODS:
-                    rendered.append(UNKNOWN)
-        return list(dict.fromkeys(rendered))[:MAX_RENDERINGS] or [UNKNOWN]
+            return _bounded(iter(dict.fromkeys([UNKNOWN, *(text + UNKNOWN for text in receivers)])),
+                            lambda: UNKNOWN)
+        evaluated = cast(list[list[object]], arguments)
+
+        def renderings() -> Iterator[str]:
+            done: set[str] = set()
+            for text in receivers:
+                for choice in itertools.product(*evaluated):
+                    try:
+                        result = getattr(text, method)(*choice)
+                    except (TypeError, ValueError, OverflowError):
+                        result = UNKNOWN
+                    if result not in done:
+                        done.add(result)
+                        yield result
+
+        return _bounded(renderings(), lambda: UNKNOWN) or [UNKNOWN]
 
     def _literal_arguments(self, node: ast.Call, seen: frozenset[int]) -> list[list[object]] | None:
         """Each argument's literal alternatives, or None when one is not a
-        literal (a keyword or a spread is not)."""
+        literal (a keyword or a spread is not) or has more alternatives than
+        MAX_RENDERINGS."""
         if node.keywords or any(isinstance(argument, ast.Starred) for argument in node.args):
             return None
         method = cast(ast.Attribute, node.func).attr
         out: list[list[object]] = []
         for argument in node.args:
             if method == "join":
-                if not isinstance(argument, (ast.List, ast.Tuple)):
+                if not isinstance(argument, (ast.List, ast.Tuple)) or any(
+                        isinstance(element, ast.Starred) for element in argument.elts):
                     return None
-                elements = [self.values(element, seen) for element in argument.elts]
-                if any(not element or len(element) > MAX_RENDERINGS for element in elements):
+                elements = [self._alternatives(element, seen) for element in argument.elts]
+                if any(element is None or not all(isinstance(e, str) for e in element) for element in elements):
                     return None
-                out.append([list(choice) for choice in itertools.islice(
-                    itertools.product(*cast(list[list[str]], elements)), MAX_RENDERINGS)])
+                count = 1
+                for element in elements:
+                    count *= len(cast(list[object], element))
+                if count > MAX_RENDERINGS:
+                    return None
+                out.append([list(choice) for choice in itertools.product(*cast(list[list[object]], elements))])
             elif (isinstance(argument, ast.Constant) and isinstance(argument.value, int)
                   and not isinstance(argument.value, bool)):
                 if abs(argument.value) > 4096:
@@ -1945,7 +2161,7 @@ class _Module:
 
 
 #: str methods rendered exactly when their arguments are literals
-#: (_Module._method_texts); the case methods keep a part not known in place.
+#: (_Module._method_texts).
 _CASE_METHODS = frozenset({"upper", "lower", "casefold", "swapcase", "title", "capitalize"})
 _EVALUATED_METHODS = _CASE_METHODS | frozenset({
     "strip", "lstrip", "rstrip", "removeprefix", "removesuffix", "replace", "zfill", "center", "ljust", "rjust",
@@ -1962,7 +2178,8 @@ def _augmented(node: ast.BinOp) -> ast.BinOp:
     return node
 
 
-_WIDE = re.compile(r"\d{5,}")
+#: The widest width or precision computed (a wider one is not known).
+_WIDEST = 4096
 
 
 def _literal_spec(spec: ast.AST | None) -> str | None:
@@ -1976,104 +2193,165 @@ def _literal_spec(spec: ast.AST | None) -> str | None:
     return None
 
 
-def _formatted(text: str, spec: str | None, conversion: str | None) -> str:
-    """A known text formatted as a str.format or f-string field would be,
+def _formatted(value: object, spec: str | None, conversion: str | None) -> str:
+    """A known value formatted as a str.format or f-string field would be,
     its conversion (s, r, a) and format spec applied exactly (a precision
-    truncates it); not known when either is not, or the text holds a part
-    not known."""
-    if spec is None or conversion == "?":
+    truncates text); not known when either is not, or a width is wider
+    than _WIDEST. (The value is a literal: _Module._alternatives.)"""
+    if spec is None or conversion not in (None, "s", "r", "a"):
         return UNKNOWN
-    if not spec and conversion is None:
-        return text
-    if UNKNOWN in text or _WIDE.search(spec):
+    if any(int(number) > _WIDEST for number in re.findall(r"\d+", spec)):
         return UNKNOWN
     try:
-        converted = {None: text, "s": text, "r": repr(text), "a": ascii(text)}[conversion]
+        converted = {None: value, "s": str(value), "r": repr(value), "a": ascii(value)}[conversion]
         return format(converted, spec)
-    except (KeyError, ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return UNKNOWN
 
 
-def _brace(template: str, positional: list[str], named: dict[str, str]) -> str:
-    """template.format(...) with the arguments' renderings: each field's
-    conversion and format spec applied (_formatted); a field naming an
-    attribute or an index, a spec with a field of its own, or a field with
-    no argument is not known."""
+def _format_skeleton(template: str) -> str:
+    """A .format template with every field not known: what any rendering of
+    it holds."""
     try:
         parsed = list(string.Formatter().parse(template))
     except ValueError:
         return UNKNOWN
-    out: list[str] = []
-    automatic = 0
-    for literal, field, spec, conversion in parsed:
-        out.append(literal)
-        if field is None:
-            continue
-        value: str | None = None
-        if field == "":
-            value = positional[automatic] if automatic < len(positional) else None
-            automatic += 1
-        elif field.isdigit():
-            value = positional[int(field)] if int(field) < len(positional) else None
-        elif field.isidentifier():
-            value = named.get(field)
-        if value is None or (spec and "{" in spec):
-            out.append(UNKNOWN)
-        else:
-            out.append(_formatted(value, spec or "", conversion))
-    return "".join(out)
+    return _collapse("".join(literal + ("" if field is None else UNKNOWN) for literal, field, _s, _c in parsed))
+
+
+def _collapse(text: str) -> str:
+    return re.sub(UNKNOWN + "+", UNKNOWN, text)
+
+
+def _skeleton(texts: Iterable[str]) -> str:
+    """What every one of some renderings holds: their common start and end
+    around one part not known (or the one rendering, when they agree)."""
+    distinct = list(dict.fromkeys(texts))
+    if not distinct:
+        return UNKNOWN
+    if len(distinct) == 1:
+        return distinct[0]
+    start = distinct[0]
+    for text in distinct[1:]:
+        while not text.startswith(start):
+            start = start[:-1]
+    rests = [text[len(start):] for text in distinct]
+    end = rests[0]
+    for rest in rests[1:]:
+        while not rest.endswith(end):
+            end = end[1:]
+    return _collapse(start + UNKNOWN + end)
+
+
+def _bounded(renderings: Iterator[str], skeleton: Callable[[], str]) -> list[str]:
+    """At most MAX_RENDERINGS renderings: past the bound, the last stands
+    for all the rest, each part that varied not known (skeleton), so a
+    bound never drops a rendering silently."""
+    out = list(itertools.islice(renderings, MAX_RENDERINGS + 1))
+    if len(out) <= MAX_RENDERINGS:
+        return out
+    return [*out[:MAX_RENDERINGS - 1], skeleton()]
 
 
 def _combine(pieces: list[list[str]]) -> list[str]:
-    out = []
-    for choice in itertools.islice(itertools.product(*pieces), MAX_RENDERINGS):
-        out.append("".join(choice))
-    return out or [""]
+    pieces = [piece or [UNKNOWN] for piece in pieces]
+    return _bounded(("".join(choice) for choice in itertools.product(*pieces)),
+                    lambda: _collapse("".join(_skeleton(piece) for piece in pieces))) or [""]
 
 
-# (A key other than a word is left as written: its text stays in view.)
-_PERCENT = re.compile(r"%(?:\((?P<key>\w+)\))?(?P<flags>[#0\- +]*)(?P<width>\*|\d+)?"
-                      r"(?:\.(?P<precision>\*|\d+))?[hlL]?(?P<conversion>[diouxXeEfFgGcrsa%])")
+class _PercentField(NamedTuple):
+    """One %-field, as CPython parses it: a mapping key, flags, a width and a
+    precision (digits, *, or "" for a dot alone), and the conversion."""
+
+    key: str | None
+    flags: str
+    width: str | None
+    precision: str | None
+    conversion: str
 
 
-def _percent_field(match: re.Match[str], value: str | None) -> str:
-    """One %-field with its argument's rendering: s, r or a applied exactly,
-    with its flags, width and precision (a precision truncates the text);
-    any other conversion, a * width or precision, or no argument: not known."""
-    if value is None or match.group("conversion") not in "sra" or "*" in (
-            (match.group("width") or "") + (match.group("precision") or "")):
+class _PercentValue(NamedTuple):
+    width: int | None
+    precision: int | None
+    value: object
+
+
+_PERCENT_SPEC = re.compile(r"([-+ #0]*)(\*|\d+)?(?:\.(\*|\d*))?[hlL]?([diouxXeEfFgGcrsa%])")
+
+
+def _percent_tokens(template: str) -> list[str | _PercentField] | None:
+    """A %-template's literal pieces and fields, parsed as CPython parses
+    them (a mapping key holds any text, balanced parentheses included; %%
+    is a literal %), or None for one it would refuse."""
+    tokens: list[str | _PercentField] = []
+    literal: list[str] = []
+    i = 0
+    while i < len(template):
+        if template[i] != "%":
+            literal.append(template[i])
+            i += 1
+            continue
+        i += 1
+        key: str | None = None
+        if i < len(template) and template[i] == "(":
+            depth, j = 1, i + 1
+            while j < len(template) and depth:
+                depth += {"(": 1, ")": -1}.get(template[j], 0)
+                j += 1
+            if depth:
+                return None
+            key, i = template[i + 1:j - 1], j
+        match = _PERCENT_SPEC.match(template, i)
+        if match is None:
+            return None
+        flags, width, precision, conversion = match.groups()
+        i = match.end()
+        if conversion == "%":
+            if key is not None or flags or width or precision is not None:
+                return None
+            literal.append("%")
+            continue
+        if literal:
+            tokens.append("".join(literal))
+            literal = []
+        tokens.append(_PercentField(key, flags, width, precision, conversion))
+    if literal:
+        tokens.append("".join(literal))
+    return tokens
+
+
+def _percent_skeleton(template: str) -> str:
+    tokens = _percent_tokens(template)
+    if tokens is None:
         return UNKNOWN
-    spec = match.group("flags") + (match.group("width") or "") + (
-        "." + match.group("precision") if match.group("precision") is not None else "")
-    if spec and (UNKNOWN in value or _WIDE.search(spec)):
+    return _collapse("".join(token if isinstance(token, str) else UNKNOWN for token in tokens))
+
+
+def _int_literal(node: ast.AST) -> int | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+        return node.value
+    return None
+
+
+def _percent_apply(field: _PercentField, option: _PercentValue | None) -> str:
+    """One %-field with its arguments, formatted exactly as CPython would;
+    not known when an argument is not, a width or precision is wider than
+    _WIDEST (or the precision negative), or CPython would refuse it. (An
+    argument is a literal, never text holding a part not known:
+    _Module._alternatives.)"""
+    if option is None:
         return UNKNOWN
-    converted = {"s": value, "r": repr(value), "a": ascii(value)}[match.group("conversion")]
+    width, precision, value = option
+    if any(number is not None and abs(number) > _WIDEST for number in (width, precision)) or (
+            precision is not None and precision < 0):
+        return UNKNOWN
+    template = ("%" + field.flags + ("*" if width is not None else "") + (".*" if precision is not None else "")
+                + field.conversion)
+    arguments = tuple(number for number in (width, precision) if number is not None) + (value,)
     try:
-        return ("%" + spec + "s") % (converted,)
-    except (ValueError, TypeError):
+        return template % arguments
+    except (TypeError, ValueError, OverflowError):
         return UNKNOWN
-
-
-def _percent_named(template: str, by_name: dict[str, str]) -> str:
-    """``template % {...}``: each %(name)s from the mapping, else UNKNOWN."""
-    def substitute(match: re.Match[str]) -> str:
-        if match.group("conversion") == "%":
-            return "%"
-        return _percent_field(match, by_name.get(match.group("key") or "") if match.group("key") is not None
-                              else None)
-
-    return _PERCENT.sub(substitute, template)
-
-
-def _percent(template: str, arguments: list[str]) -> str:
-    def substitute(match: re.Match[str]) -> str:
-        if match.group("conversion") == "%":
-            return "%"
-        if match.group("key") is not None:
-            return UNKNOWN  # a mapping key with no mapping given
-        return _percent_field(match, arguments.pop(0) if arguments else None)
-
-    return _PERCENT.sub(substitute, template)
 
 
 def _callee(call: ast.Call) -> str:
@@ -2710,7 +2988,7 @@ def derived_sinks(m: _Module) -> dict[str, list[_Sink]]:
             if calls:
                 functions.append(_Calls(node, m, calls))
     sinks: dict[str, list[_Sink]] = {}
-    for _round in range(8):
+    while True:  # until nothing changes: the sinks only grow, and are finite
         reach = sinks.keys() | _EXECUTORS
         changed = False
         for entry in functions:
@@ -2794,6 +3072,8 @@ def _parameters_reached(m: _Module, expression: ast.AST, parameters: dict[str, _
             if isinstance(node.func, ast.Attribute) and node.func.attr in _STRING_METHODS:
                 queue.append(node.func.value)
             queue += [*node.args, *(keyword.value for keyword in node.keywords)]
+    if queue:
+        return set(parameters)  # past the bound: any parameter may reach it
     return reached
 
 
@@ -3357,6 +3637,8 @@ def _bind_container(m: _Module, target: ast.expr, binds: list[TaintKey]) -> tupl
                 return _ESCAPE
             else:
                 queue += _sharing(m, value)  # x = y = []: x is the same container
+    if queue:
+        return _ESCAPE  # more names than followed: not every one is
     binds.extend(keys)
     return _STOP
 

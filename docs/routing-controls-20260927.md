@@ -120,7 +120,8 @@ each named case exists:
 1. direct SQL in a scope, its columns read by a small grammar;
 2. SQL built from literal parts: concatenation, f-strings, `format` and `%`
    (format specs and conversions applied), and str methods with literal
-   arguments;
+   arguments; a field not understood whole, or a bound on the number of
+   renderings, makes that part not known rather than literal text;
 3. names, and containers made in the same function, holding the SQL;
 4. augmented assignment;
 5. helpers of the same module, when the callee is the helper by every

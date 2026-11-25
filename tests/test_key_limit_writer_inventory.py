@@ -924,8 +924,10 @@ KEY_LIMIT_FORMS = [
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
     ("max with a default", "def f(pick):\n    return max(['UPDATE tr_key_limit SET reserved=0'], default=pick)\n",
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    # (Round 16: the key is parsed as CPython parses it, text handed to the
+    # mapping, not text of the statement, so only the escape remains.)
     ("a mapping of a % template (__getitem__)", "def f(runner):\n"
-     "    '%(UPDATE tr_key_limit SET reserved=0)s' % runner\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+     "    '%(UPDATE tr_key_limit SET reserved=0)s' % runner\n", {("key_limit.escape", "f"): True}),
     ("a format spec given to an object (__format__)", "def f(runner):\n"
      "    spec = 'UPDATE tr_key_limit SET reserved=0'\n    f'{runner:{spec}}'\n",
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
@@ -1369,6 +1371,9 @@ KEY_LIMIT_FORMS = [
     ("a property's name rebound by a plain def",
      "class Runner:\n    @property\n    def prop(self):\n        return 0\n    def prop():\n        pass\n    @prop.setter\n    @staticmethod\n    def run(c, q):\n        c.execute(q)\ndef f(c):\n    Runner.run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
      {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
+    ('a DML target with a part not known',
+     "def f(c, rest):\n    c.execute('UPDATE tr_key_' + rest + ' SET day_limit_micro=1')\n",
+     {('sql.dynamic', 'f'): True}),
     ('a class rebound through the module object',
      "import sys\nfrom types import SimpleNamespace\nclass Runner:\n    @staticmethod\n    def probe_run(c, q):\n        c.execute(q)\nsys.modules[__name__].Runner = SimpleNamespace(probe_run=lambda c, q: c.execute(q + ', day_limit_micro=1'))\ndef f(c):\n    Runner.probe_run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
      {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
@@ -2686,6 +2691,7 @@ def test_the_scanners_claim_names_tests_that_exist() -> None:
         "test_each_text_form_is_found": [c[0] for c in TEXT_FORMS],
         "test_the_round_14_identity_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_14),
         "test_the_round_15_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_15),
+        "test_the_round_16_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_16),
     }
     named = re.findall(r"\b(test_\w+)\b(?!\.py)(?:\[(.*?)\])?", section)
     assert len(named) >= 20
@@ -2705,3 +2711,163 @@ def test_an_executor_attribute_rebound_in_another_module_is_not_settled(tmp_path
     assert dict(scan_paths_detail([caller], [])) == {("key_limit.sql", "probe_caller.py", "f"): False}
     assert dict(scan_paths_detail([installer, caller], [])) == {
         ("key_limit.sql", "probe_caller.py", "f"): False, ("key_limit.escape", "probe_caller.py", "f"): True}
+
+
+# Review round 16: the literal-construction renderer never shows partial
+# understanding as literal text. A % field is parsed as CPython parses it
+# (any mapping key, an empty precision, * consuming its own argument), and
+# one it cannot parse, or arguments that do not match, make the rendering
+# not known; the same for .format and f-string fields; and a bound on the
+# renderings adds one standing for the rest instead of dropping them.
+_R16_ALTERNATIVES = "".join(f"    x{i} = 'archive' if flag else {part!r}\n"
+                            for i, part in enumerate(["tr", "_", "key", "_", "lim", "it"]))
+_ROUND_16 = {
+    "1. a %-mapping key with punctuation (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    c.execute('UPDATE %(table-name).12s SET day_limit_micro=1' % {'table-name': 'tr_key_limit_archive'})\n"),
+    "1. a %-mapping key with a space": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    c.execute('UPDATE %(table name).12s SET day_limit_micro=1' % {'table name': 'tr_key_limit_archive'})\n"),
+    "1. an empty %-precision (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    c.execute(('UPDATE %.s' % 'ignore') + 'tr_' + 'key_' + 'limit SET day_limit_micro=1')\n"),
+    "2. a * width before another field (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute('UPDATE %*s%s SET day_limit_micro=1' % (0, 'tr_key_', 'limit'))\n"),
+    "2. a * precision": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute('UPDATE %.*s SET day_limit_micro=1' % (12, 'tr_key_limit_archive'))\n"),
+    "3. 64 literal alternatives (the reviewer's)": (
+        "probe_built(conn, False)\n",
+        "def probe_built(c, flag):\n" + _R16_ALTERNATIVES  # noqa: S608 (scanned, never run)
+        + "    c.execute('UPDATE ' + x0 + x1 + x2 + x3 + x4 + x5 + ' SET day_limit_micro=1')\n"),
+    "a .format given a starred list": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute('UPDATE {}{} SET day_limit_micro=1'.format(*['tr_key_', 'limit']))\n"),
+    "a table with a part not known": (
+        "probe_built(conn, 'limit')\n",
+        "def probe_built(c, rest):\n    c.execute('UPDATE tr_key_' + rest + ' SET day_limit_micro=1')\n"),
+}
+_ROUND_16_CONTROLS = {
+    "1. a %-mapping key with punctuation, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    c.execute('UPDATE %(table-name).11s SET day_limit_micro=1' % {'table-name': 'tr_entities_x'})\n"),
+    "2. a * width, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute('UPDATE %*s%s SET day_limit_micro=1' % (0, 'tr_', 'entities'))\n"),
+    "3. 16 literal alternatives, none the table": (
+        "probe_built(conn, False)\n",
+        "def probe_built(c, flag):\n"  # noqa: S608 (scanned, never run)
+        + "".join(f"    x{i} = 'archive' if flag else {part!r}\n" for i, part in enumerate(["tr", "_", "enti", "ties"]))
+        + "    c.execute('UPDATE ' + x0 + x1 + x2 + x3 + ' SET day_limit_micro=1')\n"),
+}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_16))
+def test_the_round_16_forms_injected_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    assert _round_15_flagged(tmp_path, *_ROUND_16[label]), label
+
+
+@pytest.mark.parametrize("label", list(_ROUND_16_CONTROLS))
+def test_the_round_16_controls_are_not(tmp_path: Path, label: str) -> None:
+    assert not _round_15_flagged(tmp_path, *_ROUND_16_CONTROLS[label]), label
+
+
+def _renderings(expression: str) -> list[str]:
+    import ast
+
+    from tests.key_limit_writers import _Index, _Module
+
+    tree = ast.parse("rendered = " + expression)
+    index = _Index([tree])
+    module = _Module(Path("probe_renderings.py"), tree, index)
+    index.modules = {id(tree): module}
+    statement = tree.body[0]
+    assert isinstance(statement, ast.Assign)
+    return module.texts(statement.value)
+
+
+_U = "\x00"
+_RENDERINGS = [
+    ("a %-mapping key of any text", "'%(a-b).3s|' % {'a-b': 'xyzw'}", ["xyz|"]),
+    ("a %-key with parentheses", "'%(a(b)).2s' % {'a(b)': 'xyz'}", ["xy"]),
+    ("an empty %-precision", "'%.s|' % 'abc'", ["|"]),
+    ("a * width consuming its argument", "'%*s%s' % (3, 'a', 'b')", ["  ab"]),
+    ("a * precision consuming its argument", "'%.*s' % (2, 'abc')", ["ab"]),
+    ("a * width not a literal", "'%*s|' % (width, 'a')", [_U + "|"]),
+    ("too few % arguments", "'%s %s' % 'a'", [_U]),
+    ("too many % arguments", "'%s' % ('a', 'b')", [_U]),
+    ("keyed and positional % fields", "'%s %(a)s' % {'a': 'x'}", [_U]),
+    ("a % key missing from the mapping", "'<%(a)s>' % {'b': 'x'}", [_U]),
+    ("a * in a keyed % field", "'<%(a)*s>' % {'a': 'x'}", [_U]),
+    ("a %-field CPython refuses", "'<%q>' % 'a'", [_U]),
+    ("a %% with a width", "'<%5%>' % ()", [_U]),
+    ("% arguments whose count is not known", "'%s<%s>' % pair", [_U + "<" + _U + ">"]),
+    ("a % precision on text not known", "'<%.2s>' % ('a' + y)", ["<" + _U + ">"]),
+    ("a % template with a part not known", "('ab' + x + 's|') % ()", ["ab" + _U, "ab" + _U + "s|"]),
+    ("%c of ints and text", "'%c%c' % (116, 'r')", ["tr"]),
+    ("a % argument that may be a tuple", "'<%s>' % values", ["<" + _U + ">"]),
+    ("a .format starred literal", "'{}{}'.format(*['a', 'b'])", ["ab"]),
+    ("a .format starred name", "'{}<{}>'.format(*parts)", [_U + "<" + _U + ">"]),
+    ("a .format ** literal", "'{x}'.format(**{'x': 'a'})", ["a"]),
+    ("automatic and manual .format numbering", "'{}{1}'.format('a', 'b')", [_U]),
+    ("a .format index past the arguments", "'<{2}>'.format('a')", [_U]),
+    ("an automatic .format field past the arguments", "'<{}{}>'.format('a')", [_U]),
+    ("a .format template with a part not known", "('ab' + x + '|').format()", ["ab" + _U, "ab" + _U + "|"]),
+    ("an automatic .format field after a part not known", "('<' + x + '{}>').format('a')",
+     ["<" + _U, "<" + _U + _U + ">"]),
+    ("a .format attribute", "'<{0.real}>'.format('a')", ["<" + _U + ">"]),
+    ("an f-string precision", "f'{\"abc\":.2}'", ["ab"]),
+    ("an f-string of a tuple", "f'<{(\"a\", \"b\")}>'", ["<" + _U + ">"]),
+    ("a str method with literal arguments", "'tr_key_limits'.rstrip('s')", ["tr_key_limit"]),
+    ("a str method with an argument not known", "'ab'.rstrip(chars)", [_U, "ab" + _U]),
+]
+
+
+@pytest.mark.parametrize(("name", "expression", "expected"), _RENDERINGS, ids=[case[0] for case in _RENDERINGS])
+def test_each_construction_is_rendered_whole_or_not_known(name: str, expression: str, expected: list[str]) -> None:
+    assert _renderings(expression) == expected, name
+
+
+def test_a_bound_on_renderings_adds_one_standing_for_the_rest() -> None:
+    choices = " + ".join(f"('{c}' if flag else 'x{i}')" for i, c in enumerate("abcdef"))
+    rendered = _renderings("'UPDATE ' + " + choices + " + ' SET day_limit_micro=1'")  # noqa: S608 (rendered only)
+    assert len(rendered) == 32
+    assert rendered[-1] == "UPDATE \x00 SET day_limit_micro=1"
+    assert len(_renderings(" + ".join(f"('{c}' if flag else 'x{i}')" for i, c in enumerate("abcde")))) == 32
+
+
+def test_a_helper_chain_longer_than_any_fixed_round_count_is_followed(tmp_path: Path) -> None:
+    """Round 16: the module's helpers are found until nothing changes, so a
+    chain defined callers first is followed to its end (a fixed count of
+    rounds left the outer helpers unfollowed)."""
+    chain = "".join(f"def h{i}(c, q):\n    h{i + 1}(c, q)\n" for i in range(11)) + "def h11(c, q):\n    c.execute(q)\n"
+    source = chain + "def f(c):\n    h0(c, 'UPDATE tr_key_limit SET reserved=0')\n"  # noqa: S608 (scanned only)
+    assert _scan_sample(tmp_path, "probe_chain.py", source) == {("key_limit.sql", "f"): False}
+
+
+def test_more_aliases_of_a_container_than_followed_escape(tmp_path: Path) -> None:
+    """Round 16: past the bound on a container's names, the value escapes
+    instead of following only some of them."""
+    aliases = "".join(f"    a{i + 1} = a{i}\n" for i in range(70))
+    source = ("def f(c, run):\n    a0 = []\n" + aliases  # noqa: S608 (scanned only)
+              + "    a70.append('UPDATE tr_key_limit SET reserved=0')\n    run(c, a0[0])\n")
+    assert _scan_sample(tmp_path, "probe_aliases.py", source).get(("key_limit.escape", "f")) is True
+
+
+def test_a_statement_past_the_bound_on_its_nodes_reaches_every_parameter() -> None:
+    """Round 16: past the bound on the nodes followed, a helper's statement
+    may be built from any parameter."""
+    import ast
+
+    from tests.key_limit_writers import _Index, _Module, derived_sinks
+
+    tree = ast.parse("def run(c, q):\n    c.execute(q" + " + ''" * 300 + ")\n")
+    index = _Index([tree])
+    module = _Module(Path("probe_long.py"), tree, index)
+    index.modules = {id(tree): module}
+    assert {sink.name for sink in derived_sinks(module).get("run", [])} >= {"q"}
