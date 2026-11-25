@@ -14,7 +14,9 @@ and those in turn by `tr-fastpath-5` and `tr-fastpath-6` (E2), then by
 `tr-fastpath-9` and `tr-fastpath-10` (E2 stage I2, the decide attribute), then by
 `tr-fastpath-11` and `tr-fastpath-12` (four cores, for the 1,000 a second load),
 then by `tr-fastpath-13` and `tr-fastpath-14` (the money settings' script),
-then by `tr-fastpath-15` and `tr-fastpath-16` (the lower tiers' allowances), on
+then by `tr-fastpath-15` and `tr-fastpath-16` (the lower tiers' allowances),
+then by `tr-fastpath-17` and `tr-fastpath-18` (the settle hedge, starved leases
+and decide cache wait attributes, and release verification), on
 the default network behind the project's NAT with no external address.
 
 ## What is done by hand, once
@@ -38,8 +40,8 @@ the default network behind the project's NAT with no external address.
    checks the release its process runs, not the file that names it:
 
    ```bash
-   gcloud compute instances reset tr-fastpath-15 --zone=us-central1-a --project=quill-cloud-proxy
-   gcloud compute instances reset tr-fastpath-16 --zone=us-central1-b --project=quill-cloud-proxy
+   gcloud compute instances reset tr-fastpath-17 --zone=us-central1-a --project=quill-cloud-proxy
+   gcloud compute instances reset tr-fastpath-18 --zone=us-central1-b --project=quill-cloud-proxy
    ```
 
    A node with no release pinned stays stopped and says so in its journal.

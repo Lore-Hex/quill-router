@@ -402,7 +402,9 @@ def test_the_lower_allowances_reach_the_fleet_on_new_nodes() -> None:
     """A node keeps the script it was created with, so the script that reads
     the lower allowances reaches the fleet only on nodes added under new
     names: every node is 15 or later, 13 and 14 (from before #2542) having
-    been removed once 15 and 16 served."""
+    been removed once 15 and 16 served. 15 or later is this check's reason,
+    the script from #2542 on; every node is 17 or later today, which
+    test_fastpath_edge_decide_cache_wait.py holds for its own attributes."""
     tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
     assert "ignore_changes = [metadata_startup_script]" in tf
     nodes = re.findall(r'^\s*"tr-fastpath-(\d+)"\s*=\s*{ zone = "us-central1-[ab]"', tf, re.M)
