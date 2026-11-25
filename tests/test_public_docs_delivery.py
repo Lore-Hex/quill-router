@@ -92,6 +92,27 @@ def test_docs_change_does_not_hide_undelivered_application_change(repo):
     assert not docs.docs_delta(base, head)
 
 
+@pytest.mark.parametrize("path", [*sorted(docs.SITE_FILES), "src/trusted_router/templates/homepage/top.html"])
+def test_existing_site_edits_qualify_but_new_inputs_do_not(repo, path):
+    root, base = repo
+    target = root / path
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("original\n")
+        base = save()
+        assert not docs.proposed_docs_only()
+    target.write_text("new\n")
+    assert docs.docs_delta(base, save()) and docs.proposed_docs_only()
+
+
+@pytest.mark.parametrize("path", ["src/trusted_router/static/homepage/homepage.js",
+                                  "src/trusted_router/content/blog.py", "src/trusted_router/dashboard.py",
+                                  "src/trusted_router/templates/homepage/nested/page.html",
+                                  "src/trusted_router/templates/public/_signin.html"])
+def test_site_lookalikes_do_not_qualify(path):
+    assert not docs.site_file(path)
+
+
 def rows():
     return [{"service": service, "region": region, "commit": A, "api_commit": A,
              "revision": service + "-old", "image": IMAGE + "a" * 64, "spec_sha256": "a" * 64}
@@ -101,8 +122,11 @@ def rows():
 def test_all_eight_sources_are_qualified(monkeypatch):
     checked = []
     monkeypatch.setattr(docs, "docs_delta", lambda base, head: checked.append((base, head)) or True)
-    assert docs.eligible(rows(), RELEASE)
-    assert len(checked) == 16
+    fleet = rows()
+    fleet[-1]["commit"] = B
+    fleet[2]["api_commit"] = "c" * 40
+    assert docs.eligible(fleet, RELEASE)
+    assert checked == [(A, B), (B, B), ("c" * 40, B)]
     with pytest.raises(Refused, match="incomplete"):
         docs.eligible(rows()[:-1], RELEASE)
 
@@ -203,6 +227,19 @@ def test_foreign_lease_cannot_be_borrowed(monkeypatch, tmp_path):
     assert not commands and not mutations
 
 
+@pytest.mark.parametrize("after_admission", [False, True])
+def test_strict_website_only_never_escalates_to_full_deploy(monkeypatch, tmp_path, after_admission):
+    commands, mutations = setup_publish(monkeypatch, tmp_path)
+    monkeypatch.setenv("TR_WEBSITE_ONLY", "true")
+    eligible = iter([True, False] if after_admission else [False])
+    monkeypatch.setattr(docs, "eligible", lambda *_: next(eligible))
+    with pytest.raises(Refused, match="no API rollout"):
+        docs.publish()
+    assert not mutations and not Path("out").exists() and not Path("release.json").exists()
+    if after_admission:
+        assert commands[-1][1]["env"]["TR_DEPLOY_OUTCOME"] == "success"
+
+
 def test_candidate_rechecks_exact_baseline(monkeypatch, tmp_path, capsys):
     setup_publish(monkeypatch, tmp_path)
     docs.MANIFEST.write_text(json.dumps({"release": asdict(RELEASE), "before": rows()}))
@@ -296,12 +333,16 @@ def test_serving_reader_uses_exact_traffic_revision(monkeypatch, damage):
 
 
 @pytest.mark.parametrize("damage", [None, "red-ci", "removed-main", "wrong-image", "wrong-run-source", "manual"])
-def test_validation_requires_original_build_exact_ci_and_main(monkeypatch, damage):
+@pytest.mark.parametrize("strict", [True, False])
+def test_validation_requires_original_build_exact_ci_and_main(monkeypatch, damage, strict):
     env = {"GITHUB_REPOSITORY": "Lore-Hex/quill-router", "GITHUB_REF": "refs/heads/main",
            "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": B, "GITHUB_RUN_ID": "1",
            "PREPARED_TAG": RELEASE.tag, "PREPARED_IMAGE": RELEASE.image}
+    if strict:
+        env.update(GITHUB_EVENT_NAME="workflow_dispatch", TR_WEBSITE_ONLY="true")
     if damage == "manual":
         env["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+        env["TR_WEBSITE_ONLY"] = "false"
     if damage == "wrong-image":
         env["PREPARED_IMAGE"] = IMAGE + "a" * 64
     for key, value in env.items():
@@ -344,6 +385,7 @@ def test_workflow_retains_ci_immutable_build_and_exclusive_ordering():
     assert "needs.scope.outputs.public_docs == 'true'" in jobs["public-docs"]["if"]
     assert "needs.public-docs.result == 'success'" in jobs["rollout"]["if"]
     assert "needs.public-docs.outputs.full_rollout == 'true'" in jobs["rollout"]["if"]
+    assert "inputs.website_only != true" in jobs["rollout"]["if"]
     public = yaml.safe_load((ROOT / ".github/workflows/deploy-public-docs.yml").read_text())
     full = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
     assert public["concurrency"] == full["concurrency"]
@@ -353,3 +395,7 @@ def test_workflow_retains_ci_immutable_build_and_exclusive_ordering():
     assert steps[-1]["with"]["name"] == "public-release-${{ github.run_attempt }}"
     full_steps = full["jobs"]["public-surface-companion"]["steps"]
     assert full_steps[0]["with"]["fetch-depth"] == 0
+    observations = [s for s in full_steps if "scripts.deploy.public_rollout_report" in s.get("run", "")]
+    assert len(observations) == 2 and all(s["continue-on-error"] and "id" not in s for s in observations)
+    mutations = [s for s in full_steps if "bash scripts/deploy/public_surface.sh" in s.get("run", "")]
+    assert len(mutations) == 1 and "if" not in mutations[0]
