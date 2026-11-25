@@ -233,3 +233,31 @@ def test_checked_in_voyage_fallback_matches_first_party_rate(
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     model = catalog_ingest._embedding_models()["voyage/voyage-3-large"]
     assert model.prompt_price_microdollars_per_million_tokens == 189_900
+
+
+@pytest.mark.parametrize("source_cost", [1, 200_000])
+def test_complete_embedding_manifest_applies_customer_fee(tmp_path, monkeypatch, source_cost):
+    from trusted_router.pricing import (
+        _PRICE_FLOOR_MICRODOLLARS_PER_M,
+        STANDARD_PRICE_MARKUP_BASIS_POINTS,
+    )
+
+    model_id = "voyage/fee-fixture"
+    (tmp_path / "voyage.json").write_text(json.dumps({
+        "provider": "voyage", "price_scale": "microdollars_per_million", "models": [{
+            "id": model_id, "upstream_id": "fee-fixture", "model_type": "embedding",
+            "endpoints": ["embeddings"], "input_token_price_per_m": source_cost,
+            "output_token_price_per_m": 0,
+        }],
+    }))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    model = catalog_ingest._embedding_models()[model_id]
+    expected = max(_PRICE_FLOOR_MICRODOLLARS_PER_M,
+                   (source_cost * (10_000 + STANDARD_PRICE_MARKUP_BASIS_POINTS) + 5_000) // 10_000)
+    assert expected != source_cost
+    assert model.prompt_price_microdollars_per_million_tokens == expected
+    assert model.published_prompt_price_microdollars_per_million_tokens == expected
+    assert model.price_tiers[0].prompt_price_microdollars_per_million_tokens == expected
+    endpoint = next(iter(catalog_ingest._build_endpoints({model.id: model}).values()))
+    assert endpoint.prompt_price_microdollars_per_million_tokens == expected
+    assert endpoint.completion_price_microdollars_per_million_tokens == 0

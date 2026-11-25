@@ -2009,6 +2009,8 @@ if not provider_model_retired(
 ):
     MODEL_ENDPOINTS[_fortanix_public_endpoint.id] = _fortanix_public_endpoint
 
-# Catalog-only rerank entries have no public routes in this release.
-for _model_id, _model in _rerank_models().items():
-    MODELS.setdefault(_model_id, _model)
+# Rerank endpoints are private to the internal authorization resolver.
+_RERANK_MODELS = {key: model for key, model in _rerank_models().items() if key not in MODELS}
+if _RERANK_MODELS:
+    MODELS.update(_RERANK_MODELS)
+    MODEL_ENDPOINTS.update(_apply_provider_manifest_expiry(_build_endpoints(_RERANK_MODELS)))

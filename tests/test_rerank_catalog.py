@@ -84,11 +84,19 @@ def test_rerank_manifest_requires_provider_opt_in(tmp_path, monkeypatch) -> None
     assert model.price_tiers[0].prompt_price_microdollars_per_million_tokens == _customer_price(50_000)
     assert model.published_price_tiers == model.price_tiers
     assert model.input_modalities == ("text",) and model.output_modalities == ("scores",)
-    assert not model.prepaid_available and not model.byok_available
+    assert model.prepaid_available and not model.byok_available
+    endpoints = catalog_ingest._build_endpoints(models)
+    assert len(endpoints) == 1
+    endpoint = next(iter(endpoints.values()))
+    assert endpoint.model_id == model.id and endpoint.provider == "voyage"
+    assert endpoint.usage_type == "Credits"
+    assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(50_000)
+    assert endpoint.completion_price_microdollars_per_million_tokens == 0
+    assert catalog_ingest._build_endpoints({model.id: replace(model, byok_available=True)}) == endpoints
+    monkeypatch.setitem(catalog_data.PROVIDERS, "voyage",
+                        replace(catalog_data.PROVIDERS["voyage"], supports_rerank=False))
     assert catalog_ingest._build_endpoints(models) == {}
-    assert catalog_ingest._build_endpoints({model.id: replace(
-        model, prepaid_available=True, byok_available=True,
-    )}) == {}
+
 
 
 @pytest.mark.parametrize("source_price", [50_000, 1], ids=["markup", "floor"])
@@ -276,7 +284,11 @@ def test_rerank_catalog_public_and_routing_differential(
     assert set(extended["MODELS"]) - set(baseline["MODELS"]) == {RERANK_ID}
     assert extended["MODELS"][RERANK_ID].supports_rerank
     assert {key: value for key, value in extended["MODELS"].items() if key != RERANK_ID} == baseline["MODELS"]
-    assert extended["MODEL_ENDPOINTS"] == baseline["MODEL_ENDPOINTS"]
+    added = {key: value for key, value in extended["MODEL_ENDPOINTS"].items()
+             if value.model_id == RERANK_ID}
+    assert len(added) == 1
+    assert {key: value for key, value in extended["MODEL_ENDPOINTS"].items()
+            if key not in added} == baseline["MODEL_ENDPOINTS"]
 
     def observe(registry):
         with pytest.MonkeyPatch.context() as patch:
@@ -286,6 +298,11 @@ def test_rerank_catalog_public_and_routing_differential(
                         if name in vars(module):
                             patch.setattr(module, name, registry[name])
             clear_catalog_caches()
+            if RERANK_ID in registry["MODELS"]:
+                candidates = routing.rerank_route_endpoint_candidates({"model": RERANK_ID}, test_settings)
+                assert [(model.id, endpoint.id) for model, endpoint in candidates] == [
+                    (RERANK_ID, next(iter(added)))
+                ]
             outputs = {}
             paths = (
                 "/v1/models", "/v1/models?include=endpoints", "/v1/models/picker",
@@ -393,3 +410,37 @@ def test_rerank_writer_holds_a_row_when_its_token_price_disappears(
     monkeypatch.setitem(catalog_data.PROVIDERS, provider.SLUG,
                         replace(catalog_data.PROVIDERS[provider.SLUG], supports_rerank=True))
     assert set(catalog_ingest._rerank_models()) == {row["id"] for row in priced_rerank} - {missing_id}
+
+
+def test_rerank_prepaid_availability_follows_provider(tmp_path, monkeypatch):
+    _manifest(tmp_path, [ROW])
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    monkeypatch.setitem(catalog_data.PROVIDERS, "voyage", replace(
+        catalog_data.PROVIDERS["voyage"], supports_rerank=True, supports_prepaid=False))
+    model = catalog_ingest._rerank_models()[RERANK_ID]
+    assert not model.prepaid_available
+    assert catalog_ingest._build_endpoints({model.id: model}) == {}
+
+
+def test_rerank_registry_preserves_existing_models_and_attaches_expiry(monkeypatch):
+    baseline = runpy.run_path(catalog_registry.__file__)
+    existing = baseline["MODELS"]["voyage/voyage-3-large"]
+    added = replace(existing, id="voyage/fixture-registry-rerank", supports_chat=False,
+                    supports_embeddings=False, supports_rerank=True, byok_available=True)
+    monkeypatch.setitem(catalog_data.PROVIDERS, "voyage", replace(
+        catalog_data.PROVIDERS["voyage"], supports_rerank=True, supports_byok=True))
+    deadline = catalog_registry.CATALOG_RESOLVED_AT + timedelta(days=1)
+    monkeypatch.setattr(catalog_ingest, "provider_manifest_deadlines", lambda: {"voyage": deadline})
+    monkeypatch.setattr(catalog_ingest, "provider_manifest_model_deadlines", lambda: {})
+    monkeypatch.setattr(catalog_ingest, "_rerank_models", lambda: {
+        existing.id: replace(existing, supports_rerank=True, name="must not replace existing"),
+        added.id: added,
+    })
+    extended = runpy.run_path(catalog_registry.__file__)
+    assert extended["MODELS"][existing.id] == existing
+    assert extended["MODELS"][added.id] == added
+    endpoints = [endpoint for endpoint in extended["MODEL_ENDPOINTS"].values()
+                 if endpoint.model_id == added.id]
+    assert len(endpoints) == 1
+    assert endpoints[0].usage_type == "Credits"
+    assert endpoints[0].catalog_valid_until == deadline
