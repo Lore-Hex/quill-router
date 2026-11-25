@@ -17,7 +17,12 @@ from scripts.pricing.parsers import cohere as cohere_parser
 from scripts.pricing.parsers import voyage as voyage_parser
 from scripts.pricing.providers import cohere, jina, voyage
 from tests.fixture_routes import clear_catalog_caches
-from tests.rerank_manifest_fixtures import MANIFEST_STATES, provider_manifest, rerank_rows
+from tests.rerank_manifest_fixtures import (
+    MANIFEST_STATES,
+    install_public_rerank_models,
+    provider_manifest,
+    rerank_rows,
+)
 from trusted_router import catalog_data, catalog_ingest, catalog_registry, routing
 from trusted_router.catalog import model_to_openrouter_shape
 from trusted_router.catalog_data import Model
@@ -62,7 +67,8 @@ def _manifest(path: Path, rows: list[dict]) -> None:
     }))
 
 
-def test_rerank_flags_only_voyage_enabled() -> None:
+def test_rerank_flags_only_voyage_enabled(monkeypatch, tmp_path) -> None:
+    install_public_rerank_models(monkeypatch, tmp_path)
     assert {p.slug for p in catalog_data.PROVIDERS.values() if p.supports_rerank} == {"voyage"}
     assert not Model("example/model", "Model", "voyage", 8192).supports_rerank
     assert {model.provider for model in catalog_registry.MODELS.values() if model.supports_rerank} == {"voyage"}
@@ -256,13 +262,26 @@ def test_jina_scores_without_token_price_are_reported(monkeypatch) -> None:
     assert any("jina-reranker-v3" in note and "per-token" in note for note in result.notes)
 
 
-@pytest.mark.parametrize("manifest_state", (*MANIFEST_STATES, "checked-in"))
+@pytest.mark.parametrize("manifest_state", (*MANIFEST_STATES, "enabled-provider"))
 def test_rerank_catalog_public_and_routing_differential(
     tmp_path, monkeypatch, client, test_settings, manifest_state,
 ) -> None:
     shutil.copytree(catalog_ingest._PROVIDER_MODELS_DIR, tmp_path / "manifests")
     directory = tmp_path / "manifests"
-    if manifest_state != "checked-in":
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", directory)
+    if manifest_state == "enabled-provider":
+        for slug in ("voyage", "cohere"):
+            path = directory / f"{slug}.json"
+            raw = json.loads(path.read_text())
+            raw["models"] = [row for row in raw["models"] if row.get("model_type") != "rerank"]
+            rows = rerank_rows(slug, "post-refresh")
+            if slug == "voyage":
+                for row in rows:
+                    row["context_length"] = voyage.RERANK_CONTEXT_LIMITS[row["upstream_id"]]
+            raw["models"].extend(rows)
+            raw["model_count"] = len(raw["models"])
+            path.write_text(json.dumps(raw))
+    if manifest_state != "enabled-provider":
         # Exercise both sides of the scheduled refresh, regardless of today's files.
         for slug in ("voyage", "cohere"):
             path = directory / f"{slug}.json"
@@ -290,7 +309,7 @@ def test_rerank_catalog_public_and_routing_differential(
             monkeypatch.setattr(module, "utcnow", lambda: instant)
     path = directory / "voyage.json"
     raw = json.loads(path.read_text())
-    if manifest_state == "checked-in":
+    if manifest_state == "enabled-provider":
         assert catalog_data.PROVIDERS["voyage"].supports_rerank
         with monkeypatch.context() as patch:
             patch.setitem(catalog_data.PROVIDERS, "voyage",
@@ -316,7 +335,7 @@ def test_rerank_catalog_public_and_routing_differential(
 
     def observe(registry):
         with pytest.MonkeyPatch.context() as patch:
-            if manifest_state == "checked-in":
+            if manifest_state == "enabled-provider":
                 patch.setitem(catalog_data.PROVIDERS, "voyage", replace(
                     catalog_data.PROVIDERS["voyage"], supports_rerank=registry is extended))
             for module_name, module in list(sys.modules.items()):
@@ -347,7 +366,8 @@ def test_rerank_catalog_public_and_routing_differential(
             ))
             for url in paths:
                 response = client.get(url)
-                assert response.status_code == (404 if any(url.startswith(f"/models/{key}") for key in rerank_ids) else 200), url
+                is_rerank_page = any(url.startswith(f"/models/{key}") for key in rerank_ids)
+                assert response.status_code == (404 if is_rerank_page and registry is baseline else 200), url
                 outputs[url] = (response.status_code, response.content, response.headers.get("etag"))
             providers_html = client.get("/providers", headers={"accept": "text/html"})
             assert providers_html.status_code == 200
@@ -387,8 +407,28 @@ def test_rerank_catalog_public_and_routing_differential(
 
     try:
         before, after = observe(baseline), observe(extended)
-        for key in before:
-            assert before[key] == after[key], key
+        public_changes = {
+            "/v1/models", "/v1/models?include=endpoints", "/v1/models/picker",
+            "/v1/models/count", "/", "/models", "/providers/voyage",
+            "/sitemap-models.xml", "/sitemap-comparisons.xml",
+            "mcp_models", "route_history", "provider_og", "counts",
+        }
+        public_changes.update(url for model_id in rerank_ids for url in (
+            f"/models/{model_id}", f"/models/{model_id}/pricing",
+            f"/v1/models/{model_id}/endpoints",
+        ))
+        actual_changes = {key for key in before if before[key] != after[key]}
+        assert actual_changes == public_changes, (actual_changes - public_changes, public_changes - actual_changes)
+        for path in ("/v1/models", "/v1/models?include=endpoints", "/v1/models/picker"):
+            old_rows = {row["id"]: row for row in json.loads(before[path][1])["data"]}
+            new_rows = {row["id"]: row for row in json.loads(after[path][1])["data"]}
+            assert new_rows.keys() - old_rows.keys() == rerank_ids
+            assert old_rows == {key: row for key, row in new_rows.items() if key not in rerank_ids}
+        for model_id in rerank_ids:
+            assert model_id.encode() in after["/sitemap-models.xml"][1]
+            assert model_id.encode() in after["/models"][1]
+            assert json.loads(after[f"/v1/models/{model_id}/endpoints"][1])["data"]
+        assert after["counts"] != before["counts"]
     finally:
         clear_catalog_caches()
 

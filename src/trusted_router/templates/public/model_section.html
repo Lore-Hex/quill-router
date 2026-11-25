@@ -78,8 +78,8 @@
         <tr>
           <th>Provider</th>
           <th>Input</th>
-          <th>Cached input</th>
-          <th>Output</th>
+          {% if not model.supports_rerank %}<th>Cached input</th>{% endif %}
+          {% if not model.supports_rerank %}<th>Output</th>{% endif %}
           <th>Provider policy</th>
         </tr>
       </thead>
@@ -88,8 +88,8 @@
         <tr>
           <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
           <td>{{ endpoint.prompt_price }}</td>
-          <td>{{ endpoint.cached_prompt_price }}</td>
-          <td>{{ endpoint.completion_price }}</td>
+          {% if not model.supports_rerank %}<td>{{ endpoint.cached_prompt_price }}</td>{% endif %}
+          {% if not model.supports_rerank %}<td>{{ endpoint.completion_price }}</td>{% endif %}
           <td>
             {{ provider_privacy_badges(endpoint) }}
           </td>
@@ -143,7 +143,9 @@
     </div>
     <p class="signup-foot"><a href="/status">View public status</a> or inspect <a href="/models/{{ model.id }}/providers">provider routes</a>.</p>
     {% elif section == "pricing" %}
-    {% if model.fetch %}
+    {% if model.supports_rerank %}
+    <p class="muted-copy">Prices are USD per million input tokens, prepaid, counting the query once per document plus every document. See <a href="/docs#rerank">Rerank</a> for the GCP API hosts and request format.</p>
+    {% elif model.fetch %}
     <p class="muted-copy">Fetch is billed per successful nonempty response. There is no token charge.</p>
     {% elif model.transcription or (model.speech and model.speech.billing_unit != 'tokens') %}
     <p class="muted-copy">Audio prices use the units shown below. Output is included. Charges are settled in integer microdollars.</p>
@@ -156,8 +158,8 @@
         <tr>
           <th>Provider</th>
           <th>Input</th>
-          <th>Cached input</th>
-          <th>Output</th>
+          {% if not model.supports_rerank %}<th>Cached input</th>{% endif %}
+          {% if not model.supports_rerank %}<th>Output</th>{% endif %}
           <th>Schedule</th>
         </tr>
       </thead>
@@ -166,8 +168,8 @@
         <tr>
           <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href) }}</td>
           <td>{{ endpoint.prompt_price }}</td>
-          <td>{{ endpoint.cached_prompt_price }}</td>
-          <td>{{ endpoint.completion_price }}</td>
+          {% if not model.supports_rerank %}<td>{{ endpoint.cached_prompt_price }}</td>{% endif %}
+          {% if not model.supports_rerank %}<td>{{ endpoint.completion_price }}</td>{% endif %}
           <td>
             {% if endpoint.pricing_schedule %}
             {% set schedule = endpoint.pricing_schedule %}
@@ -223,6 +225,8 @@
         </ul>
       </div>
     </div>
+    {% elif section == "api" and model.supports_rerank %}
+    <p class="muted-copy">Use <code>{{ model.id }}</code> with <a href="/docs#rerank">POST /v1/rerank</a>, prepaid, on the GCP API hosts. Rerank is not yet served on the AWS or Azure API hosts.</p>
     {% elif section == "api" and model.fetch %}
     <p class="muted-copy">Submit a public URL to DeepSeek Fetch and receive Markdown. Not ZDR or confidential. <a href="/docs#web-fetch">Privacy, billing, and limits</a>.</p>
     <pre class="code-block"><code>curl {{ api_base_url }}/tools/fetch \

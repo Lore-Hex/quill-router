@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import cohere, voyage
-from tests.rerank_manifest_fixtures import MANIFEST_STATES, provider_manifest
+from tests.rerank_manifest_fixtures import (
+    MANIFEST_STATES,
+    install_public_rerank_models,
+    provider_manifest,
+)
 from tests.test_rerank_billing import authorize, error, seed
 from trusted_router import catalog_ingest
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
@@ -31,8 +35,9 @@ COHERE_IDS = {
 WIRE_PATH = Path(__file__).parent / "fixtures/gateway_repository_rerank_wire_golden.json"
 
 
-def test_checked_in_rerank_ids_and_contexts():
-    rows = json.loads(voyage.MANIFEST_PATH.read_text())["models"]
+def test_rerank_ids_and_contexts(monkeypatch, tmp_path):
+    install_public_rerank_models(monkeypatch, tmp_path)
+    rows = json.loads((tmp_path / "voyage.json").read_text())["models"]
     rows = {row["upstream_id"]: row for row in rows if row.get("model_type") == "rerank"}
     assert set(rows) == set(CONTEXTS)
     for upstream_id, context in CONTEXTS.items():
@@ -43,7 +48,7 @@ def test_checked_in_rerank_ids_and_contexts():
         model = MODELS[row["id"]]
         assert model.supports_rerank and model.context_length == context
     assert not PROVIDERS["cohere"].supports_rerank
-    rows = json.loads(cohere.MANIFEST_PATH.read_text())["models"]
+    rows = json.loads((tmp_path / "cohere.json").read_text())["models"]
     assert {row["id"]: row["upstream_id"] for row in rows
             if row.get("model_type") == "rerank"} == COHERE_IDS
 
@@ -83,10 +88,16 @@ def test_voyage_origin_public_output(client, monkeypatch):
     after_pages, after_region, after_policy = observe()
     assert after_pages == before_pages
     voyage_lab = next(row for row in after_region["labs"] if row["lab_name"] == "Voyage AI")
-    assert {row["id"] for row in voyage_lab["models"]} == embeddings
-    assert after_region["origin_model_count"] == before_region["origin_model_count"] + len(embeddings)
+    public_voyage = {model.id for model in MODELS.values()
+                     if model.provider == "voyage" and (model.supports_embeddings or model.supports_rerank)}
+    assert {row["id"] for row in voyage_lab["models"]} == {
+        m.id for m in sorted((MODELS[key] for key in public_voyage), key=lambda m: (-sum(e.model_id == m.id for e in MODEL_ENDPOINTS.values()), m.id))[:model_regions.MODELS_PER_LAB]
+    }
+    assert voyage_lab["model_count"] == len(public_voyage)
+    assert voyage_lab["hidden_model_count"] == max(0, len(public_voyage) - model_regions.MODELS_PER_LAB)
+    assert after_region["origin_model_count"] == before_region["origin_model_count"] + len(public_voyage)
     assert after_region["lab_count"] == before_region["lab_count"] + 1
-    assert after_region["models_without_recorded_origin"] == before_region["models_without_recorded_origin"] - len(embeddings)
+    assert after_region["models_without_recorded_origin"] == before_region["models_without_recorded_origin"] - len(public_voyage)
     assert after_region["directory_model_count"] == before_region["directory_model_count"]
     assert before_policy["unrestricted"] == after_policy["unrestricted"]
     assert before_policy["us"] == before_policy["western"] == []

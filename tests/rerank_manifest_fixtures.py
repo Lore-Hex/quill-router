@@ -62,3 +62,33 @@ def provider_manifest(slug: str, state: str = "without-rerank") -> dict[str, Any
             *rerank_rows(slug, state),
         ],
     }
+
+
+def install_public_rerank_models(monkeypatch, directory):
+    """Use all launch models and fixed prices regardless of the latest refresh."""
+    import json
+
+    from scripts.pricing.providers import cohere, voyage
+    from trusted_router import catalog_ingest
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+
+    for provider in (cohere, voyage):
+        manifest = provider_manifest(provider.SLUG, "post-refresh")
+        for row in manifest["models"]:
+            if row.get("model_type") == "rerank":
+                if provider is voyage:
+                    row["context_length"] = voyage.RERANK_CONTEXT_LIMITS[row["upstream_id"]]
+                else:
+                    row["upstream_id"] = {
+                        "cohere/rerank-5-fast": "rerank-v5.0-fast",
+                        "cohere/rerank-5-pro": "rerank-v5.0-pro",
+                    }[row["id"]]
+        (directory / f"{provider.SLUG}.json").write_text(json.dumps(manifest))
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", directory)
+        models = catalog_ingest._rerank_models()
+    for model_id, model in models.items():
+        monkeypatch.setitem(MODELS, model_id, model)
+    for endpoint_id, endpoint in catalog_ingest._build_endpoints(models).items():
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint_id, endpoint)
+    return models

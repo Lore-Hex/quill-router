@@ -164,7 +164,7 @@ ROUTE_COVERAGE: tuple[RouteCoverage, ...] = (
         "OpenRouter presets are not supported.",
     ),
     RouteCoverage("/providers", "GET", "real", "Supported providers."),
-    RouteCoverage("/rerank", "POST", "stub", "Rerank is not supported."),
+    RouteCoverage("/rerank", "POST", "real", "Voyage reranking on the GCP API hosts; synchronous, prepaid input-token billing."),
     RouteCoverage("/responses", "POST", "real", "OpenAI Responses-compatible text response."),
     RouteCoverage("/scim/group-mappings", "GET", "stub", "SCIM is not supported."),
     RouteCoverage("/scim/group-mappings", "POST", "stub", "SCIM is not supported."),

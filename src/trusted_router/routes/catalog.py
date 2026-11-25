@@ -28,6 +28,7 @@ from trusted_router.catalog import (
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
     endpoints_for_model,
+    is_publicly_listed,
     model_to_openrouter_shape,
     provider_to_openrouter_shape,
     providers_for_display,
@@ -528,6 +529,13 @@ def register_catalog_routes(router: APIRouter) -> None:
     def embeddings_models() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [model_to_openrouter_shape(m) for m in MODELS.values() if m.supports_embeddings]
+        }
+
+    @router.get("/rerank/models")
+    def rerank_models() -> dict[str, list[dict[str, Any]]]:
+        return {
+            "data": [model_to_openrouter_shape(m) for m in MODELS.values()
+                     if m.supports_rerank and is_publicly_listed(m)]
         }
 
     @router.get("/images/models")

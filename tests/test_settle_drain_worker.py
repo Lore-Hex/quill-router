@@ -68,10 +68,23 @@ def inventory_settings(surface, enabled):
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False, console_support=False,
               wallet_email_verify=False, routing_evidence=False, request_billing=False,
-              byok_docs=False, notes=False, activity_tags=False):
+              byok_docs=False, notes=False, activity_tags=False, rerank_catalog=False, rerank_gateway=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    for prefix in ("", "/v1"):
+        catalog_route = [f"{prefix}/rerank/models", ["GET"],
+                         "register_catalog_routes.<locals>.rerank_models"]
+        assert routes.count(catalog_route) == int(rerank_catalog)
+        if rerank_catalog:
+            routes.remove(catalog_route)
+        gateway_route = [f"{prefix}/rerank", ["POST"],
+                         "register_gateway_compat_stub_routes.<locals>.rerank"]
+        assert routes.count(gateway_route) == int(rerank_gateway)
+        if rerank_gateway:
+            routes.remove(gateway_route)
+            routes.append([f"{prefix}/rerank", ["POST"], "register_compat_stub_routes.<locals>.rerank"])
+    routes.sort()
     # Only the two reviewed billing-lookup aliases may extend this inventory;
     # keep the frozen lifecycle and all other route identities unchanged.
     for prefix in ("", "/v1"):
@@ -195,6 +208,8 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     assert delta["base_revision"] == "43f8cf6e73c999bc2140147e854f2ff96b2f124b"
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
     assert inventory(app, delta["surfaces"][surface],
+                     rerank_catalog=surface in {"combined", "public", "observer"},
+                     rerank_gateway=surface in {"combined", "control"},
                      abliterated_page=surface in {"combined", "public", "observer"},
                      byok_docs=surface in {"combined", "public", "observer"},
                      notes=surface in {"combined", "public", "observer"},

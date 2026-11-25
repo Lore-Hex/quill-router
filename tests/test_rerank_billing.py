@@ -540,11 +540,13 @@ def test_rerank_cannot_enter_text_resolvers_even_with_overlapping_capabilities(m
     assert caught.value.status_code == 400
 
 
-def test_rerank_public_endpoint_candidates_remain_empty(monkeypatch):
+def test_rerank_public_endpoint_candidates_are_listed(monkeypatch):
     models(monkeypatch)
     assert not MODELS[RERANK].internal_only
     assert routing.endpoints_for_model(RERANK)
-    assert routing.catalog_endpoint_candidates(MODELS[RERANK], routing.RoutePreferences()) == []
+    assert routing.catalog_endpoint_candidates(MODELS[RERANK], routing.RoutePreferences()) == [
+        (MODELS[RERANK], endpoint) for endpoint in routing.endpoints_for_model(RERANK)
+    ]
 
 
 @pytest.mark.parametrize("provider", [{"only": ["cohere"]}, {"usage": "BYOK"}])

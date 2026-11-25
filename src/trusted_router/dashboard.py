@@ -2559,6 +2559,8 @@ def _model_kind_phrase(model: Model, view: Mapping[str, object]) -> str:
         return "speech-to-text model"
     if view["fetch"]:
         return "web fetch tool"
+    if model.supports_rerank:
+        return "reranking model"
     if view["supports_embeddings"] and not view["supports_chat"]:
         return "embedding model"
     if view["supports_decide"] and not view["supports_chat"]:
@@ -2667,9 +2669,15 @@ def _model_page(
         f"Use {short_name} through TrustedRouter in this project.",
         "",
         f"1. Read {llms_url}",
-        "2. Point the OpenAI-compatible client at",
-        f"   {settings.api_base_url} and read the key from",
-        "   TRUSTEDROUTER_API_KEY.",
+        *((
+            "2. Send POST requests to",
+            f"   {settings.api_base_url}/rerank and read the key from",
+            "   TRUSTEDROUTER_API_KEY.",
+        ) if model.supports_rerank else (
+            "2. Point the OpenAI-compatible client at",
+            f"   {settings.api_base_url} and read the key from",
+            "   TRUSTEDROUTER_API_KEY.",
+        )),
     )
     return {
         "short_name": short_name,
@@ -3650,6 +3658,13 @@ def public_competitor_compare_html(settings: Settings, slug: str) -> str | None:
     )
 
 
+def _rerank_example_model() -> str | None:
+    """A listed Voyage rerank model for the docs example, or none while unlisted."""
+    listed = [m.id for m in MODELS.values()
+              if m.provider == "voyage" and m.supports_rerank and is_publicly_listed(m)]
+    return "voyage/rerank-2.5" if "voyage/rerank-2.5" in listed else next(iter(listed), None)
+
+
 def _render_public_page(
     settings: Settings,
     page: PublicPage,
@@ -3700,6 +3715,7 @@ def _render_public_page(
         .render(
             api_base_url=settings.api_base_url,
             control_plane_api_base_url=f"https://{settings.trusted_domain}/v1",
+            rerank_example_model=_rerank_example_model(),
             site_url=resolved_site_url,
             canonical_url=canonical_url,
             title=f"{page.title} | TrustedRouter",
@@ -5340,7 +5356,7 @@ def llms_txt(settings: Settings) -> str:
             "for 600+ models, provider fallback, lower-cost open-weight routes, "
             "zero-retention routing, and an end-to-end encrypted attested gateway whose "
             "running source commit and image digest can be verified. "
-            "The same key supports embeddings and transcription. "
+            "The same key supports embeddings and transcription. Reranking is available through POST /v1/rerank with Voyage rerank models, prepaid, on the GCP API hosts; it is not yet served on the AWS or Azure API hosts. "
             "For a single-provider call, set provider.only to that provider and "
             "provider.allow_fallbacks to false; see /docs/simple-start."
         ),
@@ -5563,8 +5579,9 @@ def _llms_common_objections(domain: str) -> list[str]:
         "retention boundary.",
         "- C. Pin one provider with provider.only and provider.allow_fallbacks: false; the "
         "same key supports chat, embeddings, transcription, Batch, and video. "
+        "Reranking is available through POST /v1/rerank with Voyage rerank models, prepaid, on the GCP API hosts; it is not yet served on the AWS or Azure API hosts. "
         f"[Simple start]({simple}) also explains that TrustedRouter does not offer fine-tuning "
-        "or run inference GPUs itself and has no reranking endpoint today, and links NYTE's "
+        "or run inference GPUs itself, and links NYTE's "
         "2027 reserved tokens and larger capacity inquiries.",
         "- D. SLA, MSA and DPA are available to business customers on request, and "
         f"[Business terms and evidence]({simple}#business-terms) links retention terms, "
@@ -6538,6 +6555,7 @@ def _model_detail_view(
         "supports_chat": serves_bare_chat(model),
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
+        "supports_rerank": model.supports_rerank,
         # Same rule as the public catalog shape: hosted and named decision
         # models, and the chat models the gateway drives on the decide route.
         "supports_decide": model.supports_decide or model.id in NATIVE_DECISION_MODEL_IDS,
@@ -6601,6 +6619,8 @@ def _model_section_description(model: Model, section: str) -> str:
             "TrustedRouter providers using metadata-only production probes."
         )
     if section == "pricing":
+        if model.supports_rerank:
+            return f"Compare prepaid prices per million input tokens for {name} on the GCP API hosts."
         return (
             f"Compare prompt and completion token prices for every {name} route on TrustedRouter, "
             "including provider-specific cached-input rates."
@@ -6611,6 +6631,8 @@ def _model_section_description(model: Model, section: str) -> str:
             "on TrustedRouter using continuously collected metadata-only measurements."
         )
     if section == "api":
+        if model.supports_rerank:
+            return f"Call {name} through POST /v1/rerank on TrustedRouter: prepaid, on the GCP API hosts."
         return (
             f"Use the OpenAI-compatible API quickstart for {name} on TrustedRouter, with model IDs, "
             "streaming examples, authentication, fallback behavior, and SDK configuration."
@@ -6971,6 +6993,9 @@ def _model_faq_items(
             f"The current Credits price is {route_evidence['lowest_prompt_price']}. "
             "Output is included; these are audio prices, not text-token prices."
             if non_token_audio else
+            f"The current Credits price is "
+            f"{str(route_evidence['lowest_prompt_price']).removesuffix('/1M')} per million input tokens."
+            if model.supports_rerank else
             f"The current lowest Credits input price is "
             f"{route_evidence['lowest_prompt_price']} and the lowest Credits output price is "
             f"{route_evidence['lowest_completion_price']}. Prices are per one million tokens "
@@ -6989,6 +7014,8 @@ def _model_faq_items(
     return (
         (
             f"What model ID should I use for {name}?",
+            f"Use {model.id} as the model field with POST /v1/rerank on the GCP API hosts."
+            if model.supports_rerank else
             f"Use {model.id} as the model field with the TrustedRouter OpenAI-compatible "
             "API. Credits routing and provider fallback happen behind that model ID.",
         ),
@@ -7653,6 +7680,7 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                     None
                     if model.id == FETCH_MODEL_ID
                     or model.supports_embeddings
+                    or model.supports_rerank
                     or transcription
                     or (speech and not speech.token_billed)
                     else min(endpoint.prompt_price_microdollars_per_million_tokens for endpoint in endpoints)
@@ -7760,6 +7788,9 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
         "@type": "Service",
         "name": model.name,
         "description": (
+            f"{model.name} via TrustedRouter. Prepaid reranking through POST /v1/rerank; "
+            "pricing shown is USD per million input tokens."
+            if model.supports_rerank else
             f"{model.name} via TrustedRouter. Pay-per-token API; pricing "
             f"shown is USD per million prompt tokens (cheapest provider). "
             f"Output tokens billed separately at the endpoint's published rate."

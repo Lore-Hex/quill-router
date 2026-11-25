@@ -54,12 +54,12 @@
   <div class="md-stats">
     {% if page.lowest_input %}
     <div class="md-stat"><span class="md-label">Input / 1M</span><strong class="md-stat-value md-mint">{{ offer.input if offer else page.lowest_input }}</strong></div>
-    <div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ offer.output if offer else page.lowest_output }}</strong></div>
+    {% if not model.supports_rerank %}<div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ offer.output if offer else page.lowest_output }}</strong></div>{% endif %}
     {% elif page.price_label %}
     <div class="md-stat md-stat-wide"><span class="md-label">Price</span><strong class="md-stat-value md-mint">{{ page.price_label }}</strong></div>
     {% elif model.fixed_price %}
     <div class="md-stat"><span class="md-label">Input / 1M</span><strong class="md-stat-value md-mint">{{ model.prompt_price|replace('/1M', '') }}</strong></div>
-    <div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ model.completion_price|replace('/1M', '') }}</strong></div>
+    {% if not model.supports_rerank %}<div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ model.completion_price|replace('/1M', '') }}</strong></div>{% endif %}
     {% endif %}
     {% if page.context %}
     <div class="md-stat"><span class="md-label">Context</span><strong class="md-stat-value">{{ page.context }}</strong></div>
@@ -85,6 +85,7 @@
 {% endblock %}
 
 {% block body %}
+{% if model.supports_rerank %}<p>Use <a href="/docs#rerank">POST /v1/rerank</a> with prepaid credits on the GCP API hosts. Rerank is not yet served on the AWS or Azure API hosts.</p>{% endif %}
 {% set python_snippet %}{% if model.fetch %}import os
 import requests
 
@@ -122,6 +123,17 @@ with client.audio.speech.with_streaming_response.create(
     response_format="{{ model.speech.example_response_format }}",
 ) as response:
     response.stream_to_file("speech.{{ model.speech.example_response_format }}")
+{%- elif model.supports_rerank %}import os
+import requests
+
+response = requests.post(
+    "{{ api_base_url }}/rerank",
+    headers={"Authorization": f"Bearer {os.environ['TRUSTEDROUTER_API_KEY']}"},
+    json={"model": "{{ model.id }}", "query": "Which city is in France?",
+          "documents": ["Paris is in France.", "Tokyo is in Japan."], "top_n": 2},
+)
+response.raise_for_status()
+print(response.json())
 {%- elif model.supports_embeddings and not model.supports_chat %}import os
 from openai import OpenAI
 
@@ -175,6 +187,10 @@ print(response.choices[0].message.content)
   -H "Content-Type: application/json" \
   -d '{"model": "{{ model.id }}", "input": "Hello from TrustedRouter.", "voice": "{{ model.speech.supported_voices[0] }}", "response_format": "{{ model.speech.example_response_format }}"}' \
   --output speech.{{ model.speech.example_response_format }}
+{%- elif model.supports_rerank %}curl {{ api_base_url }}/rerank \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"{{ model.id }}","query":"Which city is in France?","documents":["Paris is in France.","Tokyo is in Japan."],"top_n":2}'
 {%- elif model.supports_embeddings and not model.supports_chat %}curl {{ api_base_url }}/embeddings \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
@@ -236,6 +252,7 @@ print(response.choices[0].message.content)
     {% set modes = [] %}
     {% if model.supports_chat %}{% set _ = modes.append('chat') %}{% endif %}
     {% if model.supports_messages %}{% set _ = modes.append('messages') %}{% endif %}
+    {% if model.supports_rerank %}{% set _ = modes.append('rerank') %}{% endif %}
     {% if model.supports_embeddings %}{% set _ = modes.append('embeddings') %}{% endif %}
     {% if model.supports_decide %}{% set _ = modes.append('decide') %}{% endif %}
     {% if model.speech %}{% set _ = modes.append('speech') %}{% endif %}
@@ -310,16 +327,16 @@ print(response.choices[0].message.content)
     {% if page.sort_latency %}<button type="button" role="radio" aria-checked="false" tabindex="-1" data-md-sort-key="latency">Latency</button>{% endif %}
   </div>
   {% endif %}
-  {% set columns = 6 if page.token_priced else 4 %}
+  {% set columns = 3 if model.supports_rerank else (6 if page.token_priced else 4) %}
   <table class="md-provider-table{% if not page.token_priced %} md-providers-flat{% endif %}{% if page.rows|length > 10 %} md-provider-table--sticky{% endif %}" aria-label="Provider comparison" data-md-providers>
     <caption class="md-sr">{{ name }} providers and prices per 1M tokens</caption>
     <thead>
       <tr>
         <th scope="col" class="md-col-provider">Provider</th>
-        <th scope="col" class="md-num">{% if page.token_priced %}Input{% else %}Price{% endif %}</th>
-        {% if page.token_priced %}<th scope="col" class="md-num">Cached</th>{% endif %}
-        <th scope="col" class="md-num">Output</th>
-        {% if page.token_priced %}<th scope="col" class="md-col-cost">Cost per 1M in + out</th>{% endif %}
+        <th scope="col" class="md-num">{% if page.token_priced and not model.supports_rerank %}Input{% else %}Price{% endif %}</th>
+        {% if page.token_priced and not model.supports_rerank %}<th scope="col" class="md-num">Cached</th>{% endif %}
+        {% if not model.supports_rerank %}<th scope="col" class="md-num">Output</th>{% endif %}
+        {% if page.token_priced and not model.supports_rerank %}<th scope="col" class="md-col-cost">Cost per 1M in + out</th>{% endif %}
         <th scope="col" class="md-col-toggle"><span class="md-sr">Details</span></th>
       </tr>
     </thead>
@@ -334,12 +351,12 @@ print(response.choices[0].message.content)
           {% if row.cheapest %}<span class="md-cheapest-tag">Cheapest</span>{% endif %}
         </span>
         {{ positive_badges(row) }}
-        {% if page.token_priced %}<span class="md-inout" aria-hidden="true">{{ row.input }} in · {{ row.output }} out</span>{% else %}<span class="md-inout" aria-hidden="true">{{ row.input }}</span>{% endif %}
+        {% if page.token_priced and not model.supports_rerank %}<span class="md-inout" aria-hidden="true">{{ row.input }} in · {{ row.output }} out</span>{% else %}<span class="md-inout" aria-hidden="true">{{ row.input }}</span>{% endif %}
       </th>
       <td class="md-num md-col-input">{{ row.input }}</td>
-      {% if page.token_priced %}<td class="md-num md-col-cached md-dim">{{ row.cached }}</td>{% endif %}
-      <td class="md-num md-col-output">{{ row.output }}</td>
-      {% if page.token_priced %}
+      {% if page.token_priced and not model.supports_rerank %}<td class="md-num md-col-cached md-dim">{{ row.cached }}</td>{% endif %}
+      {% if not model.supports_rerank %}<td class="md-num md-col-output">{{ row.output }}</td>{% endif %}
+      {% if page.token_priced and not model.supports_rerank %}
       <td class="md-cost-cell"><span class="md-cost"><span class="md-bar" aria-hidden="true"><span style="width: {{ row.bar_pct }}%"></span></span><span class="md-total">{{ row.total }}</span></span></td>
       {% endif %}
       <td class="md-toggle-cell"><button type="button" class="md-toggle" aria-expanded="false" aria-controls="provider-{{ endpoint.provider_slug }}-details"><span class="md-sr">{{ endpoint.provider }} details</span><span class="md-chev" aria-hidden="true"></span></button></td>
@@ -390,7 +407,7 @@ print(response.choices[0].message.content)
           </div>
           <div>
             <p class="md-detail-label">Price and speed</p>
-            <p>Input {{ endpoint.prompt_price }} · Cached input {{ endpoint.cached_prompt_price }} · Output {{ endpoint.completion_price }}</p>
+            <p>Input {{ endpoint.prompt_price }}{% if not model.supports_rerank %} · Cached input {{ endpoint.cached_prompt_price }} · Output {{ endpoint.completion_price }}{% endif %}</p>
             {% set measured = endpoint.measured %}
             {% if measured and measured.p50_ttft_ms is not none and measured.ttft_sample_count|default(0) >= 2 %}
             <p>TTFT: {{ '%.2f'|format(measured.p50_ttft_ms / 1000) }} s</p>

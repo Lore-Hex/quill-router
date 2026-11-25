@@ -2016,7 +2016,7 @@ if not provider_model_retired(
 ):
     MODEL_ENDPOINTS[_fortanix_public_endpoint.id] = _fortanix_public_endpoint
 
-# Rerank endpoints are private to the internal authorization resolver.
+# Rerank inference uses its dedicated authorization resolver.
 _RERANK_MODELS = {key: model for key, model in _rerank_models().items() if key not in MODELS}
 if _RERANK_MODELS:
     MODELS.update(_RERANK_MODELS)
