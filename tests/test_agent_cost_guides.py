@@ -26,6 +26,7 @@ from trusted_router.agent_cost_guides import COST_GUIDE_ROUTES, DEEPSEEK_MODEL
 from trusted_router.catalog import PROVIDERS, Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.dashboard import PUBLIC_PAGES, public_page_html
+from trusted_router.gateway_processing import gateway_processing_claim
 from trusted_router.pricing import (
     STANDARD_PRICE_MARKUP_BASIS_POINTS,
     PriceTier,
@@ -739,6 +740,8 @@ def test_removed_guide_phrases_stay_absent(client: TestClient, path: str) -> Non
         text = text.replace(scope, "")
     else:
         assert scope not in text
+    # The shared gateway processing statement is the one approved use of that word.
+    text = text.replace(gateway_processing_claim().lower(), "")
     for node in soup.select('meta[content], script[type="application/ld+json"]'):
         text += " " + (node.get("content") or node.get_text()).lower()
     for phrase in (
