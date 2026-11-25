@@ -9,7 +9,7 @@ import json
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
@@ -1459,13 +1459,13 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         title="Free LLM API",
         description=(
             "Get a free LLM API key with up to 1 million free tokens. No card required. "
-            "After that, models start at 1¢ per million tokens through one OpenAI-compatible API."
+            "After that, pay per token through one OpenAI-compatible API."
         ),
         faq_items=(
             (
                 "Is the LLM API free?",
-                "Your first tokens are free: up to 1 million, with no card. After that, the cheapest models "
-                "cost 1¢ per million tokens, so small projects cost very little.",
+                "Your first tokens are free: up to 1 million, with no card. After that, you pay per token, "
+                "with no subscription.",
             ),
             (
                 "Do I need a new SDK?",
@@ -3256,6 +3256,9 @@ def public_page_html(
 ) -> str:
     page = PUBLIC_PAGES[page_key]
     path = f"/{page_key}"
+    free_api = _free_llm_api_context() if page_key == "free-llm-api" else None
+    if free_api is not None and free_api["free_api_floor"]:
+        page = _free_llm_api_page(page, free_api["free_api_floor"])
     return _render_public_page(
         settings,
         page,
@@ -3272,8 +3275,7 @@ def public_page_html(
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES
             else {"hero_price_bars": _popular_price_bars(test_mode=settings.environment == "test")}
             if page_key == "pricing"
-            else {"free_api_models": free_llm_api_models()}
-            if page_key == "free-llm-api"
+            else free_api if free_api is not None
             else None
         ),
     )
@@ -3286,6 +3288,33 @@ def _cents_per_million(microdollars_per_million: int) -> str:
         return f"${cents / 100:.2f}"
     rounded = cents.quantize(Decimal("1")) if cents >= 10 else cents.quantize(Decimal("0.1"))
     return f"{rounded.normalize():f}¢"
+
+
+def _free_llm_api_context() -> dict[str, Any]:
+    """The price table plus its lowest per-token price, so the header, meta
+    description and FAQ quote the same live number as the table."""
+    models = free_llm_api_models()
+    floor = min((model["floor_micro"] for model in models), default=None)
+    return {
+        "free_api_models": models,
+        "free_api_floor": _cents_per_million(floor) if floor is not None else None,
+    }
+
+
+def _free_llm_api_page(page: PublicPage, floor: str) -> PublicPage:
+    faq = dict(page.faq_items)
+    faq["Is the LLM API free?"] = (
+        f"Your first tokens are free: up to 1 million, with no card. After that, the cheapest models "
+        f"cost {floor} per million tokens, so small projects cost very little."
+    )
+    return replace(
+        page,
+        description=(
+            "Get a free LLM API key with up to 1 million free tokens. No card required. "
+            f"After that, models start at {floor} per million tokens through one OpenAI-compatible API."
+        ),
+        faq_items=tuple(faq.items()),
+    )
 
 
 def free_llm_api_models(limit: int = 6) -> list[dict[str, Any]]:
@@ -3305,6 +3334,7 @@ def free_llm_api_models(limit: int = 6) -> list[dict[str, Any]]:
             "input": _cents_per_million(prompt),
             "output": _cents_per_million(completion),
             "offer": offer_label if model.id == LAUNCH_OFFER_MODEL_ID else None,
+            "floor_micro": min(prompt, completion),
         }))
     rows.sort(key=lambda row: (row[0], row[1]["id"]))
     return [row for _, row in rows[:limit]]

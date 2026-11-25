@@ -2408,3 +2408,26 @@ def test_free_llm_api_cents_labels(microdollars: int, label: str) -> None:
     from trusted_router.dashboard import _cents_per_million
 
     assert _cents_per_million(microdollars) == label
+
+
+@pytest.mark.parametrize(("floor_micro", "expected"), [(30_000, "3¢"), (None, None)])
+def test_free_llm_api_price_claims_follow_the_live_table(
+    client: TestClient, monkeypatch, floor_micro: int | None, expected: str | None
+) -> None:
+    from trusted_router import dashboard
+
+    rows = [] if floor_micro is None else [
+        {"id": "example/model", "input": expected, "output": expected, "offer": None, "floor_micro": floor_micro}
+    ]
+    monkeypatch.setattr(dashboard, "free_llm_api_models", lambda: rows)
+    body = client.get("/free-llm-api").text
+    assert "1¢ per million tokens through" not in body
+    assert "then models from 1¢" not in body
+    if expected is None:
+        assert "models start at" not in body
+        assert "then models from" not in body
+        assert "Cheapest models today" not in body
+    else:
+        assert f"models start at {expected} per million tokens" in body
+        assert f"then models from {expected} per million" in body
+        assert f"cheapest models cost {expected} per million tokens" in body
