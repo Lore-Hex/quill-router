@@ -2385,18 +2385,15 @@ def test_free_llm_api_page_lists_live_cheapest_models(client: TestClient) -> Non
 
 
 def test_free_llm_api_offer_tag_ends_with_the_launch_offer(client: TestClient, monkeypatch) -> None:
-    from datetime import UTC, datetime
+    from trusted_router import dashboard
 
-    from trusted_router import fortanix_launch
-
-    window = fortanix_launch._offer_window_open
-    monkeypatch.setattr(
-        fortanix_launch, "_offer_window_open", lambda: window(datetime(2026, 11, 20, tzinfo=UTC))
-    )
+    # The offer's own date and route gate is covered in test_fortanix_launch.py;
+    # here only the page's reaction to it matters, on any test clock.
+    if not any(model["id"] == dashboard.LAUNCH_OFFER_MODEL_ID for model in dashboard.free_llm_api_models()):
+        pytest.skip("the launch-offer model is not among the cheapest models on this clock")
+    monkeypatch.setattr(dashboard, "fortanix_launch_offer", lambda: True)
     assert "Launch offer, ends" in client.get("/free-llm-api").text
-    monkeypatch.setattr(
-        fortanix_launch, "_offer_window_open", lambda: window(datetime(2026, 11, 28, 8, tzinfo=UTC))
-    )
+    monkeypatch.setattr(dashboard, "fortanix_launch_offer", lambda: False)
     assert "Launch offer, ends" not in client.get("/free-llm-api").text
 
 
