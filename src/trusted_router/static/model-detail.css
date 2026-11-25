@@ -1094,3 +1094,22 @@
     border-radius: var(--tr-square, 14px);
   }
 }
+
+/* Tier disclosures wrap within the provider card at narrow phone widths. */
+.md-tier-prices {
+  display: block;
+  white-space: normal;
+  font-size: 12px;
+  font-weight: 400;
+}
+.md-tier-prices > span { display: block; }
+@media (max-width: 760px) {
+  .md-provider:has(.md-tier-prices) {
+    grid-template-areas: "name name chev" "cost inout inout" "badges badges badges" "tiers tiers tiers";
+  }
+  .md-tier-prices {
+    grid-area: tiers;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}

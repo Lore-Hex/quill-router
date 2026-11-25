@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
+from typing import Any
 
 from trusted_router.catalog_capabilities import (
     manifest_supported_parameters,
@@ -264,6 +265,7 @@ from trusted_router.provider_lifecycle import (
 )
 from trusted_router.provider_locations import inference_location_metadata, provider_geography
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
+from trusted_router.public_price_tiers import public_token_price_tiers, token_price_tiers_payload
 from trusted_router.reasoning_metadata import reasoning_metadata
 from trusted_router.request_capabilities import (
     endpoint_capabilities,
@@ -961,7 +963,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         pub_prompt_min = pub_prompt_max = VARIABLE_PRICE_MICRODOLLARS
         pub_completion_min = pub_completion_max = VARIABLE_PRICE_MICRODOLLARS
 
-    pricing: dict[str, str] = {
+    pricing: dict[str, Any] = {
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
@@ -988,6 +990,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     )
     if model_cached is not None:
         pricing["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(model_cached)
+    if not is_meta and (public_tiers := public_token_price_tiers(headline_route, model)):
+        pricing["tiers"] = token_price_tiers_payload(public_tiers)
     if model.request_price_microdollars:
         pricing["request"] = microdollars_to_decimal(model.request_price_microdollars)
     fixed_image_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model.id)

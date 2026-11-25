@@ -63,7 +63,8 @@ from trusted_router.provider_lifecycle import (
 )
 from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
-from trusted_router.public_openapi import inference_servers
+from trusted_router.public_openapi import catalog_pricing_responses, inference_servers
+from trusted_router.public_price_tiers import public_token_price_tiers, token_price_tiers_payload
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_capabilities import endpoint_capabilities
 from trusted_router.routes.model_changes import register_model_change_routes
@@ -346,7 +347,7 @@ def _openai_service_tier_metadata(provider: str, model_id: str) -> dict[str, Any
     return {"service_tiers": ["default"]}
 
 
-def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
+def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, Any]:
     from trusted_router.speech import SPEECH_MODELS
     from trusted_router.transcription import TRANSCRIPTION_MODELS
     from trusted_router.web_fetch import FETCH_MODEL_ID, fetch_pricing
@@ -358,7 +359,7 @@ def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
         return transcription.pricing
     if (spec := SPEECH_MODELS.get(endpoint.model_id)) and not spec.token_billed:
         return spec.non_token_pricing
-    payload = {
+    payload: dict[str, Any] = {
         "prompt": microdollars_per_million_tokens_to_token_decimal(
             endpoint.prompt_price_microdollars_per_million_tokens
         ),
@@ -370,6 +371,9 @@ def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
     cached_price = tiers[0].prompt_cached_price_microdollars_per_million_tokens if tiers else None
     if cached_price is not None:
         payload["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(cached_price)
+    model = MODELS.get(endpoint.model_id)
+    if model is not None and (public_tiers := public_token_price_tiers(endpoint, model)):
+        payload["tiers"] = token_price_tiers_payload(public_tiers)
     return payload
 
 
@@ -589,6 +593,8 @@ def register_catalog_routes(router: APIRouter) -> None:
         description=(
             "Returns the live public model catalog. No API key is required. "
             "The canonical production URL is https://api.trustedrouter.com/v1/models. "
+            "pricing.tiers lists the headline route's ordered token rates when tiered; "
+            "the tier is chosen by total prompt tokens including cached tokens. "
             "trustedrouter.capabilities agrees with model discovery declarations: "
             "tools, seed, vision (image input), and confidential booleans, plus reasoning_effort. "
             "tools and seed reflect the model's supported_parameters; vision reflects "
@@ -683,7 +689,10 @@ def register_catalog_routes(router: APIRouter) -> None:
             gzip_etag=catalog_payload.picker_gzip_etag,
         )
 
-    @router.get("/models/{author}/{slug}/endpoints")
+    @router.get(
+        "/models/{author}/{slug}/endpoints",
+        openapi_extra={"responses": catalog_pricing_responses()},
+    )
     def model_endpoints(
         author: str,
         slug: str,
