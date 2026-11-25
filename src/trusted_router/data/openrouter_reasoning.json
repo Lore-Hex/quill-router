@@ -1257,6 +1257,15 @@
       ],
       "default_effort": "high"
     },
+    "mistralai/mistral-small-2603:batch": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [
+        "high",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "moondream/moondream3-preview": {
       "mandatory": false,
       "default_enabled": false,
