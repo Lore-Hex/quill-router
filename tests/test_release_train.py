@@ -84,6 +84,153 @@ class Evidence(train.GitHub):
             self.after_refresh()
 
 
+class IncidentEvidence(Evidence):
+    def __init__(self):
+        super().__init__()
+        self.head = A
+        self.runs[1]["head_repository"] = {"full_name": train.REPO}
+        self.runs[2] = run(A, 2, event="workflow_dispatch", display_title=f"Emergency main {A}")
+        self.job_rows[1][1]["run_attempt"] = 1
+        self.job_rows[1][1]["steps"] = [{"name": "Build image via Cloud Build", "conclusion": "success"}]
+        self.has_push = True
+        self.job_rows[2] = [
+            {"name": "scope", "conclusion": "success",
+             "steps": [{"name": "Validate incident promotion", "conclusion": "success"}]},
+            {"name": "rollout / gate-on-ci", "status": "pending", "conclusion": None},
+        ]
+
+    def json(self, *args):
+        if "deploy.yml/runs?" in args[-1]:
+            assert f"head_sha={A}" in args[-1]
+            source = 2 if "event=workflow_dispatch" in args[-1] else 1
+            if source == 1 and not self.has_push:
+                return {"total_count": 0, "workflow_runs": []}
+            return {"total_count": 1, "workflow_runs": [self.run(source)]}
+        return super().json(*args)
+
+
+def test_incident_reuses_exact_push_digest_and_normal_release_can_yield():
+    api = IncidentEvidence()
+    assert train.incident_build(api, A) == (release(), 100)
+    assert train.queued_incident(api, A)
+
+
+def test_no_push_uses_only_a_real_build_in_the_incident_dispatch():
+    api = IncidentEvidence()
+    api.has_push = False
+    with pytest.raises(train.NeedsIncidentBuild):
+        train.incident_build(api, A)
+    api.runs[2]["head_repository"] = {"full_name": train.REPO}
+    builder = copy.deepcopy(api.job_rows[1][1])
+    api.job_rows[2].append(builder)
+    assert train.incident_build(api, A, dispatch=api.runs[2]) == (release(A, 2), 100)
+    builder["steps"][0]["conclusion"] = "skipped"
+    with pytest.raises(train.Refused, match="actually build"):
+        train.incident_build(api, A, dispatch=api.runs[2])
+
+
+def test_incident_workflow_still_requires_ci_and_the_same_production_queue():
+    entry = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())["jobs"]
+    rollout = entry["rollout"]
+    for gate in ("gate-on-ci", "build-image", "scope"):
+        assert f"needs.{gate}.result == 'success'" in rollout["if"]
+    assert rollout["uses"] == "./.github/workflows/deploy-production.yml"
+    assert rollout["with"]["hotfix"] == "${{ inputs.hotfix == true }}"
+    validation = entry["scope"]["steps"][0]
+    assert validation["env"]["ALLOWED"] == (
+        "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && "
+        "!inputs.hotfix && !inputs.track_main && !inputs.website_only }}")
+    for step in entry["build-image"]["steps"][1:]:
+        assert step["if"] == "steps.reuse.outputs.reuse != 'true'"
+    child = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    assert child["concurrency"] == {"group": "deploy-trusted-router", "queue": "max", "cancel-in-progress": False}
+    jobs = child["jobs"]
+    assert jobs["select-release"]["env"]["INCIDENT_SOURCE"] == "${{ needs.build-image.outputs.source }}"
+    assert {"admit-cloud", "build-image"} == set(jobs["select-release"]["needs"])
+    for gate in ("migrate-schema", "confirm-regions-ready", "confirm-still-on-main"):
+        assert gate in jobs["deploy"]["needs"]
+
+
+@pytest.mark.parametrize(("allowed", "incident", "ok"), [
+    ("true", "INC-123", True), ("false", "INC-123", False), ("true", "X\nfoo", False),
+    ("true", "X$(echo oops)", False), ("true", "A" * 65, False),
+])
+def test_incident_request_validation_executes(tmp_path, allowed, incident, ok):
+    step = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())["jobs"]["scope"]["steps"][0]
+    summary = tmp_path / "summary"
+    result = subprocess.run(  # noqa: S603 -- fixed workflow step, no network
+        ["/bin/bash", "-c", step["run"]], capture_output=True,
+        env={"INCIDENT": incident, "ALLOWED": allowed, "GITHUB_STEP_SUMMARY": str(summary),
+             "GITHUB_ACTOR": "operator", "GITHUB_SHA": A})
+    assert (result.returncode == 0) is ok
+    assert summary.exists() is ok
+
+
+@pytest.mark.parametrize("defect", ["head", "ci", "fork", "pr", "failure", "job", "attempt", "manifest", "sha"])
+def test_incident_fails_closed_on_bad_build_evidence(defect):
+    api = IncidentEvidence()
+    if defect == "head":
+        api.head = B
+    elif defect == "ci":
+        api.green.clear()
+    elif defect == "fork":
+        api.runs[1]["head_repository"]["full_name"] = "other/quill-router"
+    elif defect == "pr":
+        api.runs[1]["event"] = "pull_request"
+    elif defect == "failure":
+        api.runs[1]["conclusion"] = "failure"
+    elif defect == "job":
+        api.job_rows[1][1]["conclusion"] = "in_progress"
+    elif defect == "attempt":
+        api.job_rows[1][1]["run_attempt"] = 2
+    elif defect == "manifest":
+        api.artifacts[1, "prepared"] = {"release": {**asdict(release()), "image": "registry:mutable"}}
+    else:
+        api.runs[1]["head_sha"] = B
+    with pytest.raises(train.Refused):
+        train.incident_build(api, A)
+
+
+@pytest.mark.parametrize("defect", ["wrong-title", "failed-validation", "not-yet-queued", "cancelled"])
+def test_normal_controller_never_yields_to_an_unverified_or_stopped_request(defect):
+    api = IncidentEvidence()
+    if defect == "wrong-title":
+        api.runs[2]["display_title"] = f"Deploy revision {A}"
+    elif defect == "failed-validation":
+        api.job_rows[2][0]["steps"][0]["conclusion"] = "failure"
+    elif defect == "not-yet-queued":
+        api.job_rows[2].pop()
+    else:
+        api.runs[2]["status"] = "completed"
+    assert not train.queued_incident(api, A)
+
+
+def test_incident_preflight_selection_and_drift(tmp_path, monkeypatch):
+    api = IncidentEvidence()
+    monkeypatch.setattr(train, "GitHub", lambda: api)
+    monkeypatch.chdir(tmp_path)
+    env = {"EMERGENCY_INCIDENT": "INC-123", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "2",
+           "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": A, "GITHUB_OUTPUT": str(tmp_path / "out")}
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr("sys.argv", ["release_train", "incident-preflight"])
+    train.main()
+    assert (tmp_path / "out").read_text() == f"sha={release().tag}\nimage={release().image}\nsource=1/1\n"
+    monkeypatch.setattr("sys.argv", ["release_train", "select"])
+    monkeypatch.setenv("PREPARED_TAG", release().tag)
+    monkeypatch.setenv("PREPARED_IMAGE", release().image)
+    monkeypatch.setenv("INCIDENT_SOURCE", "1/2")
+    with pytest.raises(train.Refused, match="changed during admission"):
+        train.main()
+    assert not (tmp_path / "release.json").exists()
+    monkeypatch.setenv("INCIDENT_SOURCE", "1/1")
+    train.main()
+    receipt = json.loads((tmp_path / "release.json").read_text())
+    assert (receipt["incident"], receipt["ci_run"], receipt["controller_run"], receipt["deploy"]) == (
+        "INC-123", 100, 2, True)
+    assert receipt["release"] == asdict(release())
+
+
 def test_batches_every_ready_commit_at_admission():
     api = Evidence()
     result = train.select(api, api.runs[1], release())
