@@ -543,8 +543,7 @@
       "settlement_prices": {
         "input_token_price_per_m": 84000,
         "output_token_price_per_m": 0
-      },
-      "missing_since": "2026-11-25"
+      }
     },
     {
       "display_name": "Decision Models bison-1 (EU)",
@@ -673,11 +672,43 @@
       "routable_reason": "decision-model-namespace-unsupported",
       "input_token_price_per_m": 84000,
       "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Models clef-flash (EU)",
+      "title": "clef-flash",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/clef-flash",
+      "upstream_id": "clef-flash",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "9B decision model, text only, up to 3 questions per request, 8,192 input tokens per question.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming. This model is not currently routable through TrustedRouter: decision-model-namespace-unsupported.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
+      },
+      "decision_contract_hold": "decision-model-namespace-unsupported",
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null,
+      "routable": false,
+      "routable_reason": "decision-model-namespace-unsupported",
+      "input_token_price_per_m": 38000,
+      "output_token_price_per_m": 0
     }
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-11-25T12:10:01Z",
+  "generated_at": "2026-11-25T14:54:35Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 20
+  "model_count": 21
 }
