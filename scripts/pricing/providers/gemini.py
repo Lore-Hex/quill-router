@@ -30,6 +30,7 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_TIMEOUT,
     PROVIDER_FETCH_UA,
     ProviderPricingResult,
+    apply_required_model_price_aliases,
     fetch_json,
     fetch_provider,
     guard_manifest_prune,
@@ -60,6 +61,24 @@ EXPECTED_MODELS = [
     "google/gemini-3.6-flash",
     "google/gemini-3.7-flash",
 ]
+# Google AI Studio ids that Google bills at another model's published rate.
+# Each entry needs a Google source; the provider owns this map so the
+# rewriteable parser cannot invent pricing relationships.
+#
+# - customtools: the pricing page's "Gemini 3.1 Pro Preview" section names both
+#   gemini-3.1-pro-preview and gemini-3.1-pro-preview-customtools.
+# - "-latest": Google's release notes record the targets. 2026-01-21:
+#   gemini-pro-latest -> gemini-3-pro-preview and gemini-flash-latest ->
+#   gemini-3-flash-preview. 2026-03-09: gemini-3-pro-preview now points to
+#   gemini-3.1-pro-preview. Google hot-swaps a "-latest" target with two weeks'
+#   email notice (https://ai.google.dev/gemini-api/docs/changelog); update this
+#   map when the release notes announce a switch. gemini-flash-lite-latest has
+#   no published target and stays unpriced.
+PRICE_ALIASES: dict[str, str] = {
+    "google/gemini-3.1-pro-preview-customtools": "google/gemini-3.1-pro-preview",
+    "google/gemini-pro-latest": "google/gemini-3.1-pro-preview",
+    "google/gemini-flash-latest": "google/gemini-3-flash-preview",
+}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _STANDARD_TEXT_MODEL_RE = re.compile(
     r"^google/gemini-\d+(?:\.\d+)?-(?:pro|flash|flash-lite|argon|carbon)$"
@@ -289,6 +308,13 @@ def fetch() -> ProviderPricingResult:
         model_id: price for model_id, price in result.prices.items()
         if model_id in live_rows and model_id not in SPEECH_MODELS
     }
+    result.prices, applied_aliases = apply_required_model_price_aliases(
+        result.prices,
+        frozenset(model_id for model_id in PRICE_ALIASES if model_id in live_rows),
+        PRICE_ALIASES,
+    )
+    if applied_aliases:
+        result.notes.append("applied approved price aliases: " + ", ".join(applied_aliases))
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))

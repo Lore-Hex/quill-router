@@ -29,6 +29,18 @@ _GEMINI_4_TRANSITIONS = {
     )
 }
 
+# Google's Standard Gemini Robotics ER 2 Preview introduction ends December 31,
+# 2026 (https://ai.google.dev/gemini-api/docs/pricing#gemini-robotics-er-2).
+_GEMINI_ROBOTICS_ER_2_EFFECTIVE_ON = date(2027, 1, 1)
+_GEMINI_ROBOTICS_ER_2_ROUTE = (
+    "google/gemini-robotics-er-2-preview"
+    " [google-ai-studio:google-ai-studio:gemini-robotics-er-2-preview]"
+)
+_GEMINI_ROBOTICS_ER_2_TRANSITIONS = {
+    _GEMINI_ROBOTICS_ER_2_ROUTE: ((1_000_000, 5_000_000), (2_000_000, 10_000_000)),
+    _GEMINI_ROBOTICS_ER_2_ROUTE + " cached-input": ((100_000, 0), (200_000, 0)),
+}
+
 # https://decisionmodels.io/pricing, verified 2026-10-12: existing accounts
 # retain the old Pro rate until November 12. Scope approval to the full pair,
 # both regional identities, and the native alias/version actually tested.
@@ -65,4 +77,7 @@ def approved_dated_price_transition(
     ) or (
         today >= _GEMINI_4_EFFECTIVE_ON
         and (before, after) == _GEMINI_4_TRANSITIONS.get(route)
+    ) or (
+        today >= _GEMINI_ROBOTICS_ER_2_EFFECTIVE_ON
+        and (before, after) == _GEMINI_ROBOTICS_ER_2_TRANSITIONS.get(route)
     )

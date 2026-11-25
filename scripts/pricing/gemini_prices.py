@@ -3,9 +3,14 @@
 import re
 from datetime import UTC, date, datetime, timedelta
 
+# A rate may name the input modalities it covers, "$1.00 (text / image / video /
+# audio) through ...", and Markdoc may end the first line with a "\\" hard break
+# (Gemini Robotics ER 2 Preview uses both).
+_MODALITIES = r"(?:\s*\([^()\n]*\))?"
 _SCHEDULE = re.compile(
-    r"\$(\d+(?:\.\d+)?)\s+through\s+([A-Za-z]+ \d{1,2}, \d{4})\.\s*"
-    r"\$(\d+(?:\.\d+)?)\s+starting\s+([A-Za-z]+ \d{1,2}, \d{4})\.",
+    r"\$(\d+(?:\.\d+)?)" + _MODALITIES + r"\s+through\s+([A-Za-z]+ \d{1,2}, \d{4})\.\s*"
+    r"(?:\\\\\s*)?"
+    r"\$(\d+(?:\.\d+)?)" + _MODALITIES + r"\s+starting\s+([A-Za-z]+ \d{1,2}, \d{4})\.",
     re.IGNORECASE,
 )
 

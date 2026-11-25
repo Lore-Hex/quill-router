@@ -35,6 +35,10 @@ _NAME_TO_OR_ID = {
     "Gemini 2.0 Flash-Lite": "google/gemini-2.0-flash-lite-001",
     "Gemini 1.5 Pro": "google/gemini-1.5-pro",
     "Gemini 1.5 Flash": "google/gemini-1.5-flash",
+    # A generateContent vision-language model with ordinary text-token rows.
+    # Exact headings here win over the media skip list; the streaming variant
+    # ("Gemini Robotics ER 2 Streaming Preview") stays skipped.
+    "Gemini Robotics ER 2 Preview": "google/gemini-robotics-er-2-preview",
 }
 
 _STANDARD_MODEL_HEADING_RE = re.compile(
@@ -72,14 +76,13 @@ def _model_id_from_heading(heading: str) -> str | None:
     """Map stable Gemini pricing headings without a per-release code edit."""
 
     cleaned = re.sub(r'\s*\{%\s*id="[^"]+"\s*%\}\s*$', "", heading).strip()
+    mapped = _NAME_TO_OR_ID.get(cleaned)
+    if mapped is not None:
+        return mapped
     lowered = cleaned.casefold()
     for banned in _SKIP_HEADING_SUBSTRINGS:
         if banned in lowered:
             return None
-
-    mapped = _NAME_TO_OR_ID.get(cleaned)
-    if mapped is not None:
-        return mapped
     match = _STANDARD_MODEL_HEADING_RE.fullmatch(cleaned)
     if match is None:
         return None
