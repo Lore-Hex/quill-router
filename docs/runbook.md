@@ -5,6 +5,7 @@ monitor pages, find the matching section and follow the steps. Every entry
 came from a real incident; the linked commits are the receipts.
 
 Index:
+- [Ship a critical fix to the GCP control plane](design/ci-deploy-latency.md#emergency-gcp-control-plane-release)
 - [Router-core four-nines page fires](#router-core-page)
 - [Drain or disable one gateway region](#region-drain)
 - [Spanner or ClickHouse is degraded](#storage-degraded)

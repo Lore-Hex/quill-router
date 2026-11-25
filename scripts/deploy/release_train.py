@@ -386,11 +386,120 @@ def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False
             "release": asdict(chosen), "ci_run": ci_run, "deploy": deploy}
 
 
+class NeedsIncidentBuild(Refused):
+    pass
+
+
+def incident_build(api: GitHub, commit: str, *, dispatch: dict | None = None) -> tuple[Release, int]:
+    """Only trust an actual production build of current main, never a tag or caller's digest."""
+    require(FULL_SHA.fullmatch(commit) is not None, "invalid incident commit")
+    head = api.json("api", f"repos/{REPO}/git/ref/heads/main")["object"]["sha"]
+    require(head == commit, "main moved; inspect the new head before dispatching again")
+    ci_run = api.ci(commit)
+    listing = api.json("api", f"repos/{REPO}/actions/workflows/deploy.yml/runs"
+                       f"?branch=main&event=push&head_sha={commit}&per_page=2")
+    if listing.get("total_count") == 0 and listing.get("workflow_runs") == []:
+        if dispatch is None:
+            raise NeedsIncidentBuild("No main push image; incident dispatch will build this exact commit.")
+        source = api.run(dispatch["id"])
+        require(source.get("event") == "workflow_dispatch" and source.get("display_title") == f"Emergency main {commit}",
+                "invalid emergency build origin")
+    else:
+        require(listing.get("total_count") == 1 and len(listing.get("workflow_runs", [])) == 1,
+                "expected one normal main push build for this commit")
+        source = api.run(listing["workflow_runs"][0]["id"])
+        require(source.get("event") == "push", "invalid push build origin")
+    require(source.get("head_branch") == "main"
+            and source.get("head_repository", {}).get("full_name") == REPO
+            and source["head_sha"] == commit and source.get("conclusion") in {None, "success"},
+            "source is not an eligible main release")
+    jobs = api.jobs(source["id"])
+    builders = [j for j in jobs if j["name"] == "build-image"]
+    require(len(builders) == 1 and builders[0].get("conclusion") == "success",
+            "image build is not green; no emergency promotion")
+    require(any(s.get("name") == "Build image via Cloud Build" and s.get("conclusion") == "success"
+                for s in builders[0].get("steps", [])), "source job did not actually build its image")
+    require(not any(j.get("conclusion") in {"failure", "cancelled", "timed_out", "action_required"}
+                    for j in jobs), "source release has a failed or interrupted job")
+    release = Release.parse(api.artifact(source, "prepared")["release"])
+    require(release.commit == commit and release.build_run == source["id"]
+            and builders[0].get("run_attempt") == release.build_attempt,
+            "build job and prepared artifact do not match")
+    return release, ci_run
+
+
+def queued_incident(api: GitHub, head: str) -> bool:
+    """Give up *unstarted* routine work only for an eligible incident already in the shared queue."""
+    require(FULL_SHA.fullmatch(head) is not None, "invalid main head")
+    runs = api.json("api", f"repos/{REPO}/actions/workflows/deploy.yml/runs"
+                    f"?branch=main&event=workflow_dispatch&head_sha={head}&per_page=10")["workflow_runs"]
+    for run in runs:
+        if not (run.get("head_sha") == head and run.get("head_branch") == "main"
+                and run.get("event") == "workflow_dispatch" and run.get("display_title") == f"Emergency main {head}"
+                and run.get("status") in {"pending", "queued", "in_progress"}):
+            continue
+        jobs = api.jobs(run["id"])
+        validated = any(j["name"] == "scope" and j.get("conclusion") == "success"
+                        and any(s["name"] == "Validate incident promotion" and s.get("conclusion") == "success"
+                                for s in j.get("steps", [])) for j in jobs)
+        queued = any(j["name"] == "rollout / gate-on-ci" and j.get("status") in {"queued", "pending", "waiting"}
+                     for j in jobs)
+        if validated and queued:
+            incident_build(api, head, dispatch=run)
+            print(f"Verified queued incident: https://github.com/{REPO}/actions/runs/{run['id']}")
+            return True
+    return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "select"))
+    parser.add_argument("command", choices=("prepare", "select", "incident-plan", "incident-preflight",
+                                            "yield-to-incident"))
+    parser.add_argument("--head", default="")
     args = parser.parse_args()
-    if args.command == "prepare":
+    incident = os.environ.get("EMERGENCY_INCIDENT", "")
+    if args.command == "yield-to-incident":
+        # Optional queue priority must never strand an otherwise eligible release on an API error.
+        try:
+            yield_slot = queued_incident(GitHub(time.monotonic() + 25), args.head)
+        except (Refused, KeyError, TypeError, ValueError) as exc:
+            print(f"No verified priority handoff: {exc}", file=sys.stderr)
+            yield_slot = False
+        raise SystemExit(0 if yield_slot else 1)
+    if args.command == "incident-plan":
+        api = GitHub()
+        commit = api.json("api", f"repos/{REPO}/git/ref/heads/main")["object"]["sha"]
+        try:
+            release, ci = incident_build(api, commit)
+        except NeedsIncidentBuild as exc:
+            print(f"{commit}: {exc} No changes made.")
+            return
+        print(f"Eligible: {commit} {release.image} (build {release.build_run}, CI {ci}). No changes made.")
+        return
+    if args.command == "incident-preflight" or (args.command == "select" and incident):
+        require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", incident) is not None
+                and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                and os.environ.get("GITHUB_REF") == "refs/heads/main"
+                and os.environ.get("TR_TRAIN_HOTFIX") != "true", "invalid incident promotion context")
+        api = GitHub()
+        controller = api.run(int(os.environ["GITHUB_RUN_ID"]))
+        require(controller["head_sha"] == os.environ["GITHUB_SHA"] and controller.get("head_branch") == "main"
+                and controller.get("event") == "workflow_dispatch" and not automatic(controller),
+                "incident controller must be a pinned main dispatch")
+        release, ci = incident_build(api, controller["head_sha"], dispatch=controller)
+        source = f"{release.build_run}/{release.build_attempt}"
+        print(f"Incident {incident}: {release.commit}, {release.image}, build {source}, CI {ci}")
+        if args.command == "incident-preflight":
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+                output.write(f"sha={release.tag}\nimage={release.image}\nsource={source}\n")
+            return
+        require((release.tag, release.image, source) == (
+            os.environ["PREPARED_TAG"], os.environ["PREPARED_IMAGE"], os.environ["INCIDENT_SOURCE"],
+        ), "incident build changed during admission")
+        raw = {"schema_version": 1, "controller_commit": controller["head_sha"],
+               "controller_run": controller["id"], "controller_attempt": controller["run_attempt"],
+               "release": asdict(release), "ci_run": ci, "deploy": True, "incident": incident}
+    elif args.command == "prepare":
         release = Release.parse({"commit": os.environ["GITHUB_SHA"], "tag": os.environ["PREPARED_TAG"],
                                  "image": os.environ["PREPARED_IMAGE"], "build_run": int(os.environ["GITHUB_RUN_ID"]),
                                  "build_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])})
@@ -403,13 +512,17 @@ def main() -> None:
         require(base.tag == os.environ["PREPARED_TAG"] and base.image == os.environ["PREPARED_IMAGE"],
                 "prepared workflow inputs differ from their immutable manifest")
         raw = select(api, run, base, hotfix=os.environ.get("TR_TRAIN_HOTFIX") == "true")
+    if args.command == "select":
         release = Release.parse(raw["release"])
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.write(f"commit={release.commit}\nsha={release.tag}\nimage={release.image}\n")
             output.write(f"proceed={str(raw['deploy']).lower()}\n")
-        print(f"release train: controller={run['head_sha']} selected={release.commit} deploy={raw['deploy']}")
+        print(f"release train: controller={raw['controller_commit']} selected={release.commit} deploy={raw['deploy']}")
     Path("release.json").write_text(json.dumps(raw, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Refused as exc:
+        raise SystemExit(f"Release refused: {exc}") from exc
