@@ -21,7 +21,11 @@ def _unexpected_self_heal(**_kwargs: object) -> str:
 def test_siliconflow_discovers_dated_model_and_reuses_family_price(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    native_id = "deepseek-ai/DeepSeek-V4-Flash-0731"
+    # The model library prices DeepSeek-V4-Flash-0731 on its own card, so the
+    # family alias is exercised with a dated snapshot the page does not list.
+    dated_model = "deepseek/deepseek-v4-flash-0423"
+    native_id = "deepseek-ai/DeepSeek-V4-Flash-0423"
+    listed_native_id = "deepseek-ai/DeepSeek-V4-Flash-0731"
     fixture = (_FIXTURE_DIR / "siliconflow.html").read_text(encoding="utf-8")
     monkeypatch.setenv("SILICON_FLOW_API_KEY", "test-key")
     monkeypatch.setattr(siliconflow, "UPSTREAM_ID_MAP", {})
@@ -30,7 +34,7 @@ def test_siliconflow_discovers_dated_model_and_reuses_family_price(
     monkeypatch.setattr(
         siliconflow,
         "fetch_json",
-        lambda *_args, **_kwargs: {"data": [{"id": native_id}]},
+        lambda *_args, **_kwargs: {"data": [{"id": native_id}, {"id": listed_native_id}]},
     )
     configure_runtime_required_models({})
     try:
@@ -39,16 +43,19 @@ def test_siliconflow_discovers_dated_model_and_reuses_family_price(
         configure_runtime_required_models({})
 
     assert result.source == "deterministic"
-    assert result.prices[_DATED_MODEL] == result.prices[_GENERIC_MODEL]
-    assert siliconflow.UPSTREAM_ID_MAP[_DATED_MODEL] == native_id
+    assert result.prices[dated_model] == result.prices[_GENERIC_MODEL]
+    assert siliconflow.UPSTREAM_ID_MAP[dated_model] == native_id
     assert any("approved price aliases" in note for note in result.notes)
+    # A dated snapshot with its own official card keeps that price.
+    assert result.prices[_DATED_MODEL] != result.prices[_GENERIC_MODEL]
+    assert result.prices[_DATED_MODEL].prompt_micro_per_m == 220_000
 
     merged = refresh._merge_snapshot(
         {
             "models": [
                 {
-                    "id": _DATED_MODEL,
-                    "name": "DeepSeek V4 Flash 0731",
+                    "id": dated_model,
+                    "name": "DeepSeek V4 Flash 0423",
                     "created": 1,
                     "context_length": 1_048_576,
                     "architecture": {"output_modalities": ["text"]},
@@ -57,7 +64,7 @@ def test_siliconflow_discovers_dated_model_and_reuses_family_price(
                         {
                             "provider_name": "SiliconFlow",
                             "tr_provider_slug": "siliconflow",
-                            "model_id": _DATED_MODEL,
+                            "model_id": dated_model,
                             "context_length": 1_048_576,
                             "pricing": {
                                 "prompt": "0.00000014",
@@ -69,15 +76,15 @@ def test_siliconflow_discovers_dated_model_and_reuses_family_price(
             ],
             "tr_keyed_providers": ["siliconflow"],
         },
-        {_DATED_MODEL: {"siliconflow": result.prices[_DATED_MODEL]}},
+        {dated_model: {"siliconflow": result.prices[dated_model]}},
         set(),
     )
     model = merged["models"][0]
-    assert model["id"] == _DATED_MODEL
+    assert model["id"] == dated_model
     assert model["endpoints"][0]["model_id"] == native_id
     assert model["endpoints"][0]["pricing"]["prompt"] == (
         refresh._micro_per_m_to_dollars_per_token(
-            result.prices[_DATED_MODEL].prompt_micro_per_m
+            result.prices[dated_model].prompt_micro_per_m
         )
     )
 

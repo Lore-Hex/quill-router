@@ -1,7 +1,10 @@
 """SiliconFlow — human-only provider config.
 
-SiliconFlow's pricing page is a Framer site whose server-rendered model cards
-contain the authoritative prices. The parser reads those cards directly.
+SiliconFlow's model library (https://www.siliconflow.com/models) is a Framer
+site whose server-rendered CMS cards carry the authoritative serverless prices
+for every model. The /pricing page shows only a curated subset of those cards:
+reading it alone left every live chat model it omits unpriced
+("awaiting-price") from the day discovery first listed them, 2026-08-13.
 
 OpenAI-compatible chat completions at api.siliconflow.com/v1.
 """
@@ -21,7 +24,7 @@ from scripts.pricing.model_ids import (
 )
 
 SLUG = "siliconflow"
-URL = "https://www.siliconflow.com/pricing"
+URL = "https://www.siliconflow.com/models"
 MODELS_URL = "https://api.siliconflow.com/v1/models"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]

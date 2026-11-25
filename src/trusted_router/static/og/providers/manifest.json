@@ -847,10 +847,10 @@
   },
   "siliconflow": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 58,
     "name": "SiliconFlow",
     "privacy": "Policy documented",
-    "route_count": 51,
+    "route_count": 115,
     "route_mode": "Prepaid + BYOK",
     "slug": "siliconflow"
   },
