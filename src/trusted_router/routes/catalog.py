@@ -179,6 +179,14 @@ def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
             continue
+        if isinstance(trustedrouter, dict) and not (
+            trustedrouter.get("prepaid_available") or trustedrouter.get("byok_available")
+        ):
+            # No route can serve it (no prepaid and no BYOK route; pools and
+            # named decision models answer these flags from what authorize can
+            # serve), so every request for it is a 400. Listing it made
+            # catalog readers offer a model that cannot run.
+            continue
         if isinstance(trustedrouter, dict):
             trustedrouter["last_route_change_at"] = last_changes.get(model.id)
         shapes.append(shape)

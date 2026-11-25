@@ -52,7 +52,8 @@ def test_qwen_public_listing_survives_until_its_target_exists(monkeypatch, targe
         models[canonical] = Model(canonical, canonical, "featherless", 1000)
     monkeypatch.setattr(catalog, "MODELS", models)
     monkeypatch.setattr(catalog, "model_to_openrouter_shape", lambda model: {
-        "id": model.id, "pricing": {"prompt": "0", "completion": "0"}, "trustedrouter": {},
+        "id": model.id, "pricing": {"prompt": "0", "completion": "0"},
+        "trustedrouter": {"prepaid_available": True},
     })
     rows = catalog._public_catalog_payload.__wrapped__((0, "target-presence-regression")).shapes
     assert [row["id"] for row in rows] == [canonical if target_present else native]

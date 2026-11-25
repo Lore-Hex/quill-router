@@ -47,6 +47,10 @@ def _rebuilt_pre_projection_body() -> bytes:
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
             continue
+        if isinstance(trustedrouter, dict) and not (
+            trustedrouter.get("prepaid_available") or trustedrouter.get("byok_available")
+        ):
+            continue
         if isinstance(trustedrouter, dict):
             trustedrouter["last_route_change_at"] = last_changes.get(model.id)
         rows.append(shape)
