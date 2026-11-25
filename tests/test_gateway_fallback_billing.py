@@ -486,11 +486,12 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Every liberty alias offers each Credits host the catalog serves Nemotron
-    # on, whichever those are today; Baseten serves it here on a fixture route.
+    # on, whichever those are today; Fireworks serves it here on a fixture route
+    # (Baseten retires it on 2026-12-24).
     nemotron = "nvidia/nemotron-3-ultra-550b-a55b"
     serve_on_fixture_route(
-        monkeypatch, nemotron, "baseten", author="baseten", context_length=262_144,
-        upstream_id="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+        monkeypatch, nemotron, "fireworks", author="nvidia", context_length=262_144,
+        upstream_id="accounts/fireworks/models/nemotron-3-ultra-nvfp4",
     )
     client, key = _client_and_key()
 
@@ -523,7 +524,7 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts(
             for endpoint in endpoints_for_model(nemotron)
             if endpoint.usage_type == "Credits"
         }
-        assert "baseten" in expected_hosts
+        assert "fireworks" in expected_hosts
         assert expected_hosts <= nemotron_hosts, (model_id, routes)
         assert "gmi" not in nemotron_hosts, (model_id, routes)
 
@@ -536,8 +537,8 @@ def _serve_nemotron_for_parasail_liberty(monkeypatch: pytest.MonkeyPatch) -> Non
     nemotron = "nvidia/nemotron-3-ultra-550b-a55b"
     drop_routes(monkeypatch, nemotron)
     serve_on_fixture_route(
-        monkeypatch, nemotron, "baseten", author="baseten", context_length=262_144,
-        upstream_id="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+        monkeypatch, nemotron, "fireworks", author="nvidia", context_length=262_144,
+        upstream_id="accounts/fireworks/models/nemotron-3-ultra-nvfp4",
     )
 
 

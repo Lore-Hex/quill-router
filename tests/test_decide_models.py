@@ -47,6 +47,7 @@ from trusted_router.catalog_privacy import endpoint_stores_content, endpoint_zer
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import (
+    BASETEN_DECEMBER_2026_RETIREMENT_AT,
     FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
     provider_model_retired,
 )
@@ -55,6 +56,12 @@ from trusted_router.storage import STORE, InMemoryStore
 
 JEV = "typesafe-ai/jev"
 NAMED_IDS = [named.id for named in NAMED_DECISION_MODELS]
+# Baseten's 2026-12-24 01:00 UTC retirement removes Zev's last reviewed host
+# (GLM 5.2 Fast; Fireworks' route retired in September). Retirements also apply
+# to fixture routes, so from then on Zev has no chain host to route rules over;
+# test_zev_has_no_host_after_the_baseten_december_cutoff pins that refusal.
+ZEV_RETIRED = not catalog_predates(BASETEN_DECEMBER_2026_RETIREMENT_AT)
+ROUTABLE_NAMED_IDS = [model_id for model_id in NAMED_IDS if not (ZEV_RETIRED and model_id == ZEV_1_0_MODEL_ID)]
 AUTHORIZE = "/v1/internal/gateway/authorize"
 
 
@@ -539,7 +546,7 @@ async def _named_candidates(model_id: str, provider: dict[str, Any] | None) -> l
     ("model_id", "host"),
     [
         (TREV_1_0_MODEL_ID, "cerebras"),
-        (ZEV_1_0_MODEL_ID, "baseten"),
+        *([] if ZEV_RETIRED else [(ZEV_1_0_MODEL_ID, "baseten")]),
         ("trustedrouter/lev-1.0", "parasail"),
     ],
 )
@@ -687,7 +694,7 @@ async def _assert_the_outsider_is_routable(model_id: str, outsider: str) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", ROUTABLE_NAMED_IDS)
 async def test_a_named_model_authorizes_on_its_chain_in_order(
     model_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -739,7 +746,45 @@ async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", [ZEV_1_0_MODEL_ID, "z-ai/glm-5.2-fast"])
+async def test_zev_has_no_host_after_the_baseten_december_cutoff(
+    model_id: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import timedelta
+
+    from trusted_router import provider_lifecycle
+
+    backing = _serve_on_fixture_routes(
+        monkeypatch,
+        ZEV_1_0_MODEL_ID,
+        hosts=("baseten",),
+        upstream_ids={"baseten": "zai-org/GLM-5.2-Fast"},
+    )
+    cutoff = BASETEN_DECEMBER_2026_RETIREMENT_AT
+    request = {
+        "model": model_id, "route_type": "decide",
+        "estimated_input_tokens": 480, "max_output_tokens": 700,
+        "provider": {"only": ["fireworks", "baseten"], "order": ["fireworks", "baseten"],
+                     "allow_fallbacks": True},
+    }
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff - timedelta(microseconds=1))
+    response = await _authorize(request)
+    assert response.status_code == 200, response.text
+    payload = response.json().get("data", response.json())
+    assert payload["model"] == backing
+    assert payload["provider"] == "baseten"
+
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
+    response = await _authorize(request)
+    assert response.status_code >= 400, response.text
+    assert "baseten" not in {
+        candidate.get("provider") for candidate in response.json().get("data", {}).get("route_candidates", [])
+    }
+    _assert_no_financial_side_effects()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", ROUTABLE_NAMED_IDS)
 @pytest.mark.parametrize("preference", ["none", "price", "outsider first"])
 async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
     model_id: str, preference: str, monkeypatch: pytest.MonkeyPatch
@@ -762,7 +807,7 @@ async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", ROUTABLE_NAMED_IDS)
 async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
     model_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1075,7 +1120,7 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", ROUTABLE_NAMED_IDS)
 async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
