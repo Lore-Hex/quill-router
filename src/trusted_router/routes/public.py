@@ -1323,6 +1323,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def legacy_api_reference() -> RedirectResponse:
         return RedirectResponse(url="/api/reference", status_code=301)
 
+    for base in (
+        "/api/docs",
+        "/docs/api",
+        "/docs/api-reference",
+        "/api-docs",
+        "/api-reference",
+        "/reference",
+        "/swagger",
+        "/docs/reference",
+    ):
+        for path in (base, base + "/"):
+            app.api_route(path, methods=["GET", "HEAD"], include_in_schema=False)(
+                legacy_api_reference
+            )
+
+    def legacy_openapi_spec() -> RedirectResponse:
+        return RedirectResponse(url="/openapi.json", status_code=301)
+
+    for base in ("/docs/openapi", "/openapi.yaml"):
+        for path in (base, base + "/"):
+            app.api_route(path, methods=["GET", "HEAD"], include_in_schema=False)(
+                legacy_openapi_spec
+            )
+
     @public_html_route("/", include_slash=False)
     async def dashboard(request: Request, background_tasks: BackgroundTasks) -> Any:
         hostname = request_hostname(request)

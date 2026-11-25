@@ -92,6 +92,16 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
                           ("/docs/opencode-deepseek", "opencode_deepseek_docs"),
                           ("/docs/cut-llm-api-costs", "cut_llm_api_costs_docs"),
                           ("/llm-gateway-pricing", "llm_gateway_pricing"),
+                          ("/api/docs", "legacy_api_reference"),
+                          ("/docs/api", "legacy_api_reference"),
+                          ("/docs/api-reference", "legacy_api_reference"),
+                          ("/api-docs", "legacy_api_reference"),
+                          ("/api-reference", "legacy_api_reference"),
+                          ("/reference", "legacy_api_reference"),
+                          ("/swagger", "legacy_api_reference"),
+                          ("/docs/reference", "legacy_api_reference"),
+                          ("/docs/openapi", "legacy_openapi_spec"),
+                          ("/openapi.yaml", "legacy_openapi_spec"),
                           ("/docs/migrate-from-openai", "migrate_from_openai")):
         for path in (base, base + "/"):
             docs_route = [path, ["GET", "HEAD"],
