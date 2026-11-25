@@ -29,6 +29,15 @@ LEASE_HEADROOM_METRIC_NAME="trustedrouter_gateway_lease_headroom_503"
 REBALANCE_BUSY_METRIC_NAME="trustedrouter_gateway_rebalance_busy_503"
 STRICT_BUDGET_BUSY_METRIC_NAME="trustedrouter_gateway_strict_budget_busy_503"
 HEADROOM_RACED_METRIC_NAME="trustedrouter_gateway_headroom_raced_503"
+# The counters "TR Gateway: settle 503 not marked retryable"
+# (gateway-alerts/billing-settle-503.yaml) compares, as the authorize pair
+# above: every settle and refund 503 against the snapshot settle's
+# async_settle.unavailable line, which marks its designed, retryable 503s
+# (finish_unconfirmed, transient_store_error, ...) for settle and refund
+# alike. The second is also the rate
+# gateway-alerts/billing-settle-unavailable.yaml bounds.
+SETTLE_503_METRIC_NAME="trustedrouter_gateway_settle_503"
+SETTLE_UNAVAILABLE_METRIC_NAME="trustedrouter_gateway_settle_unavailable_503"
 # Applied first, before the policy below stops counting rebalance-busy,
 # strict-budget-busy and headroom-raced 503s as unmarked: from then on these
 # three alone page on them, each on more than two in ten minutes or more
@@ -39,6 +48,11 @@ HEADROOM_RACED_POLICY="billing-headroom-raced.yaml"
 # Applied before every remaining policy: billing-5xx.yaml sets authorize 503s
 # aside for it, so it must page before that filter narrows.
 AUTHORIZE_503_POLICY="billing-authorize-503.yaml"
+# Likewise for settle 503s: the rate policy that bounds the marked ones, then
+# the policy that pages on every unmarked one, both before billing-5xx.yaml
+# sets settle 503s aside.
+SETTLE_UNAVAILABLE_POLICY="billing-settle-unavailable.yaml"
+SETTLE_503_POLICY="billing-settle-503.yaml"
 # The counters this run created. Cloud Monitoring can refuse a policy whose
 # query names a log-based counter created seconds before ("metric invalid"):
 # the counter is not yet known to it. A refused policy that reads one is
@@ -138,6 +152,22 @@ ensure_authorize_503_metrics() {
     'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND textPayload:"INFO trusted_router.routes.internal.gateway billing.credit_headroom_raced "'
 }
 
+# Required, as the authorize counters are: without them billing-5xx.yaml,
+# which sets settle 503s aside, would leave every settle 503 paging nowhere.
+ensure_settle_503_metrics() {
+  ensure_log_metric "$SETTLE_503_METRIC_NAME" \
+    "Every TrustedRouter internal gateway settle and refund 503 in Cloud Run's request log, marked by the app or not." \
+    'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND httpRequest.status = 503 AND httpRequest.requestUrl =~ "/internal/gateway/(settle|refund)([?].*)?$"'
+  # The app's line for each designed, retryable settle or refund 503
+  # (services/async_settle_handler.py, unavailable), as Cloud Run keeps it:
+  # textPayload "WARNING <logger> async_settle.unavailable reason=...". The
+  # INFO "metric=async_settle_unavailable" line written beside it does not
+  # contain this text.
+  ensure_log_metric "$SETTLE_UNAVAILABLE_METRIC_NAME" \
+    "Settle and refund 503s the snapshot settle answers by design with Retry-After: the app's async_settle.unavailable line." \
+    'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND textPayload:"WARNING trusted_router.services.async_settle_handler async_settle.unavailable reason="'
+}
+
 ensure_channel() {
   local channel
   channel="$(source_gc beta monitoring channels list \
@@ -222,11 +252,14 @@ ensure_policies() {
     "${SCRIPT_DIR}/gateway-alerts/${STRICT_BUDGET_BUSY_POLICY}"
     "${SCRIPT_DIR}/gateway-alerts/${HEADROOM_RACED_POLICY}"
     "${SCRIPT_DIR}/gateway-alerts/${AUTHORIZE_503_POLICY}"
+    "${SCRIPT_DIR}/gateway-alerts/${SETTLE_UNAVAILABLE_POLICY}"
+    "${SCRIPT_DIR}/gateway-alerts/${SETTLE_503_POLICY}"
   )
 
   for policy_file in "${SCRIPT_DIR}"/gateway-alerts/*.yaml; do
     case "$(basename "$policy_file")" in
-      "$REBALANCE_BUSY_POLICY" | "$STRICT_BUDGET_BUSY_POLICY" | "$HEADROOM_RACED_POLICY" | "$AUTHORIZE_503_POLICY") ;;
+      "$REBALANCE_BUSY_POLICY" | "$STRICT_BUDGET_BUSY_POLICY" | "$HEADROOM_RACED_POLICY" | "$AUTHORIZE_503_POLICY" \
+        | "$SETTLE_UNAVAILABLE_POLICY" | "$SETTLE_503_POLICY") ;;
       *) policy_files+=("$policy_file") ;;
     esac
   done
@@ -238,6 +271,7 @@ ensure_policies() {
 }
 
 ensure_authorize_503_metrics
+ensure_settle_503_metrics
 if ! ensure_slow_metric; then
   # Log-metric administration is a separate IAM capability from alert-policy
   # administration. Do not let that optional metric block urgent policy fixes.
