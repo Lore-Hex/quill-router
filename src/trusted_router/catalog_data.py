@@ -2850,8 +2850,12 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
     NamedDecisionModel(
         MEV_1_0_MODEL_ID, "TrustedRouter Mev 1.0", "inception/mercury-3", ("inception",)
     ),
+    # GLM 5.3 Fast since 2026-11-25: Baseten, GLM 5.2 Fast's last host, retires
+    # it on 2026-12-24 01:00 UTC and names GLM 5.3 Fast as the successor.
+    # Fireworks and Baseten both serve 5.3 Fast at 5.2 Fast's list price, with
+    # the same 1M window, tools and reasoning, so the name and chain stay.
     NamedDecisionModel(
-        ZEV_1_0_MODEL_ID, "TrustedRouter Zev 1.0", "z-ai/glm-5.2-fast", ("fireworks", "baseten")
+        ZEV_1_0_MODEL_ID, "TrustedRouter Zev 1.0", "z-ai/glm-5.3-fast", ("fireworks", "baseten")
     ),
     NamedDecisionModel(
         LEV_1_0_MODEL_ID,
@@ -3560,7 +3564,7 @@ SOCRATES_CATALOG_MODEL_ORDER = (
 SOCRATES_1_1_WORKER_MODEL_ORDER = (
     "xiaomi/mimo-v2.5-pro-ultraspeed",
     "minimax/minimax-m3",
-    "z-ai/glm-5.2-fast",
+    "z-ai/glm-5.3-fast",
     "deepseek/deepseek-v4-flash",
 )
 
@@ -3572,7 +3576,7 @@ SOCRATES_1_1_CATALOG_MODEL_ORDER = (
 SOCRATES_2_0_WORKER_MODEL_ORDER = (
     "xiaomi/mimo-v2.5-pro-ultraspeed",
     "minimax/minimax-m3",
-    "z-ai/glm-5.2-fast",
+    "z-ai/glm-5.3-fast",
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
@@ -3627,17 +3631,17 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         *SYNTH_FRONTIER_1_MODEL_ORDER,
     ),
     ARISTOTLE_1_1_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         ZEUS_1_0_MODEL_ID,
     ),
     ARISTOTLE_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         ZEUS_2_0_MODEL_ID,
     ),
     ARISTOTLE_2_0_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         ZEUS_2_0_MODEL_ID,
     ),
@@ -3681,11 +3685,11 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         PROMETHEUS_1_0_MODEL_ID,
     ),
     OPEN_PATCHER_FAST1_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         OPEN_PATCHER_A1_MODEL_ID,
     ),
     OPEN_PATCHER_G1_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
         PROMETHEUS_1_0_1M_MODEL_ID,
@@ -3701,21 +3705,21 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         PROMETHEUS_3_0_MODEL_ID,
     ),
     ATHENA_1_0_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         ZEUS_1_0_MINI_MODEL_ID,
         "moonshotai/kimi-k2.7-code",
         "moonshotai/kimi-k2.6",
     ),
     ATHENA_2_0_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         ZEUS_2_0_MODEL_ID,
         "moonshotai/kimi-k2.7-code",
         "moonshotai/kimi-k2.6",
     ),
     ATHENA_MODEL_ID: (
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         ZEUS_2_0_MODEL_ID,
         "moonshotai/kimi-k2.7-code",
@@ -3803,7 +3807,7 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
     # The chat models behind the names stay callable under their own ids, tuned
     # the same way: a name is a convenience, not a gate.
     "inception/mercury-3",
-    "z-ai/glm-5.2-fast",
+    "z-ai/glm-5.3-fast",
     "meta-llama/llama-3.3-70b-instruct",
     "google/gemini-3.1-flash-lite",
     "openai/gpt-oss-20b",
@@ -3822,7 +3826,7 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
 NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     **{named.id: named.chain[0] for named in NAMED_DECISION_MODELS},
     "inception/mercury-3": "inception",
-    "z-ai/glm-5.2-fast": "fireworks",
+    "z-ai/glm-5.3-fast": "fireworks",
     "meta-llama/llama-3.3-70b-instruct": "sambanova",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",

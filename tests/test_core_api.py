@@ -1044,12 +1044,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert models_by_id["trustedrouter/aristotle"]["context_length"] == 1_048_576
     assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-2.0"
     assert aristotle_11_meta["auto_candidates"] == _carried(
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         "trustedrouter/zeus-1.0",
     )
     assert aristotle_meta["auto_candidates"] == _carried(
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         "trustedrouter/zeus-2.0",
     )
@@ -1057,7 +1057,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert socrates_pro_plus_meta["auto_candidates"] == _carried(
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "minimax/minimax-m3",
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "deepseek/deepseek-v4-flash",
         "trustedrouter/zeus-1.0",
     )
@@ -1068,7 +1068,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     openpatcher_g1_meta = models_by_id["trustedrouter/openpatcher-g1"]["trustedrouter"]
     assert openpatcher_g1_meta["route_kind"] == "advisor_orchestration"
     assert openpatcher_g1_meta["auto_candidates"] == _carried(
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
         "trustedrouter/prometheus-1.0-1m",
