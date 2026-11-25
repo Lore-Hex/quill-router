@@ -5519,7 +5519,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:shared_client_sessions:1": {
-      "fingerprint": "29955b157990eacd1dffc41528ebbe55a13a5ee120f981a9419407055a29b4f4",
+      "fingerprint": "8e91bbc69c32d225385c205ec0842a7c5c9f02daf9c34680fd10dcc749696996",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     }
   }

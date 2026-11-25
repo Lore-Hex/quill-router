@@ -582,44 +582,29 @@ FORMAT JSON
         """
         return self._query(
             """
-WITH
-sessions AS (
-  SELECT
-    session_id,
-    arraySort(groupUniqArray(64)(workspace_id)) AS workspace_ids,
-    uniqExact(workspace_id) AS workspaces,
-    topK(1)(app)[1] AS app,
-    min(created_at) AS first_seen,
-    max(created_at) AS last_seen
-  FROM activity_generations FINAL
-  WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
-    AND session_id IS NOT NULL AND session_id != ''
-    AND workspace_id != ''
-  GROUP BY session_id
-  HAVING workspaces >= {min_workspaces:UInt32}
-  ORDER BY last_seen DESC
-  LIMIT {limit:UInt32}
-),
-spend AS (
-  SELECT workspace_id, sum(total_cost_microdollars) AS microdollars
+SELECT
+  session_id,
+  arraySort(groupUniqArray(64)(workspace_id)) AS workspace_ids,
+  uniqExact(workspace_id) AS workspaces,
+  topK(1)(app)[1] AS app,
+  min(created_at) AS first_seen,
+  max(created_at) AS last_seen,
+  max(spend.ws_spend) AS max_workspace_microdollars
+FROM activity_generations FINAL
+LEFT JOIN
+(
+  SELECT workspace_id, sum(total_cost_microdollars) AS ws_spend
   FROM activity_generations FINAL
   WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
     AND usage_type = 'Credits'
-    AND workspace_id IN (SELECT arrayJoin(workspace_ids) FROM sessions)
+    AND workspace_id != ''
   GROUP BY workspace_id
-)
-SELECT
-  s.session_id AS session_id,
-  any(s.workspace_ids) AS workspace_ids,
-  any(s.workspaces) AS workspaces,
-  any(s.app) AS app,
-  any(s.first_seen) AS first_seen,
-  any(s.last_seen) AS last_seen,
-  max(sp.microdollars) AS max_workspace_microdollars
-FROM sessions AS s
-ARRAY JOIN s.workspace_ids AS member
-LEFT JOIN spend AS sp ON sp.workspace_id = member
-GROUP BY s.session_id
+) AS spend USING (workspace_id)
+WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  AND session_id IS NOT NULL AND session_id != ''
+  AND workspace_id != ''
+GROUP BY session_id
+HAVING workspaces >= {min_workspaces:UInt32}
 ORDER BY last_seen DESC
 LIMIT {limit:UInt32}
 FORMAT JSON
