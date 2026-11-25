@@ -20,12 +20,14 @@ from trusted_router.pricing import PriceTier
 
 CHEAP = "anthropic/claude-haiku-9.1"
 SONNET = "anthropic/claude-sonnet-9.3"
+FABLE = "anthropic/claude-fable-9.4"
+FABLE_VARIANT = "anthropic/claude-fable-9.9-aws"
 OPUS = "anthropic/claude-opus-9.10"
 OLDER = "anthropic/claude-opus-9.2"
 HIDDEN = "anthropic/claude-hidden-fixture"
 OTHER = "example/non-messages-fixture"
 PRICES = {CHEAP: (1055000, 5275000), SONNET: (2110000, 10550000), OPUS: (4220000, 21100000),
-          OLDER: (5275000, 26375000)}
+          OLDER: (5275000, 26375000), FABLE: (8440000, 42200000), FABLE_VARIANT: (9000000, 45000000)}
 PATH = "/docs/claude-code"
 
 
@@ -116,8 +118,11 @@ def test_model_aliases_are_pinned_to_listed_ids(client: TestClient, monkeypatch:
     assert soup.select_one('pre[data-example="pins"]').get_text() == (
         f'export ANTHROPIC_DEFAULT_OPUS_MODEL="{OPUS}"\n'
         f'export ANTHROPIC_DEFAULT_SONNET_MODEL="{SONNET}"\n'
-        f'export ANTHROPIC_DEFAULT_HAIKU_MODEL="{CHEAP}"'
+        f'export ANTHROPIC_DEFAULT_HAIKU_MODEL="{CHEAP}"\n'
+        # A suffixed variant is never the pin, even with a higher number.
+        f'export ANTHROPIC_DEFAULT_FABLE_MODEL="{FABLE}"'
     )
+    assert "keep the pins" in soup.select_one("#setup").get_text(" ", strip=True)
     setup = soup.select_one("#setup").get_text(" ", strip=True)
     assert "carry the anthropic/ prefix" in setup and "are not accepted" in setup
     assert "ANTHROPIC_MODEL" in setup and "claude --model" in setup
@@ -203,6 +208,9 @@ def test_copy_and_links(client: TestClient) -> None:
     assert "budget_strict: true" in limits and "budget_alert_only: false" in limits
     assert "cache_control" in limits and "/v1/messages" in limits
     assert f'href="{PATH}"' in client.get("/docs").text
+    setup_page = BeautifulSoup(client.get("/docs/agent-setup").text, "html.parser")
+    note = next(p for p in setup_page.select("p") if "models pinned" in p.get_text())
+    assert "anthropic/" in note.get_text() and note.select_one(f'a[href="{PATH}"]')
     for path in ("/docs/agent-setup", "/pricing", "/docs/opencode", "/docs/cut-llm-api-costs"):
         other = BeautifulSoup(client.get(path).text, "html.parser")
         for footer in other.select("footer"):
@@ -218,4 +226,9 @@ def test_copy_and_links(client: TestClient) -> None:
     assert all("ANTHROPIC_" in answer for answer in answers)
     assert "ANTHROPIC_BASE_URL=https://api.trustedrouter.com without /v1" in answers[1]
     assert all("anthropic/ prefix" in answer and "ANTHROPIC_MODEL" in answer for answer in answers[:2])
+    assert all(variable in answers[0] for _, variable in guides.CLAUDE_CODE_ALIAS_VARIABLES)
+    assert [variable for _, variable in guides.CLAUDE_CODE_ALIAS_VARIABLES] == [
+        "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    ]
     assert not any("trustedrouter.com/v1" in answer for answer in answers)
