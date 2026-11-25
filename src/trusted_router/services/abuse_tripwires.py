@@ -8,8 +8,15 @@ that fired, so an operator can review it and latch with
 Primary signals (each one alone raises an alert):
 
 * ``shared_session``: one client ``session_id`` seen in two or more distinct
-  workspaces within ``SHARED_SESSION_WINDOW``. An operator hopping between
-  freshly funded accounts carries the same conversation along.
+  workspaces within ``SHARED_SESSION_WINDOW``, at least one of them funded
+  (a top-up on record, or over ``FUNDED_MIN_WORKSPACE_SPEND`` of Credits spend
+  in the window). An operator hopping between freshly funded accounts carries
+  the same conversation along.
+* ``starter_credit_farm``: the same shared session where no workspace is
+  funded. One client conversation walks through fresh accounts one after
+  another, spending each signup credit and moving on. A different abuse with
+  a different remedy (the signup gate), so it is its own Sentry issue and
+  never dilutes the payment-ring one.
 * ``single_model_concentration``: at least ``CONCENTRATION_MIN_SHARE`` of a
   workspace's Credits spend on one model, over ``CONCENTRATION_MIN_SPEND``,
   within ``CONCENTRATION_WINDOW`` of its first top-up. ``models_used_1`` is
@@ -28,6 +35,10 @@ Context signals (reported with a finding, never alerting on their own):
 One sweep runs per hour across every replica, piggybacking on the synthetic
 monitor tick. Each finding alerts once: per shared session (re-alerting when
 another workspace joins it) and per concentrated workspace.
+
+Sentry groups by signal type, not by session or workspace: every finding of
+one type is an event in that type's single issue (``ALERT_FINGERPRINTS``). The
+event message and tags carry the workspace ids, session digest and signals.
 """
 
 from __future__ import annotations
@@ -46,6 +57,10 @@ log = logging.getLogger(__name__)
 
 SHARED_SESSION_WINDOW = dt.timedelta(days=7)
 SHARED_SESSION_MIN_WORKSPACES = 2
+# A workspace that spent more than this in the window paid for it: the
+# signup credit is 0.30 USD, and starter-credit farms spend at most that per
+# account before moving on.
+FUNDED_MIN_WORKSPACE_SPEND_MICRODOLLARS = 1_000_000  # 1 USD
 CONCENTRATION_WINDOW = dt.timedelta(days=7)
 CONCENTRATION_MIN_SHARE_BASIS_POINTS = 9_500  # 95 %
 CONCENTRATION_MIN_SPEND_MICRODOLLARS = 5_000_000  # 5 USD
@@ -56,6 +71,18 @@ MAX_ALERTS_PER_SWEEP = 25
 
 SWEEP_CLAIM_SOURCE = "abuse-tripwire-sweep"
 ALERT_CLAIM_SOURCE = "abuse-tripwire-alert"
+
+# One Sentry issue per signal type. Findings are distinct events inside it.
+ALERT_FINGERPRINTS: dict[str, list[str]] = {
+    signal: ["abuse-tripwire", signal]
+    for signal in (
+        "shared_session",
+        "starter_credit_farm",
+        "single_model_concentration",
+        "new_github_account",
+        "deferred",
+    )
+}
 
 
 class TripwireReader(Protocol):
@@ -78,6 +105,10 @@ class WorkspaceContext:
     billing_paused: bool = False
     new_github_account: bool = False
     paypal_payer_mismatch: bool | None = None
+
+    @property
+    def funded(self) -> bool:
+        return self.first_topup_at is not None
 
     def context_signals(self, now: dt.datetime) -> list[str]:
         signals: list[str] = []
@@ -186,6 +217,8 @@ def evaluate_shared_sessions(
         if all(item.billing_paused for item in contexts):
             continue  # already latched: nothing left for an operator to do
         digest = _session_digest(session_id)
+        signal = "shared_session" if _session_funded(row, contexts) else "starter_credit_farm"
+        app = _app(row.get("app"))
         described = " ".join(
             _describe(
                 item,
@@ -199,16 +232,40 @@ def evaluate_shared_sessions(
                 # A workspace joining the session later is new, latchable news.
                 claim_key=f"session:{digest}:{len(workspace_ids)}",
                 message=(
-                    "abuse.tripwire shared_session "
-                    f"session={digest} workspaces={len(workspace_ids)} app={_app(row.get('app'))} "
-                    f"signals=shared_session ws={described}"
+                    f"abuse.tripwire {signal} "
+                    f"session={digest} workspaces={len(workspace_ids)} app={app} "
+                    f"signals={signal} ws={described}"
                 ),
-                fingerprint=["abuse-tripwire", "shared-session", digest],
-                tags={"tr_component": "abuse_tripwire", "abuse_signal": "shared_session"},
+                fingerprint=ALERT_FINGERPRINTS[signal],
+                tags={
+                    "tr_component": "abuse_tripwire",
+                    "abuse_signal": signal,
+                    "abuse_session": digest,
+                    "abuse_workspaces": str(len(workspace_ids)),
+                    "abuse_app": app,
+                },
                 workspace_ids=tuple(workspace_ids),
             )
         )
     return findings
+
+
+def _session_funded(row: Mapping[str, Any], contexts: Iterable[WorkspaceContext]) -> bool:
+    """Whether any workspace in the session paid: a top-up on record, or more
+    Credits spend in the window than signup credit covers.
+
+    A row without the spend column counts as funded, so a reader that cannot
+    say keeps the payment-ring alert rather than hiding it.
+    """
+    if any(item.funded for item in contexts):
+        return True
+    spend = row.get("max_workspace_microdollars")
+    if spend is None:
+        return True
+    try:
+        return int(spend) > FUNDED_MIN_WORKSPACE_SPEND_MICRODOLLARS
+    except (TypeError, ValueError):
+        return True
 
 
 def evaluate_concentration(
@@ -253,7 +310,7 @@ def evaluate_concentration(
                     f"top_model={row.get('top_model') or 'unknown'} app={_app(row.get('app'))} "
                     f"days_since_first_topup={(now - anchor).total_seconds() / 86_400:.1f}"
                 ),
-                fingerprint=["abuse-tripwire", "concentration", workspace_id],
+                fingerprint=ALERT_FINGERPRINTS["single_model_concentration"],
                 tags={
                     "tr_component": "abuse_tripwire",
                     "abuse_signal": "single_model_concentration",
@@ -298,10 +355,11 @@ def run_tripwire_sweep(
     shared = {str(w) for row in session_rows for w in row.get("workspace_ids") or [] if w}
     concentration = evaluate_concentration(concentration_rows, context=context, shared=shared, now=current)
     concentrated = {finding.workspace_ids[0] for finding in concentration}
-    findings = [
-        *evaluate_shared_sessions(session_rows, context=context, concentrated=concentrated, now=current),
-        *concentration,
-    ]
+    sessions = evaluate_shared_sessions(session_rows, context=context, concentrated=concentrated, now=current)
+    rings = [finding for finding in sessions if finding.tags["abuse_signal"] == "shared_session"]
+    farms = [finding for finding in sessions if finding.tags["abuse_signal"] != "shared_session"]
+    # Payment-ring findings first, so farms never take the per-sweep cap from them.
+    findings = [*rings, *concentration, *farms]
     send = emit or _emit
     emitted: list[Finding] = []
     deferred = 0
@@ -317,7 +375,7 @@ def run_tripwire_sweep(
     if deferred:
         ops_alert(
             f"abuse.tripwire deferred={deferred} findings past the per-sweep cap; next sweep continues",
-            fingerprint=["abuse-tripwire", "deferred"],
+            fingerprint=ALERT_FINGERPRINTS["deferred"],
             tags={"tr_component": "abuse_tripwire"},
         )
     log.info(
@@ -333,7 +391,9 @@ def run_tripwire_sweep(
 
 
 def _emit(finding: Finding) -> bool:
-    ops_alert(finding.message, fingerprint=finding.fingerprint, tags=finding.tags)
+    # claim_detail keeps findings that share a type fingerprint distinct inside
+    # any alerts_once scope; the store claim above already dedupes each one.
+    ops_alert(finding.message, fingerprint=finding.fingerprint, tags=finding.tags, claim_detail=finding.claim_key)
     # Claimed either way: a Sentry outage must not re-page every hour.
     return True
 
@@ -390,6 +450,7 @@ def alert_new_github_signup(
     return ops_alert(
         "abuse.signal new_github_account "
         f"workspace={workspace_id} signals=new_github_account github_age_minutes={age_minutes}",
-        fingerprint=["abuse-signal", "new-github-account"],
-        tags={"tr_component": "abuse_tripwire", "abuse_signal": "new_github_account"},
+        fingerprint=ALERT_FINGERPRINTS["new_github_account"],
+        tags={"tr_component": "abuse_tripwire", "abuse_signal": "new_github_account", "workspace_id": workspace_id},
+        claim_detail=workspace_id,
     )
