@@ -54,3 +54,13 @@ jobs:
             --secret=trustedrouter-synthetic-monitor-api-key \
             --project=quill-cloud-proxy)" \
             python3 scripts/prod_embeddings_probe.py
+      - name: Probe rerank on GCP
+        # Runs even when an embeddings provider fails, so each result stands alone.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          TR_MONITOR_API_KEY="$(gcloud secrets versions access latest \
+            --secret=trustedrouter-synthetic-monitor-api-key \
+            --project=quill-cloud-proxy)" \
+            python3 scripts/prod_rerank_probe.py
