@@ -7383,13 +7383,13 @@ class SpannerStore(OperationalAnalyticsReads):
         # session, or another one does) without a read-write transaction.
         claim = self._read_entity(STARTER_SESSION_KIND, session_key, dict)
         holder = starter_session_holder(claim, workspace_id, now=now, window_seconds=window_seconds)
-        if holder is not None or not starter_session_needs_write(claim, workspace_id):
+        if holder is not None or not starter_session_needs_write(claim, workspace_id, now=now, window_seconds=window_seconds):
             return holder
 
         def txn(transaction: Any) -> str | None:
             current = self._read_entity_tx(transaction, STARTER_SESSION_KIND, session_key, dict)
             found = starter_session_holder(current, workspace_id, now=now, window_seconds=window_seconds)
-            if found is None and starter_session_needs_write(current, workspace_id):
+            if found is None and starter_session_needs_write(current, workspace_id, now=now, window_seconds=window_seconds):
                 self._write_entity_tx(
                     transaction, STARTER_SESSION_KIND, session_key,
                     {"workspace_id": workspace_id, "at": now},

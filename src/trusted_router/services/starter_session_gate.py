@@ -35,9 +35,11 @@ log = logging.getLogger(__name__)
 
 CLAIM_WINDOW = dt.timedelta(days=7)
 NEW_WORKSPACE_AGE = dt.timedelta(days=14)
-#: Credits beyond the starter grant that still count as unfunded (small social
-#: rewards). Any real top-up is larger.
-FUNDED_SLACK_MICRODOLLARS = 1_000_000
+#: Credits beyond the starter grant that still count as unfunded: social
+#: rewards ($0.15 signup plus $0.03 actions). The smallest purchase ($1) must
+#: stay above it so that adding credits always lifts the gate.
+FUNDED_SLACK_MICRODOLLARS = 500_000
+MINIMUM_PURCHASE_MICRODOLLARS = 1_000_000
 
 REFUSAL_MESSAGE = (
     "This conversation already used free starter credit on another account. "
@@ -51,7 +53,11 @@ def session_key(session_id: str) -> str:
 
 
 def _funded(store: Any, workspace_id: str, *, starter_credit_microdollars: int) -> bool:
-    attribution = store.get_acquisition_attribution(workspace_id)
+    try:
+        attribution = store.get_acquisition_attribution(workspace_id)
+    except NotImplementedError:
+        # Postgres keeps no acquisition records; the ledger below still decides.
+        attribution = None
     if attribution is not None and getattr(attribution, "first_purchase_at", None):
         return True
     snapshot_reader = getattr(store, "typed_credit_snapshot", None)

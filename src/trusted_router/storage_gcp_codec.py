@@ -77,9 +77,24 @@ def starter_session_holder(
     return None
 
 
-def starter_session_needs_write(claim: dict[str, Any] | None, workspace_id: str) -> bool:
-    """Whether this workspace's claim must be written (absent, expired or another's)."""
-    return not claim or str(claim.get("workspace_id") or "") != workspace_id
+def starter_session_needs_write(
+    claim: dict[str, Any] | None, workspace_id: str, *, now: int, window_seconds: int,
+) -> bool:
+    """Whether this workspace's claim must be written.
+
+    Absent, another workspace's expired claim, or this workspace's own claim past
+    half the window: the holder renews while it keeps using the session, so an
+    active holder never lapses, at a cost of one write per half window.
+    """
+    if not claim:
+        return True
+    if str(claim.get("workspace_id") or "") != workspace_id:
+        return True
+    try:
+        claimed_at = int(claim.get("at") or 0)
+    except (TypeError, ValueError):
+        claimed_at = 0
+    return now - claimed_at > window_seconds // 2
 
 
 def email_domain(normalized_email: str) -> str:

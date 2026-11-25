@@ -8,6 +8,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
+from trusted_router.config import Settings
+from trusted_router.main import create_app
 from trusted_router.services import starter_session_gate
 from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_models import AcquisitionAttribution
@@ -148,3 +151,78 @@ def test_store_failure_fails_open(client: TestClient, monkeypatch: pytest.Monkey
 def test_session_key_is_a_digest_not_the_raw_id() -> None:
     key = starter_session_gate.session_key(SESSION)
     assert SESSION not in key and len(key) == 64
+
+
+def test_byok_only_requests_never_reach_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # BYOK traffic spends the customer's own provider account, not starter credit.
+    drop_routes(monkeypatch, "openai/gpt-oss-20b")
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai", usage_type="BYOK")
+    local = TestClient(create_app(Settings(environment="test")))
+    hashes = []
+    for email in ("byok-one@example.com", "byok-two@example.com"):
+        created = local.post("/v1/keys", headers={"x-trustedrouter-user": email}, json={"name": "k"}).json()
+        configured = local.put(
+            "/v1/byok/providers/deepinfra",
+            headers={"x-trustedrouter-user": email},
+            json={"secret_ref": "env://DEEPINFRA_API_KEY"},
+        )
+        assert configured.status_code == 201, configured.text
+        hashes.append(created["data"]["hash"])
+    for index, key_hash in enumerate(hashes):
+        response = local.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": key_hash,
+                "model": "openai/gpt-oss-20b",
+                "provider": {"usage": "byok"},
+                "estimated_input_tokens": 10,
+                "max_output_tokens": 4,
+                "idempotency_key": f"byok-{index}",
+                "session_id": SESSION,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"].get("credit_reservation_id") is None
+
+
+class _NoAttributionStore:
+    """A backend without acquisition records (Postgres) that keeps a typed ledger."""
+
+    def __init__(self, credits: int) -> None:
+        self.credits = credits
+        self.claims: list[str] = []
+
+    def get_acquisition_attribution(self, workspace_id: str) -> None:
+        raise NotImplementedError
+
+    def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int]:
+        return (self.credits, 0, 0)
+
+    def claim_starter_session(self, session_key: str, workspace_id: str, *, now: int, window_seconds: int) -> str:
+        self.claims.append(workspace_id)
+        return "holder-workspace"
+
+
+class _Workspace:
+    id = "ws-new"
+    created_at = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_backends_without_acquisition_records_still_enforce() -> None:
+    store = _NoAttributionStore(credits=300_000)
+    holder = starter_session_gate.starter_session_conflict(
+        store, _Workspace(), SESSION, now=dt.datetime.now(dt.UTC), starter_credit_microdollars=300_000,
+    )
+    assert holder == "holder-workspace"
+    assert store.claims == ["ws-new"]
+
+
+def test_the_smallest_purchase_lifts_the_gate() -> None:
+    assert starter_session_gate.MINIMUM_PURCHASE_MICRODOLLARS > starter_session_gate.FUNDED_SLACK_MICRODOLLARS
+    starter = 300_000
+    store = _NoAttributionStore(credits=starter + starter_session_gate.MINIMUM_PURCHASE_MICRODOLLARS)
+    holder = starter_session_gate.starter_session_conflict(
+        store, _Workspace(), SESSION, now=dt.datetime.now(dt.UTC), starter_credit_microdollars=starter,
+    )
+    assert holder is None
+    assert store.claims == []

@@ -1180,8 +1180,6 @@ def _authorize_gateway_sync_impl(
     )
     if is_monitor_request:
         ensure_monitor_funding(STORE, settings, workspace.id)
-    elif settings.starter_session_gate_enabled:
-        _refuse_starter_session_reuse(request, workspace, body.session_id, settings)
     try:
         request_tags = validate_tags(body.tags)
         effective_tags = merge_tags(api_key.tags, body.tags)
@@ -1627,6 +1625,10 @@ def _authorize_gateway_sync_impl(
         for _candidate_model, candidate_endpoint in endpoint_candidates
     )
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
+    if has_credit_candidate and not is_monitor_request and settings.starter_session_gate_enabled:
+        # Only a request that can spend credits can spend starter credit; a
+        # BYOK-only request is the customer's own provider account.
+        _refuse_starter_session_reuse(request, workspace, body.session_id, settings)
     receipt_fee_basis_points = (
         SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS if body.inference_receipt else 0
     )

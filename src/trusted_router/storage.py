@@ -4029,7 +4029,7 @@ class InMemoryStore:
         with self._lock:
             claim = self.starter_sessions.get(session_key)
             holder = starter_session_holder(claim, workspace_id, now=now, window_seconds=window_seconds)
-            if holder is None and starter_session_needs_write(claim, workspace_id):
+            if holder is None and starter_session_needs_write(claim, workspace_id, now=now, window_seconds=window_seconds):
                 self.starter_sessions[session_key] = {"workspace_id": workspace_id, "at": now}
             return holder
 

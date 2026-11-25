@@ -30,6 +30,19 @@ def test_claim_expires_after_the_window_and_moves(store: Store, unique: str):
     assert store.claim_starter_session(key, first, now=later + 1, window_seconds=WINDOW) == second
 
 
+def test_an_active_holder_renews_and_keeps_the_session(store: Store, unique: str):
+    key = f"session-{unique}"
+    first, second = f"ws-a-{unique}", f"ws-b-{unique}"
+    assert store.claim_starter_session(key, first, now=NOW, window_seconds=WINDOW) is None
+    # Used again past half the window: the holder's claim is renewed.
+    renewed = NOW + WINDOW // 2 + 1
+    assert store.claim_starter_session(key, first, now=renewed, window_seconds=WINDOW) is None
+    # Past the original window but inside the renewed one, another workspace is
+    # still refused, and the holder keeps working.
+    assert store.claim_starter_session(key, second, now=NOW + WINDOW + 1, window_seconds=WINDOW) == first
+    assert store.claim_starter_session(key, first, now=NOW + WINDOW + 2, window_seconds=WINDOW) is None
+
+
 def test_sessions_are_independent(store: Store, unique: str):
     first, second = f"ws-a-{unique}", f"ws-b-{unique}"
     assert store.claim_starter_session(f"one-{unique}", first, now=NOW, window_seconds=WINDOW) is None

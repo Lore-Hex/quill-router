@@ -3229,7 +3229,7 @@ class PostgresStore(OperationalAnalyticsReads):
                 conn, STARTER_SESSION_KIND, session_key, dict, for_update=True,
             )
             found = starter_session_holder(current, workspace_id, now=now, window_seconds=window_seconds)
-            if found is None and starter_session_needs_write(current, workspace_id):
+            if found is None and starter_session_needs_write(current, workspace_id, now=now, window_seconds=window_seconds):
                 self._write_entity_tx(
                     conn, STARTER_SESSION_KIND, session_key, {"workspace_id": workspace_id, "at": now},
                 )
