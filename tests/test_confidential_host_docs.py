@@ -8,7 +8,7 @@ def test_confidential_hostname_docs_require_explicit_policy(client: TestClient) 
         assert f"https://api.confidential.{domain}.com/v1" in response.text
     assert "confidential_privacy_required" in response.text
     assert "not an implicit default" in response.text
-    assert "Hosted web search, batch/files, embeddings, and media" in response.text
+    assert "Hosted web search, batch/files, embeddings, rerank, and media" in response.text
     assert "not independent proof" in response.text
     assert 'id="confidential-api"' in response.text
 

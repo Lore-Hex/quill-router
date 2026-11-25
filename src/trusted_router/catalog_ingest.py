@@ -177,6 +177,10 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
             continue
         if model.prepaid_available and provider.slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
             endpoint = _endpoint(model, usage_type="Credits")
+            if model.supports_rerank:
+                # Listed rerank routes state their modalities, as manifest-built
+                # embedding routes do; listing consumers read them per route.
+                endpoint = replace(endpoint, input_modalities=model.input_modalities)
             endpoints[endpoint.id] = endpoint
         if model.byok_available and provider.supports_byok and not model.supports_rerank:
             endpoint = _endpoint(model, usage_type="BYOK")

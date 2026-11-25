@@ -72,6 +72,11 @@ def test_rerank_listing_matches_embedding_projections(client):
         if path.endswith("/rerank/models"):
             assert rows.keys() == ids
             assert all(row["trustedrouter"]["supports_rerank"] for row in rows.values())
+        if "include=endpoints" in path:
+            for model_id in ids:
+                routes = rows[model_id]["trustedrouter"]["endpoints"]
+                assert routes and all(route["capabilities"]["vision"] is False for route in routes)
+                assert all(e.input_modalities == ("text",) for e in catalog.endpoints_for_model(model_id))
     assert ids.isdisjoint(row["id"] for row in client.get("/v1/embeddings/models").json()["data"])
     for model_id in ids:
         for path in ("/sitemap-models.xml", "/models", "/docs/llms-full.txt"):
