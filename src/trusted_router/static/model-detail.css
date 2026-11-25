@@ -1103,6 +1103,7 @@
   font-weight: 400;
 }
 .md-tier-prices > span { display: block; }
+
 @media (max-width: 760px) {
   .md-provider:has(.md-tier-prices) {
     grid-template-areas: "name name chev" "cost inout inout" "badges badges badges" "tiers tiers tiers";

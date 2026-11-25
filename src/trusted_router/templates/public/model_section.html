@@ -197,7 +197,7 @@
             {% endif %}
             {% endif %}
             {% else %}
-            Flat
+            {{ 'By prompt length' if endpoint.long_prompt_prices else 'Flat' }}
             {% endif %}
           </td>
         </tr>

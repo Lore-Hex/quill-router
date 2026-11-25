@@ -990,8 +990,21 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     )
     if model_cached is not None:
         pricing["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(model_cached)
-    if not is_meta and (public_tiers := public_token_price_tiers(headline_route, model)):
-        pricing["tiers"] = token_price_tiers_payload(public_tiers)
+    if not is_meta:
+        # Several routes can share the headline prompt price. Among them a
+        # Credits route's tiers are shown before any other, so a flat BYOK
+        # route at the same price cannot hide what a prepaid request is charged.
+        headline_prompt = headline_route.prompt_price_microdollars_per_million_tokens
+        candidates: list[Model | ModelEndpoint] = list(endpoints) if endpoints else [headline_route]
+        tied = [
+            route for route in candidates
+            if route.prompt_price_microdollars_per_million_tokens == headline_prompt
+        ]
+        tied.sort(key=lambda route: getattr(route, "usage_type", None) != "Credits")
+        for route in tied:
+            if public_tiers := public_token_price_tiers(route, model):
+                pricing["tiers"] = token_price_tiers_payload(public_tiers)
+                break
     if model.request_price_microdollars:
         pricing["request"] = microdollars_to_decimal(model.request_price_microdollars)
     fixed_image_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model.id)

@@ -201,17 +201,36 @@ def test_model_tiers_follow_prompt_headline_route(routes, monkeypatch):
     assert pricing["tiers"] == TIERED_PRICING["tiers"]
 
 
+@pytest.mark.parametrize("suffix", ["aaa-byok", "zzz-byok"])
+def test_a_flat_byok_route_at_the_same_price_does_not_hide_credits_tiers(routes, monkeypatch, suffix):
+    tiered, _flat = routes
+    flat_tiers = (PriceTier(None, 263_750, 1_318_750),)
+    # Same headline prompt price as the tiered Credits route, on either side of it in route order.
+    twin = replace(tiered, id=f"{MODEL_ID}@{suffix}", usage_type="BYOK",
+                   price_tiers=flat_tiers, published_price_tiers=flat_tiers)
+    monkeypatch.setitem(catalog.MODEL_ENDPOINTS, twin.id, twin)
+    pricing = catalog.model_to_openrouter_shape(catalog.MODELS[MODEL_ID])["pricing"]
+    assert pricing["prompt"] == TIERED_PRICING["prompt"]
+    assert pricing["tiers"] == TIERED_PRICING["tiers"]
+    assert "tiers" not in _endpoint_pricing_payload(twin)
+
+
 def test_non_token_and_embedding_payloads_unchanged(monkeypatch, tmp_path):
     bypass_catalog_caches(monkeypatch)
     install_public_rerank_models(monkeypatch, tmp_path)
     for model_id, expected in (
         ("voyage/rerank-3", {"prompt": "0.00000005275", "completion": "0"}),
-        ("voyage/voyage-3-large", {"prompt": "0.0000001899", "completion": "0"}),
     ):
         model = catalog.MODELS[model_id]
         assert catalog.model_to_openrouter_shape(model)["pricing"] == expected
         for endpoint in catalog.endpoints_for_model(model_id):
             assert _endpoint_pricing_payload(endpoint) == expected
+    # Embedding prices come from rows a scheduled refresh rewrites, so only
+    # the shape is asserted: no tier list on an untiered embedding model.
+    embedding = next(model for model in catalog.MODELS.values() if model.supports_embeddings)
+    assert set(catalog.model_to_openrouter_shape(embedding)["pricing"]) <= {"prompt", "completion", "input_cache_read"}
+    for endpoint in catalog.endpoints_for_model(embedding.id):
+        assert "tiers" not in _endpoint_pricing_payload(endpoint)
 
     monkeypatch.setitem(SPEECH_MODELS, "x-ai/grok-voice-tts-1.0", replace(
         SPEECH_MODELS["x-ai/grok-voice-tts-1.0"],
