@@ -26,6 +26,7 @@ from trusted_router.agent_cost_guides import COST_GUIDE_ROUTES, DEEPSEEK_MODEL
 from trusted_router.catalog import PROVIDERS, Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.dashboard import PUBLIC_PAGES, public_page_html
+from trusted_router.gateway_processing import gateway_processing_claim
 from trusted_router.pricing import (
     STANDARD_PRICE_MARKUP_BASIS_POINTS,
     PriceTier,
@@ -37,6 +38,10 @@ from trusted_router.schemas import CreateKeyRequest, GatewayAuthorizeRequest
 
 PAGES = ("/docs/opencode", "/llm-gateway-pricing", "/docs/opencode-deepseek", "/docs/cut-llm-api-costs")
 ROOT = Path(__file__).resolve().parents[1]
+GATEWAY_FEE_SCOPE = (
+    "These amounts compare gateway fees on fully spent credits; taxes, payment processing "
+    "and optional add-ons are outside this comparison."
+)
 
 
 @pytest.mark.parametrize("path", PAGES)
@@ -238,8 +243,8 @@ def test_guide_descriptions_are_complete(client: TestClient, path: str) -> None:
     assert expected.endswith(".") and not expected.endswith(("...", "…"))
     if path == PAGES[1]:
         assert expected == (
-            "LLM gateway fees compared: OpenRouter and Cloudflare charge 5% to 8% on credits, "
-            "Vercel passes on processing, TrustedRouter adds 5.5% to token prices."
+            "OpenRouter and Cloudflare charge 5% to 8% on credits; Vercel has no gateway fee; "
+            "TrustedRouter adds 5.5% to tokens with no monthly or seat fee."
         )
     soup = BeautifulSoup(client.get(path).text, "html.parser")
     descriptions = [soup.select_one(selector)["content"] for selector in (
@@ -566,25 +571,41 @@ def test_vendor_comparisons_have_sources_and_date(client: TestClient) -> None:
     lede = soup.select_one(".content-document > p").get_text()
     assert "The hosted gateways compared here add no markup to token prices" in lede
     assert "OpenRouter and Cloudflare charge 5% to 8% when you buy credits" in lede
-    assert "Vercel passes on payment processing" in lede
+    assert "Vercel charges no gateway fee" in lede
     assert "TrustedRouter instead includes a 5.5% markup in each token price and has no monthly or seat fee" in lede
     hundred = soup.select_one("#hundred")
     assert hundred.select_one("h2").get_text() == "What $100 of inference costs through each gateway"
     items = hundred.select("li")
-    assert items[0].get_text().startswith("TrustedRouter: $105.50")
+    assert items[0].get_text() == "TrustedRouter: $105.50."
     assert items[1].get_text().startswith("OpenRouter Standard: $105.50")
-    assert "both come to $105.50 on fully spent credits before TrustedRouter's separate checkout processing fee" in hundred.get_text()
-    assert "with that fee, TrustedRouter's total is above OpenRouter Standard's" in hundred.get_text()
-    assert "when credits are bought (with a $0.80 minimum)" in hundred.get_text()
-    assert "in each token price and adds the card or bank processing fee at checkout as a separate line" in hundred.get_text()
+    assert items[3].get_text() == "Vercel AI Gateway: $100.00."
+    assert (
+        "TrustedRouter and OpenRouter Standard both come to $105.50 in gateway fee terms; "
+        "OpenRouter takes its 5.5% when credits are bought (with a $0.80 minimum), "
+        "while TrustedRouter includes its 5.5% in each token price."
+    ) in hundred.get_text()
+    fee_rows = soup.select("#gateway-fees tbody tr")
+    assert "No monthly or seat fee." in fee_rows[0].get_text()
+    assert "0%; no platform fee on tokens" in fee_rows[2].get_text()
+    assert "Add-ons metered separately." in fee_rows[2].get_text()
     cheapest = soup.select_one("#cheapest").get_text()
     graphs = [json.loads(script.string) for script in soup.select('script[type="application/ld+json"]')]
     faq = next(node for graph in graphs for node in graph["@graph"] if node["@type"] == "FAQPage")
     answer = next(item["acceptedAnswer"]["text"] for item in faq["mainEntity"]
                   if item["name"] == "What is the cheapest OpenAI-compatible LLM gateway?")
+    assert (
+        "Among the hosted options with published totals, $100.00 of inference costs "
+        "$100.00 through Vercel AI Gateway, $105.00 through Cloudflare Unified Billing "
+        "or OpenRouter crypto, $105.50 through TrustedRouter or OpenRouter Standard, "
+        "and $108.00 through OpenRouter Business."
+    ) in cheapest
+    assert (
+        "For $100.00 of inference in gateway fee terms on fully spent credits, Vercel "
+        "costs $100.00, Cloudflare Unified Billing and OpenRouter crypto $105.00, "
+        "TrustedRouter and OpenRouter Standard $105.50, and OpenRouter Business $108.00."
+    ) in answer
     for text in (cheapest, answer):
-        assert "TrustedRouter's $105.50 excludes its separate checkout processing fee" in text
-        assert "with that fee, TrustedRouter's total is above OpenRouter Standard's" in text
+        assert "Self-hosted LiteLLM has no gateway fee" in text
     usage = json.loads(soup.select_one("pre[data-usage]").get_text())["usage"]
     assert usage["cost_microdollars"] == usage["total_cost_microdollars"]
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
@@ -709,7 +730,20 @@ def test_python_allocation_and_ticket_validation(
 
 @pytest.mark.parametrize("path", PAGES)
 def test_removed_guide_phrases_stay_absent(client: TestClient, path: str) -> None:
-    text = BeautifulSoup(client.get(path).text, "html.parser").get_text(" ").lower()
+    soup = BeautifulSoup(client.get(path).text, "html.parser")
+    text = soup.get_text(" ").lower()
+    scope = GATEWAY_FEE_SCOPE.lower()
+    if path == PAGES[1]:
+        assert text.count(scope) == 2
+        assert soup.select_one("#hundred > p").get_text().count(GATEWAY_FEE_SCOPE) == 1
+        assert soup.select_one("#cheapest > p").get_text().count(GATEWAY_FEE_SCOPE) == 1
+        text = text.replace(scope, "")
+    else:
+        assert scope not in text
+    # The shared gateway processing statement is the one approved use of that word.
+    text = text.replace(gateway_processing_claim().lower(), "")
+    for node in soup.select('meta[content], script[type="application/ld+json"]'):
+        text += " " + (node.get("content") or node.get_text()).lower()
     for phrase in (
         "what this page does not cover", "for 1.x change", "fallback only",
         "opencode needs no key of its own", "console keys authenticate",
@@ -719,7 +753,7 @@ def test_removed_guide_phrases_stay_absent(client: TestClient, path: str) -> Non
         "for management and activity; inference uses", "do not add it twice",
         "a gateway usually pays for itself", "these are example budget choices",
         "the short example itself does not establish a cache hit", "it does not itself prove a saving",
-        "return only the integer 42", "most hosted llm gateways",
+        "return only the integer 42", "most hosted llm gateways", "processing", "at checkout",
     ):
         assert phrase not in text
 

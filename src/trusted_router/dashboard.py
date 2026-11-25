@@ -1519,15 +1519,13 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "llm-gateway-pricing": PublicPage(
         template="public/llm_gateway_pricing.html",
         title="LLM gateway pricing: fees, markup and a worked example",
-        description="LLM gateway fees compared: OpenRouter and Cloudflare charge 5% to 8% on credits, Vercel passes on processing, TrustedRouter adds 5.5% to token prices.",
+        description="OpenRouter and Cloudflare charge 5% to 8% on credits; Vercel has no gateway fee; TrustedRouter adds 5.5% to tokens with no monthly or seat fee.",
         faq_items=(
             ("What is the cheapest OpenAI-compatible LLM gateway?",
              "Self-hosted LiteLLM has no gateway fee; include infrastructure costs. "
-             "For $100.00 of inference, Vercel costs $100.00 plus processing, Cloudflare "
-             "Unified Billing and OpenRouter crypto $105.00, TrustedRouter and OpenRouter "
-             "Standard $105.50, and OpenRouter Business $108.00. TrustedRouter's $105.50 "
-             "excludes its separate checkout processing fee; with that fee, TrustedRouter's "
-             "total is above OpenRouter Standard's. Totals exclude taxes and optional add-ons."),
+             "For $100.00 of inference in gateway fee terms on fully spent credits, Vercel "
+             "costs $100.00, Cloudflare Unified Billing and OpenRouter crypto $105.00, "
+             "TrustedRouter and OpenRouter Standard $105.50, and OpenRouter Business $108.00."),
             ("Which LLM gateways show per-request cost?",
              "TrustedRouter, OpenRouter, LiteLLM, Portkey (Prisma AIRS AI Gateway), "
              "Cloudflare AI Gateway and Vercel AI Gateway expose request cost or spend "
