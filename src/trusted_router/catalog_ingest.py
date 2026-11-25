@@ -170,13 +170,15 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
         # quotes. Its endpoints are registered explicitly by the media catalog;
         # synthesizing a token-priced chat endpoint here creates a duplicate
         # route with the wrong upstream model id.
-        if model.id in META_MODEL_IDS or model.supports_video or model.supports_rerank:
+        if model.id in META_MODEL_IDS or model.supports_video:
             continue
         provider = PROVIDERS[model.provider]
+        if model.supports_rerank and not provider.supports_rerank:
+            continue
         if model.prepaid_available and provider.slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
             endpoint = _endpoint(model, usage_type="Credits")
             endpoints[endpoint.id] = endpoint
-        if model.byok_available and provider.supports_byok:
+        if model.byok_available and provider.supports_byok and not model.supports_rerank:
             endpoint = _endpoint(model, usage_type="BYOK")
             endpoints[endpoint.id] = endpoint
     return endpoints
@@ -1788,7 +1790,7 @@ def _rerank_models() -> dict[str, Model]:
                 supported_parameters=(),
                 input_modalities=input_modalities,
                 output_modalities=("scores",),
-                prepaid_available=False,
+                prepaid_available=provider.supports_prepaid,
                 byok_available=False,
                 prompt_price_microdollars_per_million_tokens=prompt_price,
                 completion_price_microdollars_per_million_tokens=0,
