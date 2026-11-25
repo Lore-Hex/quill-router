@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from scripts.pricing.base import ProviderPricingResult, fetch_json, fetch_provider
+from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json, fetch_provider
 from scripts.pricing.manifest import write_discovered_chat_manifest
 
 SLUG = "anthropic"
@@ -171,7 +171,7 @@ def _family_and_version(model_id: str) -> tuple[str, tuple[int, int]] | None:
 
 
 def _public_pricing_model_rows(
-    prices: dict[str, Any],
+    prices: dict[str, ModelPrice],
 ) -> dict[str, dict[str, Any]]:
     """Build conservative discovery rows when no Models API key is present.
 
