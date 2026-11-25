@@ -9,7 +9,7 @@ import json
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
@@ -147,6 +147,7 @@ from trusted_router.provider_locations import (
     provider_model_locations,
 )
 from trusted_router.provider_precision import endpoint_precision_metadata
+from trusted_router.routing_candidates import cheap_candidate_models
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
@@ -285,6 +286,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/sign-in-with-trustedrouter",
     *(f"/{slug}" for slug in COMPANY_SIGNIN_PAGES),
     "/openai-compatible-llm-api",
+    "/free-llm-api",
     "/kimi-k2-api",
     "/gemini-flash-alternative",
     "/llm-provider-latency-benchmarks",
@@ -1457,6 +1459,25 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Change base_url to migrate from OpenRouter while keeping OpenAI-compatible clients, "
             "model routing, streaming, provider controls, and live gateway verification."
+        ),
+    ),
+    "free-llm-api": PublicPage(
+        template="public/free_llm_api.html",
+        title="Free LLM API",
+        description=(
+            "Get a free LLM API key with up to 1 million free tokens. No card required. "
+            "After that, pay per token through one OpenAI-compatible API."
+        ),
+        faq_items=(
+            (
+                "Is the LLM API free?",
+                "Your first tokens are free: up to 1 million, with no card. After that, you pay per token, "
+                "with no subscription.",
+            ),
+            (
+                "Do I need a new SDK?",
+                "No. Use the OpenAI SDK you already have and change the base URL and API key.",
+            ),
         ),
     ),
     "docs/migrate-from-openai": PublicPage(
@@ -3306,6 +3327,9 @@ def public_page_html(
 ) -> str:
     page = PUBLIC_PAGES[page_key]
     path = f"/{page_key}"
+    free_api = _free_llm_api_context() if page_key == "free-llm-api" else None
+    if free_api is not None and free_api["free_api_floor"]:
+        page = _free_llm_api_page(page, free_api["free_api_floor"])
     return _render_public_page(
         settings,
         page,
@@ -3334,9 +3358,69 @@ def public_page_html(
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES
             else {"hero_price_bars": _popular_price_bars(test_mode=settings.environment == "test")}
             if page_key == "pricing"
+            else free_api if free_api is not None
             else None
         ),
     )
+
+
+def _cents_per_million(microdollars_per_million: int) -> str:
+    """Price per million tokens in cents, the way the 1¢ floor is quoted."""
+    cents = Decimal(microdollars_per_million) / Decimal(MICRODOLLARS_PER_DOLLAR // 100)
+    if cents >= 100:
+        return f"${cents / 100:.2f}"
+    rounded = cents.quantize(Decimal("1")) if cents >= 10 else cents.quantize(Decimal("0.1"))
+    return f"{rounded.normalize():f}¢"
+
+
+def _free_llm_api_context() -> dict[str, Any]:
+    """The price table plus its lowest per-token price, so the header, meta
+    description and FAQ quote the same live number as the table."""
+    models = free_llm_api_models()
+    floor = min((model["floor_micro"] for model in models), default=None)
+    return {
+        "free_api_models": models,
+        "free_api_floor": _cents_per_million(floor) if floor is not None else None,
+    }
+
+
+def _free_llm_api_page(page: PublicPage, floor: str) -> PublicPage:
+    faq = dict(page.faq_items)
+    faq["Is the LLM API free?"] = (
+        f"Your first tokens are free: up to 1 million, with no card. After that, the cheapest models "
+        f"cost {floor} per million tokens, so small projects cost very little."
+    )
+    return replace(
+        page,
+        description=(
+            "Get a free LLM API key with up to 1 million free tokens. No card required. "
+            f"After that, models start at {floor} per million tokens through one OpenAI-compatible API."
+        ),
+        faq_items=tuple(faq.items()),
+    )
+
+
+def free_llm_api_models(limit: int = 6) -> list[dict[str, Any]]:
+    """The trustedrouter/cheap pool, cheapest first, priced from the live catalog."""
+    offer_label = LaunchOfferFacts.end_label if fortanix_launch_offer() else None
+    rows: list[tuple[int, dict[str, Any]]] = []
+    for model in cheap_candidate_models():
+        if model.internal_only:
+            continue
+        route = _cheapest_priced_route(model)
+        if route is None:
+            continue
+        prompt = route.prompt_price_microdollars_per_million_tokens
+        completion = route.completion_price_microdollars_per_million_tokens
+        rows.append((prompt + completion, {
+            "id": model.id,
+            "input": _cents_per_million(prompt),
+            "output": _cents_per_million(completion),
+            "offer": offer_label if model.id == LAUNCH_OFFER_MODEL_ID else None,
+            "floor_micro": min(prompt, completion),
+        }))
+    rows.sort(key=lambda row: (row[0], row[1]["id"]))
+    return [row for _, row in rows[:limit]]
 
 
 def _green_tokens_context() -> dict[str, Any]:
@@ -5320,6 +5404,7 @@ def llms_txt(settings: Settings) -> str:
         f"- [Blog](https://{domain}/blog)",
         f"- [Migration guide](https://{domain}/docs/migrate-from-openrouter)",
         f"- [Migrate from the OpenAI API](https://{domain}/docs/migrate-from-openai)",
+        f"- [Free LLM API key](https://{domain}/free-llm-api)",
         "",
         "## API",
         "- [OpenAI compatible base URL](https://api.trustedrouter.com/v1)",
@@ -5553,6 +5638,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Private LLM API: https://{domain}/private-llm-api",
             f"- Zero data retention LLM API: https://{domain}/llm-zero-data-retention",
             f"- OpenAI compatible LLM API: https://{domain}/openai-compatible-llm-api",
+            f"- Free LLM API key: https://{domain}/free-llm-api",
             f"- Latency benchmarks: https://{domain}/llm-provider-latency-benchmarks",
             f"- Blog: https://{domain}/blog",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",

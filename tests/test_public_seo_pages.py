@@ -2367,3 +2367,64 @@ def test_legacy_routing_guide_preserves_search_query(client: TestClient) -> None
     assert response.status_code == 301
     assert response.headers["location"] == "/docs/provider-routing?ref=article"
     assert client.get(response.headers["location"]).status_code == 200
+
+
+def test_free_llm_api_page_lists_live_cheapest_models(client: TestClient) -> None:
+    from trusted_router.dashboard import free_llm_api_models
+
+    response = client.get("/free-llm-api")
+    assert response.status_code == 200
+    body = response.text
+    models = free_llm_api_models()
+    assert models
+    for model in models:
+        assert f'href="/models/{model["id"]}"' in body
+    assert '"trustedrouter/cheap"' in body
+    assert "<loc>https://trustedrouter.com/free-llm-api</loc>" in client.get("/sitemap-core.xml").text
+    assert "/free-llm-api" in client.get("/llms.txt").text
+
+
+def test_free_llm_api_offer_tag_ends_with_the_launch_offer(client: TestClient, monkeypatch) -> None:
+    from trusted_router import dashboard
+
+    # The offer's own date and route gate is covered in test_fortanix_launch.py;
+    # here only the page's reaction to it matters, on any test clock.
+    if not any(model["id"] == dashboard.LAUNCH_OFFER_MODEL_ID for model in dashboard.free_llm_api_models()):
+        pytest.skip("the launch-offer model is not among the cheapest models on this clock")
+    monkeypatch.setattr(dashboard, "fortanix_launch_offer", lambda: True)
+    assert "Launch offer, ends" in client.get("/free-llm-api").text
+    monkeypatch.setattr(dashboard, "fortanix_launch_offer", lambda: False)
+    assert "Launch offer, ends" not in client.get("/free-llm-api").text
+
+
+@pytest.mark.parametrize(
+    ("microdollars", "label"),
+    [(10_000, "1¢"), (47_000, "4.7¢"), (123_000, "12¢"), (1_000_000, "$1.00"), (2_500_000, "$2.50")],
+)
+def test_free_llm_api_cents_labels(microdollars: int, label: str) -> None:
+    from trusted_router.dashboard import _cents_per_million
+
+    assert _cents_per_million(microdollars) == label
+
+
+@pytest.mark.parametrize(("floor_micro", "expected"), [(30_000, "3¢"), (None, None)])
+def test_free_llm_api_price_claims_follow_the_live_table(
+    client: TestClient, monkeypatch, floor_micro: int | None, expected: str | None
+) -> None:
+    from trusted_router import dashboard
+
+    rows = [] if floor_micro is None else [
+        {"id": "example/model", "input": expected, "output": expected, "offer": None, "floor_micro": floor_micro}
+    ]
+    monkeypatch.setattr(dashboard, "free_llm_api_models", lambda: rows)
+    body = client.get("/free-llm-api").text
+    # The phone header line never quotes a price, whatever the table says.
+    assert "Up to 1 million free tokens. No card required." in body
+    assert "then models from" not in body
+    assert "1¢ per million tokens through" not in body
+    if expected is None:
+        assert "models start at" not in body
+        assert "Cheapest models today" not in body
+    else:
+        assert f"models start at {expected} per million tokens" in body
+        assert f"cheapest models cost {expected} per million tokens" in body
