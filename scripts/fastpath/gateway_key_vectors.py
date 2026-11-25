@@ -130,8 +130,8 @@ ROUTE_READS: dict[str, str] = {
     "speculation_shadow.resolved": "not a check: an isolated shadow observation",
     "_starter_session_gate": (
         "Python only, not an edge fact: a never-funded workspace under 14 days old "
-        "reusing another such workspace's client session gets a 402. Edge-decided "
-        "requests are not checked; see services/starter_session_gate.py"
+        "reusing another such workspace's client session gets a 402. The edge never "
+        "decides for one: trust tier 0 takes no lease; see services/starter_session_gate.py"
     ),
 }
 

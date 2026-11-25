@@ -30,8 +30,10 @@ Known limits, each costing a farmer at most a request or two:
 * Two never-funded workspaces authorizing an unclaimed session at the same
   instant can both be admitted once; the store keeps one holder and the
   other's next request is refused.
-* Requests the fast path's edge decides on its own never reach this route, so
-  they are not checked (the gateway key vectors record this read as Python only).
+
+The fast path's edge never decides for these workspaces: it admits only under
+a lease, and a never-funded workspace is trust tier 0, which takes none
+(fastpath/internal/store/store.go). Their requests always reach this route.
 """
 
 from __future__ import annotations
