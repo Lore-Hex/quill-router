@@ -1582,6 +1582,17 @@ def _write_provider_manifests(
     return notes, failures
 
 
+def _price_review_holds(
+    results: dict[str, ProviderPricingResult], held: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Rows and provider holds share the section copied by the price alert."""
+    review = {slug: list(routes) for slug, routes in held.items()}
+    for slug, result in results.items():
+        if result.price_holds:
+            review.setdefault(slug, []).extend(result.price_holds.values())
+    return review
+
+
 def _summary_lines(
     results: dict[str, ProviderPricingResult],
     healed: list[str],
@@ -1801,10 +1812,11 @@ def _refresh(*, summary_only: bool, baseline: Path) -> int:
         print("Supplemental provider manifests:")
         for note in manifest_notes:
             print(f"  {note}")
-    if held:
+    review_holds = _price_review_holds(results, held)
+    if review_holds:
         print()
         print(HELD_FOR_REVIEW_HEADING)
-        for slug, routes in sorted(held.items()):
+        for slug, routes in sorted(review_holds.items()):
             print(f"  {slug}:")
             for route in routes:
                 print(f"    {route}")
@@ -1814,7 +1826,7 @@ def _refresh(*, summary_only: bool, baseline: Path) -> int:
                     print(f"      {reason}")
         print(
             "::warning title=Provider prices held for review::"
-            f"{', '.join(sorted(held))} kept their committed state. Repair refresh "
+            f"{', '.join(sorted(review_holds))} kept committed prices. Repair refresh "
             "failures; verified price changes use APPROVED_ENDPOINT_PRICE_TRANSITIONS."
         )
     if held_models:

@@ -35,6 +35,7 @@ PARSER_CASES: list[tuple[str, set[str], tuple[float, float]]] = [
             "anthropic/claude-opus-4.7",
             "anthropic/claude-sonnet-4.6",
             "anthropic/claude-haiku-4.5",
+            "anthropic/claude-haiku-5.5",
         },
         (0.5, 100.0),
     ),

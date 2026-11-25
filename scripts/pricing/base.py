@@ -267,6 +267,8 @@ class ProviderPricingResult:
     # When set, only these chat model IDs enter the shared token-price index;
     # all prices remain available to the provider manifest writer.
     price_index_model_ids: frozenset[str] | None = None
+    # Per-model manifest holds also appear in the held-price alert section.
+    price_holds: dict[str, str] = field(default_factory=dict)
 
 
 def read_stale_provider_manifest(
