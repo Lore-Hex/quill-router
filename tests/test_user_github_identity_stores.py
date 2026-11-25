@@ -36,3 +36,16 @@ def test_set_user_github_identity_round_trips(make_store: Callable[[], Any]) -> 
     assert reread.github_login == "alice-gh"
     assert reread.github_account_created_at == "2026-10-13T09:00:00Z"
     assert store.set_user_github_identity("missing-user", "x", None) is None
+
+
+@pytest.mark.parametrize("make_store", [_memory, _spanner, _postgres], ids=["memory", "spanner", "postgres"])
+def test_set_user_paypal_payer_match_round_trips(make_store: Callable[[], Any]) -> None:
+    store = make_store()
+    user = store.ensure_user("payer@example.com", trial_credit_microdollars=0)
+    assert store.get_user(user.id).paypal_payer_email_matches is None
+
+    assert store.set_user_paypal_payer_match(user.id, False) is not None
+    assert store.get_user(user.id).paypal_payer_email_matches is False
+    assert store.set_user_paypal_payer_match(user.id, True) is not None
+    assert store.get_user(user.id).paypal_payer_email_matches is True
+    assert store.set_user_paypal_payer_match("missing-user", True) is None

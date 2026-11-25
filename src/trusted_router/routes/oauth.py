@@ -47,6 +47,7 @@ from trusted_router.oauth_provider import (
     exchange_code,
     fetch_user,
 )
+from trusted_router.services.abuse_tripwires import alert_new_github_signup
 from trusted_router.signup_gate import (
     github_account_old_enough,
     google_starter_credit_domain_limit,
@@ -275,6 +276,11 @@ def _persist_login(
         STORE.set_user_github_identity(
             user_id, info.provider_login, info.provider_account_created_at
         )
+        if attribution is not None:
+            alert_new_github_signup(
+                workspace_id=attribution[0],
+                github_created_at=info.provider_account_created_at,
+            )
 
     raw_token, _ = STORE.create_auth_session(
         user_id=user_id,
