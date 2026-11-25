@@ -436,7 +436,7 @@ class Store(Protocol):
         ...
 
     def claim_starter_session(
-        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int,
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
     ) -> str | None:
         """Claim a client session for one never-funded workspace.
 
@@ -444,6 +444,7 @@ class Store(Protocol):
         Returns the other workspace id when a different workspace claimed the
         session within ``window_seconds``; that claim is left untouched.
         Otherwise records (or keeps) this workspace's claim and returns None.
+        With ``record=False`` nothing is written: the same answer, read only.
         """
         ...
 

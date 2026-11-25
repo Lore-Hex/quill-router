@@ -3217,8 +3217,15 @@ class PostgresStore(OperationalAnalyticsReads):
         )
 
     def claim_starter_session(
-        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int,
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
     ) -> str | None:
+        def peek(conn: Any) -> str | None:
+            current = self._read_entity_tx(conn, STARTER_SESSION_KIND, session_key, dict)
+            return starter_session_holder(current, workspace_id, now=now, window_seconds=window_seconds)
+
+        if not record:
+            return self._run_transaction(peek)
+
         def txn(conn: Any) -> str | None:
             # Seed the row before locking it: FOR UPDATE cannot lock an absent
             # row under READ COMMITTED, so two first claimers would both win.

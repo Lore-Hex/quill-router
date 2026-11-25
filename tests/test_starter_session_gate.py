@@ -11,11 +11,26 @@ from fastapi.testclient import TestClient
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.services import starter_session_gate
 from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_models import AcquisitionAttribution
 
 SESSION = "ses_relay_conversation_0001"
+
+
+@pytest.fixture
+def harness_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tests/conftest.py credits every test workspace $10 of execution budget.
+
+    In production a never-funded workspace holds only the $0.30 starter grant;
+    widen the slack by the harness budget so a test workspace reads the same.
+    """
+    monkeypatch.setattr(
+        starter_session_gate,
+        "FUNDED_SLACK_MICRODOLLARS",
+        starter_session_gate.FUNDED_SLACK_MICRODOLLARS + 10 * MICRODOLLARS_PER_DOLLAR,
+    )
 
 
 def _key(client: TestClient, email: str) -> str:
@@ -52,7 +67,7 @@ def _attribution(workspace_id: str, **fields: Any) -> AcquisitionAttribution:
     )
 
 
-def test_second_fresh_account_cannot_continue_the_same_session(client: TestClient) -> None:
+def test_second_fresh_account_cannot_continue_the_same_session(harness_budget: None, client: TestClient) -> None:
     first = _key(client, "farm-one@example.com")
     second = _key(client, "farm-two@example.com")
     assert _authorize(client, first, "r1", SESSION).status_code == 200
@@ -70,14 +85,14 @@ def test_second_fresh_account_cannot_continue_the_same_session(client: TestClien
     assert _authorize(client, first, "r5", SESSION).status_code == 200
 
 
-def test_requests_without_a_session_are_never_checked(client: TestClient) -> None:
+def test_requests_without_a_session_are_never_checked(harness_budget: None, client: TestClient) -> None:
     first = _key(client, "nosession-one@example.com")
     second = _key(client, "nosession-two@example.com")
     assert _authorize(client, first, "r1", None).status_code == 200
     assert _authorize(client, second, "r2", None).status_code == 200
 
 
-def test_a_funded_workspace_may_continue_the_session(client: TestClient) -> None:
+def test_a_funded_workspace_may_continue_the_session(harness_budget: None, client: TestClient) -> None:
     first = _key(client, "funded-one@example.com")
     second = _key(client, "funded-two@example.com")
     assert _authorize(client, first, "r1", SESSION).status_code == 200
@@ -88,36 +103,55 @@ def test_a_funded_workspace_may_continue_the_session(client: TestClient) -> None
     assert _authorize(client, second, "r3", SESSION).status_code == 200
 
 
-def test_a_ledger_top_up_counts_as_funded_without_an_acquisition_record(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_ledger_top_up_counts_as_funded_without_an_acquisition_record(harness_budget: None, client: TestClient) -> None:
     first = _key(client, "ledger-one@example.com")
     second = _key(client, "ledger-two@example.com")
     assert _authorize(client, first, "r1", SESSION).status_code == 200
-    second_ws = _workspace_id(second)
-    # Patch the backend class, never the STORE proxy (issue #333).
-    monkeypatch.setattr(
-        InMemoryStore,
-        "typed_credit_snapshot",
-        lambda self, workspace_id: (25_000_000, 0, 0) if workspace_id == second_ws else (300_000, 0, 0),
-        raising=False,
-    )
-    assert _authorize(client, second, "r2", SESSION).status_code == 200
-
-
-def test_starter_credit_alone_on_the_ledger_is_not_funded(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = _key(client, "starter-one@example.com")
-    second = _key(client, "starter-two@example.com")
-    monkeypatch.setattr(
-        InMemoryStore, "typed_credit_snapshot", lambda self, workspace_id: (300_000, 0, 0), raising=False,
-    )
-    assert _authorize(client, first, "r1", SESSION).status_code == 200
     assert _authorize(client, second, "r2", SESSION).status_code == 402
+    assert STORE.get_acquisition_attribution(_workspace_id(second)) is None
+    # A real credit on the live ledger, the smallest purchase.
+    STORE.credit_workspace_once(
+        _workspace_id(second), starter_session_gate.MINIMUM_PURCHASE_MICRODOLLARS, "topup:ledger-two",
+    )
+    assert _authorize(client, second, "r3", SESSION).status_code == 200
 
 
-def test_an_established_workspace_is_never_checked(client: TestClient) -> None:
+def test_a_retry_of_an_admitted_request_is_never_refused(harness_budget: None, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = _key(client, "retry-one@example.com")
+    second = _key(client, "retry-two@example.com")
+    # The second account was admitted while the claim store was failing open...
+    original = InMemoryStore.claim_starter_session
+
+    def failing(self: Any, *args: Any, **kwargs: Any) -> str | None:
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(InMemoryStore, "claim_starter_session", failing)
+    assert _authorize(client, second, "lost-response", SESSION).status_code == 200
+    monkeypatch.setattr(InMemoryStore, "claim_starter_session", original)
+    # ...then the first account claimed the session.
+    assert _authorize(client, first, "r1", SESSION).status_code == 200
+    # The second account's retry of its admitted request still replays.
+    assert _authorize(client, second, "lost-response", SESSION).status_code == 200
+    # A new request from it is refused.
+    assert _authorize(client, second, "new-request", SESSION).status_code == 402
+
+
+def test_a_refused_request_never_claims_the_session(harness_budget: None, client: TestClient) -> None:
+    broke = _key(client, "broke-one@example.com")
+    funded_later = _key(client, "broke-two@example.com")
+    workspace_id = _workspace_id(broke)
+    # Drain the first account so its reservation fails.
+    STORE.debit_workspace_guarded(
+        workspace_id, 10 * MICRODOLLARS_PER_DOLLAR, "drain:broke-one", kind="transfer_out",
+    )
+    refused = _authorize(client, broke, "r1", SESSION)
+    assert refused.status_code == 402
+    assert refused.json()["error"]["type"] == "insufficient_credits"
+    # The session was never claimed, so another account can use it.
+    assert _authorize(client, funded_later, "r2", SESSION).status_code == 200
+
+
+def test_an_established_workspace_is_never_checked(harness_budget: None, client: TestClient) -> None:
     first = _key(client, "old-one@example.com")
     second = _key(client, "old-two@example.com")
     assert _authorize(client, first, "r1", SESSION).status_code == 200
@@ -128,7 +162,7 @@ def test_an_established_workspace_is_never_checked(client: TestClient) -> None:
     assert _authorize(client, second, "r2", SESSION).status_code == 200
 
 
-def test_the_gate_can_be_switched_off(client: TestClient, test_settings: Any) -> None:
+def test_the_gate_can_be_switched_off(harness_budget: None, client: TestClient, test_settings: Any) -> None:
     first = _key(client, "off-one@example.com")
     second = _key(client, "off-two@example.com")
     assert _authorize(client, first, "r1", SESSION).status_code == 200
@@ -136,7 +170,7 @@ def test_the_gate_can_be_switched_off(client: TestClient, test_settings: Any) ->
     assert _authorize(client, second, "r2", SESSION).status_code == 200
 
 
-def test_store_failure_fails_open(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_store_failure_fails_open(harness_budget: None, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     first = _key(client, "broken-one@example.com")
     second = _key(client, "broken-two@example.com")
     assert _authorize(client, first, "r1", SESSION).status_code == 200
@@ -198,8 +232,10 @@ class _NoAttributionStore:
     def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int]:
         return (self.credits, 0, 0)
 
-    def claim_starter_session(self, session_key: str, workspace_id: str, *, now: int, window_seconds: int) -> str:
-        self.claims.append(workspace_id)
+    def claim_starter_session(
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
+    ) -> str:
+        self.claims.append(f"{workspace_id}:{'claim' if record else 'check'}")
         return "holder-workspace"
 
 
@@ -214,7 +250,8 @@ def test_backends_without_acquisition_records_still_enforce() -> None:
         store, _Workspace(), SESSION, now=dt.datetime.now(dt.UTC), starter_credit_microdollars=300_000,
     )
     assert holder == "holder-workspace"
-    assert store.claims == ["ws-new"]
+    # Checked read-only, and nothing claimed for a refused request.
+    assert store.claims == ["ws-new:check"]
 
 
 def test_the_smallest_purchase_lifts_the_gate() -> None:

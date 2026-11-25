@@ -7377,13 +7377,17 @@ class SpannerStore(OperationalAnalyticsReads):
         return self.email_blocks.record_message_once(message_id)
 
     def claim_starter_session(
-        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int,
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
     ) -> str | None:
         # A plain read answers the common cases (this workspace already holds the
         # session, or another one does) without a read-write transaction.
         claim = self._read_entity(STARTER_SESSION_KIND, session_key, dict)
         holder = starter_session_holder(claim, workspace_id, now=now, window_seconds=window_seconds)
-        if holder is not None or not starter_session_needs_write(claim, workspace_id, now=now, window_seconds=window_seconds):
+        if (
+            not record
+            or holder is not None
+            or not starter_session_needs_write(claim, workspace_id, now=now, window_seconds=window_seconds)
+        ):
             return holder
 
         def txn(transaction: Any) -> str | None:

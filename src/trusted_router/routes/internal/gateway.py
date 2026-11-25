@@ -1052,22 +1052,37 @@ def _authorize_gateway_sync(
     return _authorize_gateway_sync_impl(request, body, settings, boot_context)
 
 
-def _refuse_starter_session_reuse(
-    request: Request, workspace: Any, session_id: str | None, settings: Settings,
-) -> None:
-    """402 when another never-funded workspace already ran this client session."""
-    holder = starter_session_gate.starter_session_conflict(
+def _starter_session_gate(
+    request: Request,
+    workspace: Any,
+    session_id: str | None,
+    settings: Settings,
+    *,
+    has_existing_authorization: Callable[[], bool],
+) -> starter_session_gate.GateDecision:
+    """402 when another never-funded workspace already ran this client session.
+
+    A retry of an authorization this workspace already holds is never refused:
+    its response may have been lost, and the reservation already exists.
+    """
+    decision = starter_session_gate.check(
         STORE,
         workspace,
         session_id,
         now=dt.datetime.now(dt.UTC),
         starter_credit_microdollars=settings.signup_trial_credit_microdollars,
     )
-    if holder is None:
-        return
+    if decision.holder is None:
+        return decision
+    try:
+        if has_existing_authorization():
+            return starter_session_gate.EXEMPT
+    except Exception:  # noqa: BLE001 - the replay path below re-reads and decides
+        logger.warning("billing.starter_session_replay_check_failed workspace_id=%s", _log_value(workspace.id))
     logger.warning(
         "billing.starter_session_reused workspace_id=%s holder_workspace_id=%s request_id=%s",
-        _log_value(workspace.id), _log_value(holder), _log_value(getattr(request.state, "request_id", None)),
+        _log_value(workspace.id), _log_value(decision.holder),
+        _log_value(getattr(request.state, "request_id", None)),
     )
     raise api_error(402, starter_session_gate.REFUSAL_MESSAGE, ErrorType.STARTER_CREDIT_SESSION_REUSED)
 
@@ -1625,10 +1640,29 @@ def _authorize_gateway_sync_impl(
         for _candidate_model, candidate_endpoint in endpoint_candidates
     )
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
+    starter_gate = starter_session_gate.EXEMPT
     if has_credit_candidate and not is_monitor_request and settings.starter_session_gate_enabled:
         # Only a request that can spend credits can spend starter credit; a
         # BYOK-only request is the customer's own provider account.
-        _refuse_starter_session_reuse(request, workspace, body.session_id, settings)
+
+        def _has_existing_authorization() -> bool:
+            if not request_idempotency_key:
+                return False
+            existing = (
+                _typed_store.get_typed_authorization_by_idempotency(
+                    workspace.id, api_key.hash, request_idempotency_key,
+                )
+                if _typed_store is not None
+                else STORE.get_gateway_authorization_by_idempotency_key(
+                    workspace.id, api_key.hash, request_idempotency_key,
+                )
+            )
+            return existing is not None
+
+        starter_gate = _starter_session_gate(
+            request, workspace, body.session_id, settings,
+            has_existing_authorization=_has_existing_authorization,
+        )
     receipt_fee_basis_points = (
         SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS if body.inference_receipt else 0
     )
@@ -2381,6 +2415,10 @@ def _authorize_gateway_sync_impl(
                     ErrorType.CONFLICT,
                 )
             return _replay_response(authorization)
+    if not idempotent_replay:
+        # Admitted: only now does this workspace hold the session, so a request
+        # refused for credits or limits never blocks another account.
+        starter_session_gate.claim(STORE, starter_gate, workspace.id, now=dt.datetime.now(dt.UTC))
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider, byok_configs) if model_usage_type.is_byok() else None
     )

@@ -63,3 +63,15 @@ def test_concurrent_first_claims_leave_exactly_one_holder(store: Store, unique: 
     winners = [ws for ws, held_by in zip(workspaces, results, strict=True) if held_by is None]
     assert len(winners) == 1
     assert all(held_by == winners[0] for held_by in results if held_by is not None)
+
+
+def test_a_read_only_check_answers_without_claiming(store: Store, unique: str):
+    key = f"session-{unique}"
+    first, second = f"ws-a-{unique}", f"ws-b-{unique}"
+    # Checking an unclaimed session writes nothing...
+    assert store.claim_starter_session(key, first, now=NOW, window_seconds=WINDOW, record=False) is None
+    assert store.claim_starter_session(key, second, now=NOW, window_seconds=WINDOW, record=False) is None
+    # ...so the first real claim still wins, and a check then reports it.
+    assert store.claim_starter_session(key, second, now=NOW + 1, window_seconds=WINDOW) is None
+    assert store.claim_starter_session(key, first, now=NOW + 2, window_seconds=WINDOW, record=False) == second
+    assert store.claim_starter_session(key, second, now=NOW + 3, window_seconds=WINDOW, record=False) is None

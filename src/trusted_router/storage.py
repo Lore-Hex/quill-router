@@ -4024,12 +4024,12 @@ class InMemoryStore:
         return self.email_blocks.record_message_once(message_id)
 
     def claim_starter_session(
-        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int,
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
     ) -> str | None:
         with self._lock:
             claim = self.starter_sessions.get(session_key)
             holder = starter_session_holder(claim, workspace_id, now=now, window_seconds=window_seconds)
-            if holder is None and starter_session_needs_write(claim, workspace_id, now=now, window_seconds=window_seconds):
+            if record and holder is None and starter_session_needs_write(claim, workspace_id, now=now, window_seconds=window_seconds):
                 self.starter_sessions[session_key] = {"workspace_id": workspace_id, "at": now}
             return holder
 
