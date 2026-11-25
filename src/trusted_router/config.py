@@ -660,6 +660,9 @@ class Settings(BaseSettings):
     # Latch a non-established workspace when PayPal reports a dispute or a
     # reversal on one of its captures. Established workspaces only alert.
     paypal_adverse_auto_latch: bool = True
+    # Refuse a never-funded new workspace's request whose client session_id
+    # another never-funded workspace already used (services/starter_session_gate.py).
+    starter_session_gate_enabled: bool = True
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05

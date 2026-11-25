@@ -435,6 +435,18 @@ class Store(Protocol):
         """
         ...
 
+    def claim_starter_session(
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int,
+    ) -> str | None:
+        """Claim a client session for one never-funded workspace.
+
+        ``session_key`` is a digest of the client session id, never the raw id.
+        Returns the other workspace id when a different workspace claimed the
+        session within ``window_seconds``; that claim is left untouched.
+        Otherwise records (or keeps) this workspace's claim and returns None.
+        """
+        ...
+
     # API keys ----------------------------------------------------------------
     def create_api_key(
         self,

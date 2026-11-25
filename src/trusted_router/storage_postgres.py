@@ -105,10 +105,13 @@ from trusted_router.storage_errors import (
 )
 from trusted_router.storage_gcp_codec import (
     SIGNUP_CREDIT_DOMAIN_KIND,
+    STARTER_SESSION_KIND,
     byok_id,
     email_domain,
     member_id,
     normalize_email,
+    starter_session_holder,
+    starter_session_needs_write,
     workspace_key_id,
 )
 from trusted_router.storage_gcp_counters import credit_shard_count, distribute_credit_amount
@@ -3212,6 +3215,27 @@ class PostgresStore(OperationalAnalyticsReads):
                 {"created_at": iso_now()},
             )
         )
+
+    def claim_starter_session(
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int,
+    ) -> str | None:
+        def txn(conn: Any) -> str | None:
+            # Seed the row before locking it: FOR UPDATE cannot lock an absent
+            # row under READ COMMITTED, so two first claimers would both win.
+            self._insert_entity_once_tx(
+                conn, STARTER_SESSION_KIND, session_key, {"workspace_id": workspace_id, "at": now},
+            )
+            current = self._read_entity_tx(
+                conn, STARTER_SESSION_KIND, session_key, dict, for_update=True,
+            )
+            found = starter_session_holder(current, workspace_id, now=now, window_seconds=window_seconds)
+            if found is None and starter_session_needs_write(current, workspace_id):
+                self._write_entity_tx(
+                    conn, STARTER_SESSION_KIND, session_key, {"workspace_id": workspace_id, "at": now},
+                )
+            return found
+
+        return self._run_transaction(txn)
 
     def claim_retirement_notices(
         self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,

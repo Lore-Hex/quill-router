@@ -192,7 +192,7 @@ from trusted_router.scopes import SCOPE_INFERENCE
 # Stable injected ports also consumed by the byte-pinned gateway regression oracle.
 from trusted_router.security import lookup_hash_api_key as lookup_hash_api_key
 from trusted_router.services import fastpath_frontdoor as _fastpath
-from trusted_router.services import federation
+from trusted_router.services import federation, starter_session_gate
 from trusted_router.services.broadcast import (
     drain_broadcast_queue,
     enqueue_metadata_broadcast,
@@ -1052,6 +1052,26 @@ def _authorize_gateway_sync(
     return _authorize_gateway_sync_impl(request, body, settings, boot_context)
 
 
+def _refuse_starter_session_reuse(
+    request: Request, workspace: Any, session_id: str | None, settings: Settings,
+) -> None:
+    """402 when another never-funded workspace already ran this client session."""
+    holder = starter_session_gate.starter_session_conflict(
+        STORE,
+        workspace,
+        session_id,
+        now=dt.datetime.now(dt.UTC),
+        starter_credit_microdollars=settings.signup_trial_credit_microdollars,
+    )
+    if holder is None:
+        return
+    logger.warning(
+        "billing.starter_session_reused workspace_id=%s holder_workspace_id=%s request_id=%s",
+        _log_value(workspace.id), _log_value(holder), _log_value(getattr(request.state, "request_id", None)),
+    )
+    raise api_error(402, starter_session_gate.REFUSAL_MESSAGE, ErrorType.STARTER_CREDIT_SESSION_REUSED)
+
+
 def _authorize_gateway_sync_impl(
     request: Request,
     body: GatewayAuthorizeRequest,
@@ -1160,6 +1180,8 @@ def _authorize_gateway_sync_impl(
     )
     if is_monitor_request:
         ensure_monitor_funding(STORE, settings, workspace.id)
+    elif settings.starter_session_gate_enabled:
+        _refuse_starter_session_reuse(request, workspace, body.session_id, settings)
     try:
         request_tags = validate_tags(body.tags)
         effective_tags = merge_tags(api_key.tags, body.tags)

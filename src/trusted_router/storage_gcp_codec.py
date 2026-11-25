@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 from trusted_router.storage_codec import json_body
 from trusted_router.storage_models import Generation
@@ -54,6 +55,31 @@ def normalize_email(value: str) -> str:
 
 #: Entity kind of the per-email-domain starter-credit counter.
 SIGNUP_CREDIT_DOMAIN_KIND = "signup_credit_domain"
+
+#: Entity kind of a client session claimed by a never-funded workspace
+#: (services/starter_session_gate.py). Keyed by a digest of the session id.
+STARTER_SESSION_KIND = "starter_session"
+
+
+def starter_session_holder(
+    claim: dict[str, Any] | None, workspace_id: str, *, now: int, window_seconds: int,
+) -> str | None:
+    """The other workspace holding a live claim, or None when this one may claim."""
+    if not claim:
+        return None
+    holder = str(claim.get("workspace_id") or "")
+    try:
+        claimed_at = int(claim.get("at") or 0)
+    except (TypeError, ValueError):
+        claimed_at = 0
+    if holder and holder != workspace_id and now - claimed_at <= window_seconds:
+        return holder
+    return None
+
+
+def starter_session_needs_write(claim: dict[str, Any] | None, workspace_id: str) -> bool:
+    """Whether this workspace's claim must be written (absent, expired or another's)."""
+    return not claim or str(claim.get("workspace_id") or "") != workspace_id
 
 
 def email_domain(normalized_email: str) -> str:

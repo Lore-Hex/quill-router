@@ -52,7 +52,11 @@ from trusted_router.storage_byok import InMemoryByok
 from trusted_router.storage_custom_models import InMemoryCustomModels
 from trusted_router.storage_email_blocks import InMemoryEmailBlocks
 from trusted_router.storage_errors import StoreConflict
-from trusted_router.storage_gcp_codec import email_domain
+from trusted_router.storage_gcp_codec import (
+    email_domain,
+    starter_session_holder,
+    starter_session_needs_write,
+)
 from trusted_router.storage_generations import InMemoryGenerations
 from trusted_router.storage_group_buy import InMemoryBedrockGroupBuy
 from trusted_router.storage_keys import InMemoryApiKeys
@@ -214,6 +218,8 @@ class InMemoryStore:
         self.user_transfer_daily: dict[tuple[str, str], int] = {}
         #: Starter-credit grants per email domain (see signup_gate).
         self.signup_credit_domains: dict[str, int] = {}
+        #: Client sessions claimed by never-funded workspaces (starter_session_gate).
+        self.starter_sessions: dict[str, dict[str, Any]] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
         self.routable_payout_profiles: dict[str, RoutablePayoutProfile] = {}
         self.routable_payout_profile_users_by_company: dict[str, str] = {}
@@ -301,6 +307,7 @@ class InMemoryStore:
             self.credit_movements.clear()
             self.user_transfer_daily.clear()
             self.signup_credit_domains.clear()
+            self.starter_sessions.clear()
             self.routable_payout_profiles.clear()
             self.routable_payout_profile_users_by_company.clear()
             self.earnings_cashouts.clear()
@@ -4015,6 +4022,16 @@ class InMemoryStore:
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
+
+    def claim_starter_session(
+        self, session_key: str, workspace_id: str, *, now: int, window_seconds: int,
+    ) -> str | None:
+        with self._lock:
+            claim = self.starter_sessions.get(session_key)
+            holder = starter_session_holder(claim, workspace_id, now=now, window_seconds=window_seconds)
+            if holder is None and starter_session_needs_write(claim, workspace_id):
+                self.starter_sessions[session_key] = {"workspace_id": workspace_id, "at": now}
+            return holder
 
     def claim_retirement_notices(
         self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
