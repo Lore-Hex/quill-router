@@ -44,8 +44,8 @@ These policies deliberately trigger before the broad Spanner contention
 policy:
 
 - Any `5xx` from `/internal/gateway/authorize`, `settle`, or `refund` opens an
-  incident immediately, except an authorize `503`, which the next policy
-  counts. A single `500` with zero latency, no instance id and
+  incident immediately, except an authorize `503` or a settle `503`, which
+  the counted policies below take over. A refund `503` still pages here. A single `500` with zero latency, no instance id and
   no container output, logged against the revision being retired at the
   second its instances print "Shutting down", is the rollout race: stock
   uvicorn closed its listener the instant SIGTERM arrived and refused a
@@ -110,6 +110,24 @@ policy:
 - "TR Gateway: credit headroom raced" opens an incident when more than two
   headroom-raced 503s land in ten minutes, or more than five in an hour,
   for the same reason. See "Credit headroom raced" below.
+- A settle `503` is counted rather than paged at once, as an authorize `503`
+  is. The snapshot settle (`services/async_settle_handler.py`, `unavailable`)
+  answers its designed 503s with `Retry-After: 1` (`finish_unconfirmed`,
+  `transient_store_error` and its other reasons) and writes one
+  `WARNING ... async_settle.unavailable reason=...` line for each, for
+  settle and refund alike (`trustedrouter_gateway_settle_unavailable_503`).
+  The gateway retries the same settlement identity and the charge is
+  recovered. "TR Gateway: settle 503 not marked retryable" compares the
+  settle and refund 503s in Cloud Run's request log
+  (`trustedrouter_gateway_settle_503`) with those lines and opens an
+  incident when the two counts differ for three minutes: a settle 503 with
+  no line (Spanner outage, no instance, a crash, a legacy settle path's own
+  503) pages, and so do lines without 503s. A refund 503 is counted there
+  too, because its line is the same, and pages at once on the billing 5xx
+  policy as well. "TR Gateway: settle unavailable surge" opens an incident
+  when more than two marked settle 503s land in ten minutes, or more than
+  five in an hour (the baseline is about one a week); read the lines'
+  `reason=` first.
 - A run of `503`s from one instance id, each with tens of seconds of latency
   and "connection to the instance had an error", while that instance's own
   output stops and its CPU stays flat, is a process whose event loop stopped

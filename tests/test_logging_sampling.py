@@ -771,6 +771,10 @@ GATEWAY_METRIC_ENTRIES = {
     "REBALANCE_BUSY_METRIC_NAME": run_line(f"{GW}billing.credit_rebalance_busy workspace_id=ws_x"),
     "STRICT_BUDGET_BUSY_METRIC_NAME": run_line(f"{GW}billing.strict_budget_busy key=k"),
     "HEADROOM_RACED_METRIC_NAME": run_line(f"{GW}billing.credit_headroom_raced workspace_id=ws_x"),
+    "SETTLE_503_METRIC_NAME": run_request(503, "0.3s", "https://x/internal/gateway/settle"),
+    "SETTLE_UNAVAILABLE_METRIC_NAME": run_line(
+        "WARNING trusted_router.services.async_settle_handler async_settle.unavailable reason=finish_unconfirmed"
+    ),
 }
 
 

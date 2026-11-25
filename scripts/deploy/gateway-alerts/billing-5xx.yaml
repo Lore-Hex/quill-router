@@ -20,13 +20,21 @@ documentation:
     workspace's own concurrent requests took from every bounded repair,
     which "TR Gateway: credit headroom raced" bounds); the authorize-503
     policy must exist before this filter is
-    applied. Inspect Cloud Run request logs, Spanner transaction contention,
+    applied. Settle 503s are excluded here for the same reason: "TR
+    Gateway: settle 503 not marked retryable" pages on every one the app
+    did not mark as designed and retryable with its async_settle.unavailable
+    line (finish_unconfirmed, transient_store_error and the other reasons
+    the snapshot settle answers 503 with Retry-After, which the gateway
+    retries on the same settlement identity until the charge lands), and
+    "TR Gateway: settle unavailable surge" bounds the marked ones; both must
+    exist before this filter is applied. Refund 503s and every settle 5xx
+    other than a 503 still page here at once. Inspect Cloud Run request logs, Spanner transaction contention,
     and billing invariants. Do not silence the alert merely because Spanner is
     otherwise healthy. Runbook: docs/spanner-reliability.md.
 conditions:
   - displayName: "Any internal gateway billing 5xx"
     conditionMatchedLog:
-      filter: 'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND httpRequest.status >= 500 AND httpRequest.status < 600 AND httpRequest.status != 501 AND httpRequest.requestUrl =~ "/internal/gateway/(authorize|settle|refund)([?].*)?$" AND NOT (httpRequest.status = 503 AND httpRequest.requestUrl =~ "/internal/gateway/authorize([?].*)?$")'
+      filter: 'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND httpRequest.status >= 500 AND httpRequest.status < 600 AND httpRequest.status != 501 AND httpRequest.requestUrl =~ "/internal/gateway/(authorize|settle|refund)([?].*)?$" AND NOT (httpRequest.status = 503 AND httpRequest.requestUrl =~ "/internal/gateway/settle([?].*)?$") AND NOT (httpRequest.status = 503 AND httpRequest.requestUrl =~ "/internal/gateway/authorize([?].*)?$")'
 alertStrategy:
   notificationRateLimit:
     period: 1800s

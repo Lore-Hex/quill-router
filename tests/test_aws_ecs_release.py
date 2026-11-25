@@ -928,3 +928,24 @@ def test_clickhouse_record_reads_refuse_a_database_the_reader_cannot_read(databa
         env.append({"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": database})
     with pytest.raises(ValueError, match="TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=default"):
         load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
+
+
+def test_azure_pins_the_same_source_admission_window_as_aws() -> None:
+    # Azure's observer also runs TR_RATE_LIMIT_CLIENT_IP_MODE=untrusted, so its
+    # per-client default (240/60 s) is likewise one bucket for every caller. On
+    # 2026-11-23 a single path scanner held it and locked out Azure's public
+    # pages. Both planes pin the same window, from the same constant.
+    path = ROOT / "scripts/deploy/prepare_ecs_release.py"
+    spec = importlib.util.spec_from_file_location("prepare_ecs_release", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    deploy = (ROOT / "scripts/deploy/azure_control_plane.sh").read_text(encoding="utf-8")
+    configured_env = deploy.split("\nENV_VARS=(", 1)[1].split("\n)", 1)[0]
+    entries = [line.strip() for line in configured_env.splitlines()
+               if line.strip().startswith('"TR_RATE_LIMIT_IP_PER_WINDOW=')]
+    assert entries == [f'"TR_RATE_LIMIT_IP_PER_WINDOW={module.AWS_SOURCE_ADMISSION_PER_WINDOW}"']
+    assert module.AWS_SOURCE_ADMISSION_PER_WINDOW == "6000"
+    assert '"TR_RATE_LIMIT_CLIENT_IP_MODE=untrusted"' in configured_env
+    retired_env = deploy.split("RETIRED_OBSERVER_ENV_VARS=(", 1)[1].split("\n)", 1)[0]
+    assert "TR_RATE_LIMIT_IP_PER_WINDOW" not in retired_env
