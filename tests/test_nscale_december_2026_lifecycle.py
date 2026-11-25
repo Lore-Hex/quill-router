@@ -16,13 +16,11 @@ _CUTOFF_STAMP = "2026-12-11T00:00:00Z"
 _RETIRING = {
     "qwen/qwen3.8-flash-next-fp8": "Qwen/Qwen3.8-Flash-Next-FP8",
     "qwen/qwen3-embedding-8b": "Qwen/Qwen3-Embedding-8B",
+    # Moves to dedicated models; every Nscale route is serverless.
+    "mistralai/mistral-large-3-675b-instruct-2512-nvfp4": (
+        "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4"
+    ),
 }
-# Announced for the same date ("Moves to dedicated models"), but Nscale refused
-# it on serverless from 2026-11-23 00:39 UTC while the survivors kept serving.
-_EARLY_ID = "mistralai/mistral-large-3-675b-instruct-2512-nvfp4"
-_EARLY_NATIVE_ID = "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4"
-_EARLY_CUTOFF = datetime(2026, 11, 23, 0, 39, tzinfo=UTC)
-_EARLY_CUTOFF_STAMP = "2026-11-23T00:39:00Z"
 _SURVIVING = {
     "z-ai/glm-5.3": "zai-org/GLM-5.3",
     "qwen/qwen3.8-27b": "Qwen/Qwen3.8-27B",
@@ -102,8 +100,6 @@ def test_nscale_manifest_retirement_dates_match_the_lifecycle() -> None:
     for model_id, native_id in _RETIRING.items():
         assert rows[model_id]["upstream_id"] == native_id
         assert rows[model_id]["retirement_at"] == _CUTOFF_STAMP
-    assert rows[_EARLY_ID]["upstream_id"] == _EARLY_NATIVE_ID
-    assert rows[_EARLY_ID]["retirement_at"] == _EARLY_CUTOFF_STAMP
     for model_id in _SURVIVING:
         assert "retirement_at" not in rows[model_id]
     # Every recorded retirement_at is exactly when routing stops.
@@ -144,8 +140,6 @@ def test_nscale_post_december_catalog_renews_and_tombstones_the_retired_rows(
         assert rows[model_id]["routable_reason"] == "delisted-upstream"
         assert rows[model_id]["missing_since"]
         assert rows[model_id]["retirement_at"] == _CUTOFF_STAMP
-    assert rows[_EARLY_ID]["routable"] is False
-    assert rows[_EARLY_ID]["retirement_at"] == _EARLY_CUTOFF_STAMP
 
 
 def test_nscale_unannounced_single_delisting_above_the_floor_still_refreshes(
@@ -252,30 +246,3 @@ def test_nscale_december_entry_is_a_separate_notice_from_november() -> None:
     assert december[0].notice_id != (
         f"nscale:{provider_lifecycle.NSCALE_NOVEMBER_2026_RETIREMENT_AT.isoformat()}"
     )
-
-
-def test_nscale_mistral_large_3_retires_early_in_its_own_entry() -> None:
-    entries = [
-        entry for entry in provider_lifecycle.provider_retirements()
-        if entry.provider == "nscale" and _EARLY_ID in entry.model_ids
-    ]
-    assert len(entries) == 1
-    entry = entries[0]
-    assert provider_lifecycle.NSCALE_MISTRAL_LARGE_3_RETIREMENT_AT == _EARLY_CUTOFF
-    assert entry.effective_at == _EARLY_CUTOFF < _CUTOFF
-    assert entry.model_ids == frozenset({_EARLY_ID})
-    assert entry.upstream_ids == frozenset({_EARLY_NATIVE_ID})
-    # No replacement is named, so none is quoted or substituted.
-    assert entry.replacement_model_ids == ()
-    assert entry.notice_id == f"nscale:{_EARLY_CUTOFF.isoformat()}"
-
-
-def test_nscale_mistral_large_3_stops_at_the_first_refusal_and_siblings_keep_routing() -> None:
-    retired = provider_lifecycle.provider_model_retired
-    assert retired("nscale", _EARLY_ID, _EARLY_NATIVE_ID, at=_EARLY_CUTOFF)
-    assert not retired(
-        "nscale", _EARLY_ID, _EARLY_NATIVE_ID, at=_EARLY_CUTOFF - timedelta(microseconds=1),
-    )
-    # The December pair and the survivors are untouched by the early stop.
-    for model_id, native_id in {**_RETIRING, **_SURVIVING}.items():
-        assert not retired("nscale", model_id, native_id, at=_EARLY_CUTOFF), model_id
