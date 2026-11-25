@@ -1077,8 +1077,9 @@ def _starter_session_gate(
     try:
         if has_existing_authorization():
             return starter_session_gate.EXEMPT
-    except Exception:  # noqa: BLE001 - the replay path below re-reads and decides
+    except Exception:  # noqa: BLE001 - fail open: this may be a retry of an admitted request
         logger.warning("billing.starter_session_replay_check_failed workspace_id=%s", _log_value(workspace.id))
+        return starter_session_gate.EXEMPT
     logger.warning(
         "billing.starter_session_reused workspace_id=%s holder_workspace_id=%s request_id=%s",
         _log_value(workspace.id), _log_value(decision.holder),

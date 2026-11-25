@@ -263,3 +263,32 @@ def test_the_smallest_purchase_lifts_the_gate() -> None:
     )
     assert holder is None
     assert store.claims == []
+
+
+def test_a_failing_replay_lookup_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from trusted_router.routes.internal import gateway
+
+    monkeypatch.setattr(
+        starter_session_gate, "check",
+        lambda *args, **kwargs: starter_session_gate.GateDecision(holder="ws-holder"),
+    )
+    request = SimpleNamespace(state=SimpleNamespace(request_id="req-1"))
+    workspace = SimpleNamespace(id="ws-new")
+    settings = Settings(environment="test")
+
+    def lookup_fails() -> bool:
+        raise RuntimeError("store down")
+
+    # The lookup failed, so this may be a retry of an admitted request: let it through.
+    decision = gateway._starter_session_gate(
+        request, workspace, SESSION, settings, has_existing_authorization=lookup_fails,  # type: ignore[arg-type]
+    )
+    assert decision == starter_session_gate.EXEMPT
+    # And with a clean "no existing authorization" answer, it is refused.
+    with pytest.raises(Exception) as refused:
+        gateway._starter_session_gate(
+            request, workspace, SESSION, settings, has_existing_authorization=lambda: False,  # type: ignore[arg-type]
+        )
+    assert getattr(refused.value, "status_code", None) == 402
