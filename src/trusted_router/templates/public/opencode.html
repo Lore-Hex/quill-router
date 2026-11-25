@@ -1,0 +1,115 @@
+{% extends "public/_base.html" %}
+{% from "public/_agent_guide_macros.html" import config_example %}
+{% block body_attributes %}data-docs-code{% endblock %}
+{% block body %}
+<div class="content-document" data-content-toc>
+<section class="content-section" id="quick-start">
+<h2>Quick start</h2>
+<p>OpenCode lists TrustedRouter as a built-in provider.</p>
+<ol><li>Create a key in <a href="/console/api-keys">Console → API Keys</a>; TrustedRouter inference keys start with <code>sk-tr-</code>.</li><li>Run <code>/connect</code> in OpenCode, choose <strong>TrustedRouter</strong>, and paste the key.</li><li>Run <code>/models</code> and choose {% if opencode_aliases|selectattr("model.id", "equalto", "trustedrouter/zdr")|list %}<code>trustedrouter/trustedrouter/zdr</code>{% else %}a model from the <a href="/models">catalog</a>{% endif %}.</li></ol>
+<pre><code>/connect
+/models</code></pre>
+<p>TrustedRouter gives OpenCode one key across 600+ models and 100+ providers, provider fallback and <a href="/docs/spend-controls">per-key spend limits</a>.</p>
+<p>OpenCode documentation and catalog checked <time datetime="2026-11-24">November 24, 2026</time>. Inference base URL: <code>{{ api_base_url }}</code>.</p>
+</section>
+<section class="content-section" id="api-key">
+<h2>Set a TrustedRouter API key in OpenCode</h2>
+<p>Use <code>/connect</code> to save a key, or set <code>TRUSTEDROUTER_API_KEY</code> on the OpenCode server process.</p>
+<div class="content-reference"><table class="reference-mobile-table reference-column-table"><thead><tr><th scope="col">Method</th><th scope="col">Command</th></tr></thead><tbody>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Method</span>TUI</td><td><span class="reference-cell-label" aria-hidden="true">Command</span><code>/connect</code> → TrustedRouter → API key</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Method</span>CLI key method</td><td><span class="reference-cell-label" aria-hidden="true">Command</span><code>opencode auth login trustedrouter --method key</code></td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Method</span>Standalone environment</td><td><span class="reference-cell-label" aria-hidden="true">Command</span><code>TRUSTEDROUTER_API_KEY="YOUR_KEY" opencode --standalone</code></td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Method</span>Shared service environment</td><td><span class="reference-cell-label" aria-hidden="true">Command</span><code>opencode service set env TRUSTEDROUTER_API_KEY YOUR_KEY</code></td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Method</span>Verify connections</td><td><span class="reference-cell-label" aria-hidden="true">Command</span><code>opencode auth list</code></td></tr>
+</tbody></table></div>
+<p>A saved account wins over an environment connection for the same integration. V2 saves credentials in the server's SQLite database, usually <code>~/.local/share/opencode/opencode.db</code>, and imports supported credentials from 1.x's <code>~/.local/share/opencode/auth.json</code>. Use <code>opencode debug paths db</code> to find the actual V2 path. See <a href="https://opencode.ai/docs/cli/providers/">OpenCode connections</a>.</p>
+<p>OpenCode itself does not require an OpenCode key; you connect a provider key, here a TrustedRouter key.</p>
+</section>
+<section class="content-section" id="models">
+<h2>TrustedRouter models in OpenCode</h2>
+<p>TrustedRouter appears in OpenCode's catalog with seven built-in aliases; any other catalog model is added with a few lines of config.</p>
+{% if opencode_aliases %}<div class="content-reference"><table class="reference-mobile-table reference-column-table"><thead><tr><th scope="col">Selector</th><th scope="col">What it routes to</th><th scope="col">TrustedRouter context tokens</th></tr></thead><tbody>
+{% for row in opencode_aliases %}<tr data-alias="{{ row.model.id }}"><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Selector</span><code>trustedrouter/{{ row.model.id }}</code></td><td><span class="reference-cell-label" aria-hidden="true">What it routes to</span>{{ row.policy }}</td><td><span class="reference-cell-label" aria-hidden="true">TrustedRouter context tokens</span>{{ "{:,}".format(row.model.context_length) }} tokens</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+{% if opencode_limits %}<p><a href="https://models.dev/">models.dev</a> lists 1,000,000 context tokens for each alias as of the check date. {% set overrides = opencode_limits.providers.trustedrouter.models %}{% for model_id in overrides %}{% if not loop.first %}{{ " and " if loop.last else ", " }}{% endif %}<code>{{ model_id.split("/", 1)[1] }}</code>{% endfor %} {{ "has" if overrides|length == 1 else "have" }} lower served limits and {{ "needs" if overrides|length == 1 else "need" }} the override below{% if opencode_aliases|length > overrides|length %}; the others are at or above the catalog figure and need none{% endif %}. This context-only override is V2 only: the 1.x model limit requires both <code>context</code> and <code>output</code>, and TrustedRouter publishes no alias output limit. See the <a href="https://opencode.ai/config.json">OpenCode schema</a>.</p>{% endif %}
+{{ config_example(opencode_limits, "v2", "Alias context limit overrides — OpenCode V2", compact=true) }}
+<h3>Why is it <code>trustedrouter/trustedrouter/zdr</code>?</h3>
+<p>The first <code>trustedrouter</code> is OpenCode's provider ID. Everything after the first slash, <code>trustedrouter/zdr</code>, is the model ID sent to TrustedRouter.</p>
+<p>Run <code>opencode models</code> in the shell to list models, or use <code>/models</code> in the TUI. See <a href="https://opencode.ai/docs/models/">OpenCode model selection</a> and <a href="https://opencode.ai/docs/config/">configuration locations and precedence</a>.</p>
+</section>
+{% if opencode_model %}<section class="content-section" id="custom-model">
+<h2>Add any TrustedRouter model</h2>
+<p>Save configuration in your project's <code>opencode.jsonc</code> or <code>opencode.json</code>, or globally under <code>~/.config/opencode/</code>; see <a href="https://opencode.ai/docs/config/">OpenCode configuration</a>.</p>
+{% if opencode_model %}<p>Add <code>{{ opencode_model.id }}</code> to the built-in provider's <code>models</code> map; its package, endpoint and connection still apply.</p>
+<p>The <a href="/models/{{ opencode_model.id }}">TrustedRouter catalog</a> gives this model {{ "{:,}".format(opencode_model.context_length) }} context tokens {% if opencode_model.max_completion_tokens is not none %}and {{ "{:,}".format(opencode_model.max_completion_tokens) }} output tokens{% endif %}. Use the option matching your installed OpenCode generation.</p>
+{{ config_example(opencode_v2, "v2", "OpenCode V2 — minimal model addition") }}
+{{ config_example(opencode_v1, "v1", "OpenCode 1.x — minimal model addition") }}{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+<p>The <a href="https://opencode.ai/docs/providers/">provider configuration reference</a> documents adding models to an existing catalog provider.</p>
+</section>{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a> to add a model to your OpenCode configuration.</p>{% endif %}
+{% if opencode_model %}<section class="content-section" id="custom-provider">
+<h2>OpenCode custom provider config for TrustedRouter: V2 and 1.x</h2>
+<p>Choose the option matching your installed generation when defining the full provider.</p>
+{% if opencode_full %}{% set full = dict(opencode_full) %}
+{% set _ = full.providers.trustedrouter.update(settings={"baseURL": api_base_url}) %}
+{{ config_example(full, "v2", "OpenCode V2 — full custom provider") }}{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+<p>For V2, set the environment variable on the server or use <code>/connect</code> with the custom provider. The <code>env</code> declaration identifies the credential variable.</p>
+{% if opencode_full_v1 %}{% set full_v1 = dict(opencode_full_v1) %}
+{% set _ = full_v1.provider.trustedrouter.update(options={"baseURL": api_base_url, "apiKey": "{env:TRUSTEDROUTER_API_KEY}"}) %}
+{{ config_example(full_v1, "v1", "OpenCode 1.x — full custom provider") }}{% endif %}
+<p>The 1.x form uses <code>npm</code>, <code>options.baseURL</code> and <code>options.apiKey</code>. An unset <code>TRUSTEDROUTER_API_KEY</code> makes <code>{env:TRUSTEDROUTER_API_KEY}</code> an empty string. See <a href="https://opencode.ai/docs/config/">variable substitution</a> and <a href="https://opencode.ai/docs/migrate/">the generation mapping</a>.</p>
+<div class="content-reference"><table class="reference-mobile-table reference-column-table"><thead><tr><th scope="col">1.x key</th><th scope="col">V2 key</th></tr></thead><tbody>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">1.x key</span><code>provider</code></td><td><span class="reference-cell-label" aria-hidden="true">V2 key</span><code>providers</code></td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">1.x key</span><code>npm</code></td><td><span class="reference-cell-label" aria-hidden="true">V2 key</span><code>package</code></td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">1.x key</span><code>options</code></td><td><span class="reference-cell-label" aria-hidden="true">V2 key</span><code>settings</code></td></tr>
+</tbody></table></div>
+</section>{% endif %}
+<section class="content-section" id="coding">
+<h2>Which alias should I choose for coding?</h2>
+<p>Start with <code>trustedrouter/cheap</code> for inexpensive trials, <code>trustedrouter/zdr</code> for ZDR routes, or <code>trustedrouter/synth-code</code> for code-tuned synthesis.</p>
+<p>Use <code>trustedrouter/e2e</code> when all eligible routes must provide verified confidential compute, provider E2EE and explicit ZDR. Synth makes several model calls per request, so it costs more than a single-model request. See <a href="/docs/agent-setup">agent setup</a> and <a href="/docs/synth">Synth</a>.</p>
+</section>
+<section class="content-section" id="budget">
+<h2>Keep the agent's bill bounded</h2>
+<p>Create a dedicated key with daily and monthly limits, <code>budget_strict: true</code> and <code>budget_alert_only: false</code>.</p>
+<p>Strict mode counts outstanding estimates; actual charges can exceed an estimate. See <a href="/docs/spend-controls">spend controls</a> and <a href="/docs/cut-llm-api-costs">cheaper models, caching and Batch</a>.</p>
+</section>
+<section class="content-section" id="switch">
+<h2>Switch OpenCode from OpenRouter to TrustedRouter</h2>
+<p>To use TrustedRouter as an OpenRouter alternative for OpenCode, connect TrustedRouter, add the model above, then change the provider prefix; the model slug after the provider prefix is unchanged.</p>
+{% if opencode_model %}<div class="content-examples"><div><h3>OpenRouter — V2</h3><pre data-config="v2"><code>{"$schema":"https://opencode.ai/config.json","model":"openrouter/{{ opencode_model.id }}"}</code></pre></div><div><h3>TrustedRouter — V2, after the model addition</h3><pre data-config="v2"><code>{"$schema":"https://opencode.ai/config.json","model":"trustedrouter/{{ opencode_model.id }}"}</code></pre></div></div>{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+<div class="content-reference"><table class="reference-mobile-table reference-column-table"><thead><tr><th scope="col">Detail</th><th scope="col">OpenRouter</th><th scope="col">TrustedRouter</th></tr></thead><tbody>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Detail</span>Built-in OpenCode models, checked November 24, 2026</td><td><span class="reference-cell-label" aria-hidden="true">OpenRouter</span>373</td><td><span class="reference-cell-label" aria-hidden="true">TrustedRouter</span>Seven aliases</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Detail</span>Catalog runtime package</td><td><span class="reference-cell-label" aria-hidden="true">OpenRouter</span><code>@openrouter/ai-sdk-provider</code></td><td><span class="reference-cell-label" aria-hidden="true">TrustedRouter</span><code>@ai-sdk/openai-compatible</code>; V2 native custom form above uses <code>@opencode/ai/providers/openai-compatible</code></td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Detail</span>Standard fee</td><td><span class="reference-cell-label" aria-hidden="true">OpenRouter</span>5.5% on purchased credits, $0.80 minimum; 8% on Business</td><td><span class="reference-cell-label" aria-hidden="true">TrustedRouter</span>{{ cost_guide.fee_percent }}% markup inside token prices</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Detail</span>Privacy routing</td><td><span class="reference-cell-label" aria-hidden="true">OpenRouter</span>ZDR parameter and account settings filter by provider policy.</td><td><span class="reference-cell-label" aria-hidden="true">TrustedRouter</span><code>trustedrouter/zdr</code> selects ZDR routes; <code>trustedrouter/e2e</code> requires verified confidential compute, provider E2EE and explicit ZDR.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Detail</span>Gateway verification</td><td><span class="reference-cell-label" aria-hidden="true">OpenRouter</span>Closed-source gateway; SOC 2 Type 2 assurance.</td><td><span class="reference-cell-label" aria-hidden="true">TrustedRouter</span>Source-available gateway with live hardware attestation on three clouds.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Detail</span>Spend controls</td><td><span class="reference-cell-label" aria-hidden="true">OpenRouter</span>Workspace and Guardrails budget controls.</td><td><span class="reference-cell-label" aria-hidden="true">TrustedRouter</span>Dedicated per-key daily, weekly and monthly limits; strict mode includes outstanding estimates. Actual charges can exceed estimates.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Detail</span>Switching</td><td colspan="2"><span class="reference-cell-label" aria-hidden="true">OpenRouter</span>Both can stay connected; use <code>/models</code> to switch.</td></tr>
+</tbody></table></div>
+<p>Staying on OpenRouter is the better choice when its 373 built-in entries cover your needs and you want no model configuration.</p>
+<p>Sources: <a href="/compare/openrouter">privacy routing and gateway verification comparison</a>, <a href="/docs/spend-controls">strict per-key limits</a>, <a href="https://models.dev/">OpenCode catalog</a>, <a href="https://openrouter.ai/pricing">OpenRouter pricing</a>, <a href="https://openrouter.ai/docs/faq">minimum fee</a>, <a href="/llm-gateway-pricing">TrustedRouter and gateway fees</a>. <a href="https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration">OpenRouter's own guide</a> still shows the 1.x <code>provider.openrouter.models</code> shape.</p>
+</section>
+<section class="content-section" id="smoke-test">
+<h2>Test the key and base URL</h2>
+<p>Send one small request to verify authentication and routing.</p>
+{% if opencode_model %}<pre data-example="curl"><code>curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"{{ opencode_model.id }}","messages":[{"role":"user","content":"Reply with PONG only."}],"max_tokens":16}'</code></pre>{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+</section>
+<section class="content-section" id="troubleshooting">
+<h2>OpenCode API key not working</h2>
+<p>Check the saved account first, then the server environment and installed configuration generation.</p>
+<div class="content-reference"><table class="reference-mobile-table reference-column-table"><thead><tr><th scope="col">Symptom</th><th scope="col">Fix</th></tr></thead><tbody>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Symptom</span>Key belongs to a different provider</td><td><span class="reference-cell-label" aria-hidden="true">Fix</span>Connect a TrustedRouter key under TrustedRouter; a DeepSeek or OpenRouter key belongs to that provider's connection.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Symptom</span>Shared service still has the old key</td><td><span class="reference-cell-label" aria-hidden="true">Fix</span><code>opencode service set env TRUSTEDROUTER_API_KEY YOUR_KEY</code> stops the running service; the next command starts it with the new value. See <a href="https://opencode.ai/docs/cli/providers/">OpenCode connections</a>.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Symptom</span>New environment key ignored</td><td><span class="reference-cell-label" aria-hidden="true">Fix</span>A saved account outranks the environment variable. Inspect <code>opencode auth list</code> and manage the saved account with <code>/connect</code>.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Symptom</span>Empty API key</td><td><span class="reference-cell-label" aria-hidden="true">Fix</span>An unset <code>{env:NAME}</code> becomes an empty string. The V2 full form uses <code>env</code> plus a connection instead of substituting <code>settings.apiKey</code>.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Symptom</span>404 or wrong endpoint</td><td><span class="reference-cell-label" aria-hidden="true">Fix</span>Use <code>{{ api_base_url }}</code> as the base URL; append <code>/chat/completions</code> only for curl.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Symptom</span>Model missing</td><td><span class="reference-cell-label" aria-hidden="true">Fix</span>Add the exact catalog ID under the provider's <code>models</code> map, then run <code>opencode models</code>.</td></tr>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Symptom</span>Hand-migrated 1.x config fails</td><td><span class="reference-cell-label" aria-hidden="true">Fix</span>V2 renames <code>provider/npm/options</code> to <code>providers/package/settings</code>. An AI SDK package needs the <code>aisdk:</code> prefix, such as <code>aisdk:@ai-sdk/openai-compatible</code>; a native OpenCode package does not. See <a href="https://opencode.ai/docs/migrate/">migration notes</a>.</td></tr>
+</tbody></table></div>
+</section>
+<p>For direct DeepSeek and OpenRouter routes, use <a href="/docs/opencode-deepseek">DeepSeek in OpenCode: three routes</a>.</p>
+</div>
+{% endblock %}

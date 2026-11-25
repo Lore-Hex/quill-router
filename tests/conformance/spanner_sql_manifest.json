@@ -558,7 +558,7 @@
       ]
     },
     "storage_gcp:txn:23": {
-      "fingerprint": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
+      "fingerprint": "71478382c5ed383a324b6f00d917d82b8947cc4ce0813cad3e00f5a4e9c22185",
       "scenarios": [
         {
           "bindings": {},
@@ -5130,7 +5130,7 @@
     "storage_gcp:SpannerStore.typed_finalize_leased_result.txn": "f77ee92a6773c3a162d63dbb91e0f4e59667a76ebca3b408d0d44ba2a5802137",
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
-    "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
+    "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "71478382c5ed383a324b6f00d917d82b8947cc4ce0813cad3e00f5a4e9c22185",
     "storage_gcp:SpannerStore._read_entity_from": "c5387f8306fe68497a9ddba801ff9caded4ffbb87c4893574f3a83e4d8e609ed",
     "storage_gcp:SpannerStore._list_entities": "a3713c4e149f64cd0dd5bb64d0bd719c951683c7f2f93d33f03c709f036a0df0",
     "storage_gcp:SpannerStore.readiness_check": "4ac951f6c468ea8adee1537d86aaaf0514fb06e519e5c409ed07d11b42ca76b5",

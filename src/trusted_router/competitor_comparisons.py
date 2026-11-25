@@ -718,7 +718,7 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
         competitor_fit=(
             "Choose Portkey when prompt-level logs, traces, guardrails, and prompt "
             "management are your operating model: it is the most complete single-vendor "
-            "stack in this category, with a free tier, a $49/month Production plan, SOC 2 "
+            "stack in this category, with pricing by quote as of November 24, 2026, SOC 2 "
             "Type 2 and HIPAA at the Enterprise tier, a hybrid VPC deployment mode, and "
             "Palo Alto Networks behind it."
         ),
@@ -750,11 +750,12 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
         content="Logs full content by default; org-wide metrics-only mode is Enterprise-only",
         verification="SOC 2 Type 2, ISO 27001, HIPAA audits; config + contract, no runtime attestation",
         billing=(
-            "Free 10k logs/mo; $49 for 100k + $9/extra 100k; inference on your own provider keys"
+            "No public price list as of November 24, 2026; pricing by quote"
         ),
         sources=(
             ComparisonSource(
-                "Portkey pricing (tiers, log quotas, retention)", "https://portkey.ai/pricing"
+                "Portkey pricing URL redirects to a sales contact page (checked November 24, 2026)",
+                "https://portkey.ai/pricing"
             ),
             ComparisonSource(
                 "Portkey logs and DO NOT TRACK documentation",
@@ -826,13 +827,13 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
             ),
         ),
         article_html="""<h2>What Portkey is in 2026</h2>
-<p>Portkey is a gateway built around an observability platform: request logs, traces, analytics, 50+ guardrails (their count), prompt management, governance, and an MCP gateway from one vendor. It ships in two parts. The <a href="https://github.com/Portkey-AI/gateway" rel="nofollow">gateway</a> is MIT-licensed TypeScript with 12,740 GitHub stars as of August 16, 2026; its README claims routing to 1,600+ LLMs across 40+ providers. The hosted platform — log store, dashboards, prompt studio, RBAC — is proprietary, and it is what <a href="https://portkey.ai/pricing" rel="nofollow">Portkey's pricing page</a> sells.</p>
+<p>Portkey is a gateway built around an observability platform: request logs, traces, analytics, 50+ guardrails (their count), prompt management, governance, and an MCP gateway from one vendor. It ships in two parts. The <a href="https://github.com/Portkey-AI/gateway" rel="nofollow">gateway</a> is MIT-licensed TypeScript with 12,740 GitHub stars as of August 16, 2026; its README claims routing to 1,600+ LLMs across 40+ providers. The hosted platform — log store, dashboards, prompt studio, RBAC — is proprietary, and its <a href="https://portkey.ai/pricing" rel="nofollow">pricing URL</a> now redirects to a Palo Alto Networks sales contact page for Prisma AIRS AI Gateway (checked November 24, 2026).</p>
 <p>The most material fact about Portkey in 2026 is ownership. Palo Alto Networks announced intent to acquire on April 30, 2026 and <a href="https://www.paloaltonetworks.com/company/press/2026/palo-alto-networks-completes-acquisition-of-portkey-to-secure-ai-agents">completed the acquisition on May 29, 2026</a>; Portkey is now the foundational AI gateway of Prisma AIRS, Palo Alto's AI security platform. In March 2026 Portkey announced a $15M Series A and a fully open-source Gateway 2.0. As of August 16, 2026 that 2.0 work sits on a pre-release branch with no root LICENSE file, and the main branch has had no pushes since May 25, 2026. The commercial product is active; the post-acquisition open-source cadence is unproven.</p>
 <p>Scale, company-reported in March 2026: 24,000+ organizations, 1 trillion+ tokens and 120M+ requests processed daily. We could not verify those figures independently, and we know of no reason to doubt them.</p>
 <h2>Where Portkey is genuinely strong</h2>
 <ul>
 <li><strong>One vendor, whole stack.</strong> Teams that debug from prompt-level logs and traces, gate outputs with guardrails, and version prompts in a studio get all of it behind one API. TrustedRouter does none of that; our observability is metadata-only by design.</li>
-<li><strong>Cheap entry.</strong> A free Developer tier (10k recorded logs per month) and a $49/month Production tier (100k logs, $9 per additional 100k) buy the working platform.</li>
+<li><strong>Platform pricing.</strong> The previously published log-volume tiers are no longer on the public site as of November 24, 2026; current terms require a quote.</li>
 <li><strong>Audited compliance.</strong> <a href="https://portkey.ai/docs/product/enterprise-offering/security-portkey" rel="nofollow">Portkey's security documentation</a> lists SOC 2 (Type 2 at Enterprise), ISO 27001, GDPR, and HIPAA with third-party audits. We publish a DPA, BAA, and subprocessor list, and no third-party certification today.</li>
 <li><strong>Hybrid VPC deployment.</strong> Enterprise customers run the data plane — gateway and log store — inside their own network; <a href="https://portkey.ai/docs/product/enterprise-offering/private-cloud-deployments" rel="nofollow">Portkey's deployment docs</a> state LLM traffic stays inside your network boundary in that mode. The control plane stays Portkey-hosted, and configs, including provider API keys, sync to it.</li>
 </ul>
@@ -841,7 +842,7 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
 <p>TrustedRouter is built in the opposite order. Realtime inference never writes prompt or output content to durable storage, on any plan. What we keep is metadata: request and generation ids, model and provider, token counts, latency, status, cost, region, and an API-key hash (<a href="/privacy">privacy page</a>). Batch is a separate opt-in mode with enclave-encrypted retention up to 30 days. Teams that want content-level analytics can enable Broadcast to send selected content to their own destination; we do not retain a copy.</p>
 <p>The second half of the difference is proof. Portkey's privacy posture is configuration plus contract; nothing in its docs attests that a given logging mode is in effect on the serving path. TrustedRouter publishes live hardware attestation for the gateway on three clouds — GCP Confidential Space, AWS Nitro Enclaves, and Azure Confidential Containers — plus a verifier script that checks the running enclave against published source and release digests. Start at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a> and <a href="/security">/security</a>.</p>
 <h2>Fees on different bases</h2>
-<p>Do not compare the numbers directly; the meters differ. Portkey prices recorded logs — free at 10k per month (the pricing page itself calls that tier unsuitable for production), $49/month for 100k, $9 per additional 100k, custom at Enterprise — while model inference bills separately through your own provider keys. TrustedRouter has no subscription: prepaid text and embeddings bill the provider's token price plus 5.5% with a $0.01 per million token floor, video is the provider quote plus 20%, and every route's price is listed on <a href="/models">/models</a> (<a href="/pricing">pricing details</a>). BYOK is supported; we do not publish a separate BYOK fee. One meter charges for observability volume, the other marks up tokens. Which is cheaper depends on your traffic shape.</p>
+<p>Portkey's previously published log-volume tiers are no longer on the public site as of November 24, 2026; pricing is by quote and current terms need confirmation. TrustedRouter has no subscription: prepaid text and embeddings bill the provider's token price plus 5.5% with a $0.01 per million token floor, video is the provider quote plus 20%, and every route's price is listed on <a href="/models">/models</a> (<a href="/pricing">pricing details</a>). BYOK is supported; we do not publish a separate BYOK fee. Compare Portkey's current quote with your traffic shape to determine which is cheaper.</p>
 <h2>What we do not claim</h2>
 <ul>
 <li>Attestation covers our gateway, not model providers. Downstream handling is tracked policy and contract per provider, except <span class="mono">trustedrouter/e2e</span>, which routes only to providers running confidential compute with provider-side end-to-end encryption (Tinfoil, Phala) — their mechanisms, not our attestation.</li>

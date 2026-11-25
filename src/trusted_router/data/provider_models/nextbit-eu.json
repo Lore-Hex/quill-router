@@ -153,6 +153,8 @@
         "logprobs",
         "top_logprobs"
       ],
+      "routable": false,
+      "routable_reason": "provider-access-unavailable",
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 350000,
       "cached_input_token_price_per_m": 40000
@@ -320,7 +322,7 @@
     }
   ],
   "source": "https://eu.api.nextbit256.com/v1/models",
-  "generated_at": "2026-11-24T06:28:10Z",
+  "generated_at": "2026-11-25T03:28:56Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8
 }

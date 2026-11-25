@@ -265,7 +265,24 @@ locals {
   #   - test vectors and a test-only port fix (#2865, the price refreshes).
   # The wire format is unchanged, so the nodes may run either release while
   # one is replaced. Off switch: pin 5e3ebc8b7 again. One node at a time.
-  fastpath_release        = "e1ed7b362a83d74fb7a0fdf972c65f2b86ba68e2"
+  # ddde9504f: main after #2904. Its fastpath/ changes since e1ed7b362:
+  #   - #2906: an owner notices a starved shard (no room under any lease,
+  #     its top-up refused for the floor or allowance) under
+  #     -starved-leases; this release's default `log` writes one line a
+  #     minute per such shard and closes nothing.
+  #   - #2903: the decide line names each key-fact cache miss's cause
+  #     (cache_miss) and the inline read-through's outcome (cache_wait);
+  #     the read-through itself stays off (-edge-decide-cache-wait 0) until
+  #     a node carries the new startup attribute.
+  #   - #2904: the edge can decide budget_strict keys with no limits, dark:
+  #     it acts only once the control plane publishes the
+  #     fastpath_pilot_strict_keys policy member, which waits for the
+  #     product rule that a limitless strict key never gains a first limit.
+  #   - test vectors (the price refreshes).
+  # No decision changes until a switch is set. The wire format is
+  # unchanged, so the nodes may run either release while one is replaced.
+  # Off switch: pin e1ed7b362 again. One node at a time.
+  fastpath_release        = "ddde9504f147db9d83402f9fb1cbb8d3820186a9"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -283,6 +300,10 @@ locals {
   # a rollback may return to its release. b1d3dbcf9 is #2666's pin, listed
   # so that change and this one land in either order.
   fastpath_release_digests = {
+    "ddde9504f147db9d83402f9fb1cbb8d3820186a9" = {
+      fastpath   = "f8c0ae718e27acba890730426964017b3587f383fb0a686aa75096a323b28887"
+      sha256sums = "3a3c52badd01b15063d18aa38b95eb6abfadc0da20fb47145a314b0df5fee876"
+    }
     "e1ed7b362a83d74fb7a0fdf972c65f2b86ba68e2" = {
       fastpath   = "42eff1075063eb065ed35e86aca47b01a1a0626bc077238db35d8701f860f935"
       sha256sums = "1b625c5550d8f96d6515a064360f2ee721cc23bfbb6038e63d205824e94f3320"
@@ -475,12 +496,17 @@ locals {
   # The decide path's read-through (-edge-decide-cache-wait,
   # docs/design/fast-admission-e2-decide.md decision 2): "" leaves the
   # attribute off, and a node runs its release's default, no wait; "100ms"
-  # has a request whose cached key or credit entry is cold or stale wait up
-  # to that for the strong read that fills it, rather than pass as
-  # cache.key. Set only with a pinned release that takes the flag, and only
-  # a node created from the script that reads the attribute takes it, by the
-  # unit rewrite in docs/runbooks/fastpath-deploy.md, "The decide cache's
-  # wait". "0", or "" again, is the off switch.
+  # has a request whose cached key or credit entry is cold or stale wait,
+  # on a timer of that length started after its first look, for the strong
+  # read that fills it, rather than pass as cache.key. Set only with a
+  # pinned release that takes the flag, and only a node created from the
+  # script that reads the attribute takes it, by the unit rewrite in
+  # docs/runbooks/fastpath-deploy.md, "The decide cache's wait". A node's
+  # own value, its for_each entry's cache_wait below, takes this one's place
+  # on that node alone; "" there leaves this one. So "0", or "" again, here
+  # turns the wait off only where no node carries its own: the off switch is
+  # every cache_wait "" (or "0") as well, and before pinning a release
+  # without the flag, every value "", since "0" still passes it.
   fastpath_edge_decide_cache_wait = ""
   fastpath_edge_decide_cache_wait_metadata = {
     for name, value in { fastpath-edge-decide-cache-wait = local.fastpath_edge_decide_cache_wait } : name => value if value != ""
@@ -766,9 +792,29 @@ resource "google_compute_instance" "fastpath_node" {
   # passed neither -allowance-tier2 nor -allowance-tier1 from their
   # attributes. The same release and metadata; 13 and 14 were drained, left
   # the edge backend one apply before their removal, then were removed.
+  #
+  # 17 and 18 take the places of 15 and 16 the same way, for the settle
+  # log's hedge (#2671), starved leases (#2906) and the decide cache's wait
+  # (#2903): the script 15 and 16 run, from before them, passes none of
+  # -settle-hedge, -starved-leases or -edge-decide-cache-wait from their
+  # attributes, and checks no release against its pinned digests (#2668).
+  # The same release and metadata; 15 and 16 are drained, leave the edge
+  # backend one apply before their removal, then are removed.
+  #
+  # cache_wait is the node's own fastpath-edge-decide-cache-wait: "" adds
+  # nothing, so the node carries local.fastpath_edge_decide_cache_wait's
+  # value or none; "0" or 1ms to 250ms is the node's alone and takes the
+  # fleet value's place. Only a node from 17 on runs the script that reads
+  # the attribute, so only such a node carries one, and the decide path must
+  # be on (tests/test_fastpath_edge_decide_cache_wait.py). Every entry names
+  # cache_wait, so the entries share one shape. 17 carried 100ms first, the
+  # canary of docs/runbooks/fastpath-deploy.md, "The decide cache's wait"
+  # step 2, read beside 18 for an hour (step 3); 18 carries it since.
   for_each = {
-    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
-    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
+    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4", cache_wait = "" }
+    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4", cache_wait = "" }
+    "tr-fastpath-17" = { zone = "us-central1-a", machine_type = "e2-standard-4", cache_wait = "100ms" }
+    "tr-fastpath-18" = { zone = "us-central1-b", machine_type = "e2-standard-4", cache_wait = "100ms" }
   }
 
   project      = local.gcp_project_id
@@ -794,6 +840,8 @@ resource "google_compute_instance" "fastpath_node" {
     scopes = ["cloud-platform"]
   }
 
+  # The node's own cache_wait comes after the fleet's decide cache wait, so
+  # it takes that value's place; "" adds nothing.
   metadata = merge({
     enable-oslogin               = "TRUE"
     fastpath-release             = local.fastpath_release
@@ -807,7 +855,7 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-floor               = local.fastpath_floor
     fastpath-allowance-tier2     = local.fastpath_allowance_tier2
     fastpath-allowance-tier1     = local.fastpath_allowance_tier1
-  }, local.fastpath_edge_snapshot, local.fastpath_starved_leases_metadata, local.fastpath_edge_decide_cache_wait_metadata, local.fastpath_settle_hedge_metadata)
+  }, local.fastpath_edge_snapshot, local.fastpath_starved_leases_metadata, local.fastpath_edge_decide_cache_wait_metadata, { for name, value in { fastpath-edge-decide-cache-wait = each.value.cache_wait } : name => value if value != "" }, local.fastpath_settle_hedge_metadata)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
     release_bucket = google_storage_bucket.fastpath_releases.name

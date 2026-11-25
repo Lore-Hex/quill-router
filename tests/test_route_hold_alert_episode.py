@@ -228,7 +228,9 @@ def test_an_expired_hold_that_still_fails_alerts_again(
     # stale stamp (the lift rides a later snapshot), but an expired hold is
     # not live, and the route-health pass judges the hold the refresh would
     # place after lifting it. The re-probed route failed again: a new streak,
-    # after the gap the hold left, is a new episode.
+    # after the gap the hold left, is a new episode. It qualified right after
+    # the lift, so it is a repeat hold: route-hold-repeat (a longer hold and a
+    # nudge toward a permanent operator hold) instead of another route-hold.
     expired = _iso(_now() - dt.timedelta(hours=plan.HOLD_HOURS + 1))
     _write_manifest(tmp_path, held_at=expired)
     assert plan.applied_unserved_route_holds(manifest_dir=tmp_path) == set()
@@ -236,7 +238,9 @@ def test_an_expired_hold_that_still_fails_alerts_again(
     sweeps.evidence = [_evidence(qualified_ago=dt.timedelta(minutes=30), first_failure_at=second_episode)]
     sweeps.run()
     sweeps.run()
-    assert _kinds(alerts) == ["route-hold", "route-hold"]
+    assert _kinds(alerts) == ["route-hold", "route-hold-repeat"]
+    assert "hold 2" in alerts[-1][1] and "48h" in alerts[-1][1]
+    assert "permanent operator hold" in alerts[-1][1]
 
 
 def test_applied_holds_are_the_unexpired_unserved_holds(tmp_path: Path) -> None:

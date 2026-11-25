@@ -1,0 +1,52 @@
+displayName: "TR Gateway: settle 503 not marked retryable"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Settle and refund returned more 503s than the app marked as designed and
+    retryable, or the app marked more than they returned. The snapshot
+    settle (services/async_settle_handler.py, unavailable) answers 503 with
+    Retry-After for designed reasons, among them finish_unconfirmed and
+    transient_store_error, and writes one line for each:
+    async_settle.unavailable from
+    trusted_router.services.async_settle_handler, counted by
+    trustedrouter_gateway_settle_unavailable_503 ("TR Gateway: settle
+    unavailable surge" pages on more than two of those in ten minutes or
+    more than five in an hour). The gateway retries the same settlement
+    identity, and its intent stays with the gateway and the settle outbox
+    until a 200, so a marked 503 is backpressure, not a lost charge. The
+    same line is written for a refund 503, so the 503s counted here are
+    settle and refund together (trustedrouter_gateway_settle_503); a refund
+    503 also pages at once on "TR Gateway: billing path 5xx", which sets
+    only settle 503s aside for this policy. Cloud Run's request log has
+    only status and URL, so every settle or refund 503 without a line is
+    router-core impact: Spanner unavailable, no instance, a crash, a
+    legacy settle path's own 503. Treat it as "TR Gateway: billing path
+    5xx". More lines than 503s means a line is being written without the
+    503 and could hide real ones; that is a defect too. Read the
+    async_settle.unavailable lines' reason= for the incident's window, then
+    the request log's settle 503s by trace. Runbook:
+    docs/spanner-reliability.md.
+conditions:
+  # The shape of gateway-alerts/billing-authorize-503.yaml: counts over ten
+  # minutes, held for three, so a 503 and its line that land in different
+  # one-minute points never page while a real unpaired 503 differs for the
+  # whole ten. "or vector(0)" keeps each side present when it has no series:
+  # without it, no line at all (the usual state) would make the difference
+  # empty and silence every settle 503.
+  - displayName: "Settle and refund 503s and the app's marked lines differ for three minutes"
+    conditionPrometheusQueryLanguage:
+      query: |
+        abs(
+          (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_settle_503{monitored_resource="cloud_run_revision"}[10m])) or vector(0))
+          -
+          (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_settle_unavailable_503{monitored_resource="cloud_run_revision"}[10m])) or vector(0))
+        ) > 0.5
+      duration: 180s
+      evaluationInterval: 60s
+alertStrategy:
+  autoClose: 1800s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

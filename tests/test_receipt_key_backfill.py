@@ -3,10 +3,16 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from trusted_router.receipt_key_backfill_cli import run
+import pytest
+import yaml
+
+from trusted_router import receipt_key_backfill_cli
+from trusted_router.receipt_key_backfill_cli import BackfillDeadlineExceeded, run
 from trusted_router.receipt_keys import b64url_encode, receipt_attestation_sha256, receipt_kid
 from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_models import ReceiptKey
@@ -34,9 +40,15 @@ class _Transaction:
         self.rows = rows
         self.writes = 0
 
-    def execute_sql(self, sql: str, *, params, param_types) -> list[tuple[str, str]]:
+    def execute_sql(
+        self, sql: str, *, params, param_types, timeout, request_options
+    ) -> list[tuple[str, str]]:
         assert "kind=@kind AND id>@after" in sql
         assert "kid IS NULL OR att_sha256 IS NULL" in sql
+        # Every page read is bounded: a read with no deadline held a deploy
+        # for hours on 2026-11-24.
+        assert 0 < timeout <= 60
+        assert request_options == {"priority": "PRIORITY_LOW"}
         del param_types
         ids = sorted(
             entity_id
@@ -101,3 +113,101 @@ def test_backfill_resume_cursor_starts_after_completed_entity() -> None:
     assert run(_store(_Transaction(rows)), batch_size=1, after=records[0].kid) == 1
     assert rows[records[0].kid]["kid"] is None
     assert rows[records[1].kid]["kid"] == records[1].kid
+
+
+class _PagedStore:
+    def __init__(self, pages: list[list[str]]) -> None:
+        self.pages = pages
+        self.calls: list[str | None] = []
+
+    def backfill_receipt_key_versions_page(
+        self, *, after: str | None = None, limit: int = 100
+    ) -> list[str]:
+        del limit
+        self.calls.append(after)
+        return self.pages.pop(0) if self.pages else []
+
+
+def test_backfill_stops_between_pages_at_deadline_with_resume_cursor() -> None:
+    now = [0.0]
+
+    def clock() -> float:
+        return now[0]
+
+    class _SlowStore(_PagedStore):
+        def backfill_receipt_key_versions_page(
+            self, *, after: str | None = None, limit: int = 100
+        ) -> list[str]:
+            now[0] += 40.0
+            return super().backfill_receipt_key_versions_page(after=after, limit=limit)
+
+    store = _SlowStore([["a", "b"], ["c"], ["d"]])
+    with pytest.raises(BackfillDeadlineExceeded) as exc:
+        run(store, batch_size=2, deadline_seconds=60, clock=clock)
+
+    assert store.calls == [None, "b"]
+    assert exc.value.updated == 3
+    assert exc.value.cursor == "c"
+    # The cursor resumes the remaining work only.
+    assert run(store, batch_size=2, after=exc.value.cursor) == 1
+    assert store.calls[-2:] == ["c", "d"]
+
+
+def test_backfill_refuses_a_page_that_does_not_advance_the_cursor() -> None:
+    store = _PagedStore([["b"], ["b"]])
+    with pytest.raises(RuntimeError, match="did not advance"):
+        run(store, batch_size=1)
+
+
+def test_backfill_rejects_unbounded_or_oversized_deadlines() -> None:
+    for bad in (0, -1, receipt_key_backfill_cli.MAX_DEADLINE_SECONDS + 1):
+        with pytest.raises(ValueError, match="deadline"):
+            run(_PagedStore([]), deadline_seconds=bad)
+
+
+def test_hard_deadline_interrupts_a_call_that_never_returns() -> None:
+    started = time.monotonic()
+    with pytest.raises(BackfillDeadlineExceeded):
+        with receipt_key_backfill_cli._hard_deadline(1):
+            time.sleep(30)
+    assert time.monotonic() - started < 10
+
+
+def test_main_exits_with_deadline_code_and_restores_alarm(monkeypatch) -> None:
+    import signal
+
+    class _HangingStore:
+        def backfill_receipt_key_versions_page(
+            self, *, after: str | None = None, limit: int = 100
+        ) -> list[str]:
+            raise BackfillDeadlineExceeded(updated=-1, cursor=None)
+
+    monkeypatch.setattr(receipt_key_backfill_cli, "get_settings", lambda: object())
+    monkeypatch.setattr(receipt_key_backfill_cli, "create_store", lambda settings: _HangingStore())
+    previous = signal.getsignal(signal.SIGALRM)
+
+    assert receipt_key_backfill_cli.main(["--deadline-seconds", "5"]) == (
+        receipt_key_backfill_cli.DEADLINE_EXIT_CODE
+    )
+    assert signal.getsignal(signal.SIGALRM) == previous
+    assert signal.alarm(0) == 0
+
+
+def test_main_rejects_out_of_range_deadline() -> None:
+    with pytest.raises(SystemExit):
+        receipt_key_backfill_cli.main(["--deadline-seconds", "0"])
+
+
+def test_deploy_backfill_step_is_bounded_well_inside_the_lease() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = yaml.safe_load((root / ".github/workflows/deploy-production.yml").read_text())
+    steps = workflow["jobs"]["migrate-schema"]["steps"]
+    (step,) = [s for s in steps if s.get("name") == "Backfill legacy receipt attestation version projections"]
+    run_line = step["run"]
+    assert "python -m trusted_router.receipt_key_backfill_cli" in run_line
+    assert "--deadline-seconds 600" in run_line
+    # The step timeout is a backstop beyond the command's own deadline plus its
+    # SIGALRM grace, and far below the 6 h control-plane lease TTL.
+    timeout_minutes = step["timeout-minutes"]
+    assert isinstance(timeout_minutes, int)
+    assert 600 + 30 < timeout_minutes * 60 <= 20 * 60

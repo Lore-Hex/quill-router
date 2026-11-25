@@ -5,6 +5,13 @@ One planner for both sides of the hold. The hourly price refresh
 the provider manifests. The route-health pass uses it on the deployed
 manifests to decide which routes' pages a pending hold replaces, so it never
 replaces a page with a hold that the caps would refuse.
+
+Repeat holds escalate. A route that qualifies again within REQUALIFY_WINDOW of
+its previous hold lifting is held twice as long as last time (24h, 48h, 96h,
+then MAX_HOLD_HOURS), and the route-health alert asks a human to consider a
+permanent operator hold. The hold count and the lift time stay on the manifest
+row so they survive refreshes; a route that stays out of the hold for the
+whole window starts over at 24h.
 """
 
 from __future__ import annotations
@@ -18,7 +25,9 @@ from typing import Any
 
 from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HELD_AT_FIELD,
+    UNSERVED_ROUTE_HOLD_COUNT_FIELD,
     UNSERVED_ROUTE_HOLD_REASON,
+    UNSERVED_ROUTE_LIFTED_AT_FIELD,
     provider_manifest_row_price_is_valid,
 )
 
@@ -26,10 +35,21 @@ PACKAGED_MANIFEST_DIR = Path(__file__).parent / "data" / "provider_models"
 MAX_ROUTES = 25
 MAX_PROVIDER_FRACTION = 0.5
 HOLD_HOURS = 24
+# A route that re-qualifies within this long after its hold lifted is the same
+# problem again, so its next hold doubles, up to MAX_HOLD_HOURS. The window
+# must cover a lift reaching production (a refresh plus a snapshot rollout,
+# see route_health.ROUTE_HOLD_APPLY_DEADLINE) plus the six-hour outage rule
+# and its re-hold; a test pins that.
+REQUALIFY_WINDOW = timedelta(hours=24)
+MAX_HOLD_HOURS = 7 * 24
 # Hold stamps and evidence timestamps tolerate this much clock skew.
 MAX_CLOCK_SKEW = timedelta(minutes=5)
 
 Route = tuple[str, str]
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _parse_time(value: object) -> datetime | None:
@@ -42,17 +62,65 @@ def _parse_time(value: object) -> datetime | None:
     return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
 
 
+def _hold_count(row: Any) -> int:
+    """The row's hold count; 1 for a missing or malformed one."""
+    count = row.get(UNSERVED_ROUTE_HOLD_COUNT_FIELD) if isinstance(row, dict) else None
+    return count if isinstance(count, int) and not isinstance(count, bool) and count >= 1 else 1
+
+
+def unserved_hold_hours(count: int) -> int:
+    """Length of the count-th consecutive hold: 24h doubling, capped."""
+    if count <= 1:
+        return HOLD_HOURS
+    return min(HOLD_HOURS << min(count - 1, 16), MAX_HOLD_HOURS)
+
+
+def next_unserved_hold_count(row: Any, *, now: datetime) -> int:
+    """The count a hold placed on this row now would carry.
+
+    One more than the last hold when that hold lifted within REQUALIFY_WINDOW;
+    otherwise 1. A missing, malformed or future-dated lift stamp starts over,
+    so a bad stamp can only shorten a hold, never lengthen it.
+    """
+    if not isinstance(row, dict) or UNSERVED_ROUTE_HOLD_COUNT_FIELD not in row:
+        return 1
+    lifted_at = _parse_time(row.get(UNSERVED_ROUTE_LIFTED_AT_FIELD))
+    if lifted_at is None or not -MAX_CLOCK_SKEW <= now - lifted_at <= REQUALIFY_WINDOW:
+        return 1
+    return _hold_count(row) + 1
+
+
+def _forget_stale_hold_history(row: dict[str, Any], now: datetime) -> None:
+    """Clear the repeat-hold record of a row that stayed out of the hold for
+    the whole window (or whose record cannot be read)."""
+    if UNSERVED_ROUTE_HOLD_COUNT_FIELD not in row and UNSERVED_ROUTE_LIFTED_AT_FIELD not in row:
+        return
+    if next_unserved_hold_count(row, now=now) == 1:
+        row.pop(UNSERVED_ROUTE_HOLD_COUNT_FIELD, None)
+        row.pop(UNSERVED_ROUTE_LIFTED_AT_FIELD, None)
+
+
 def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[str]:
-    """Lift every expired hold in place; return the lifted model ids."""
+    """Lift every expired hold in place; return the lifted model ids.
+
+    A lifted row keeps its hold count and records when it lifted, so a quick
+    re-qualification escalates the next hold. The record of a row that is not
+    held is cleared once the re-qualify window has passed.
+    """
     lifted = []
     for row in rows:
-        if not isinstance(row, dict) or row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
+        if not isinstance(row, dict):
+            continue
+        if row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
+            _forget_stale_hold_history(row, now)
             continue
         # A missing, malformed or future-dated stamp cannot prove the hold is
         # young; lift it rather than risk a hold that never expires.
         if _hold_is_live(row, now):
             continue
         row.pop(UNSERVED_ROUTE_HELD_AT_FIELD, None)
+        row[UNSERVED_ROUTE_HOLD_COUNT_FIELD] = _hold_count(row)
+        row[UNSERVED_ROUTE_LIFTED_AT_FIELD] = _iso(now)
         # While held, discovery could not record its own state (the hold
         # outranks it). Never lift into a delisted or unpriced routable row:
         # one such row expires the provider's whole manifest.
@@ -153,7 +221,8 @@ def _hold_is_live(row: Any, now: datetime) -> bool:
     if not _held(row):
         return False
     held_at = _parse_time(row.get(UNSERVED_ROUTE_HELD_AT_FIELD))
-    return held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=HOLD_HOURS)
+    hours = unserved_hold_hours(_hold_count(row))
+    return held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=hours)
 
 
 def _manifest_rows(manifest_dir: Path | None) -> list[tuple[str, list[Any]]]:
@@ -189,6 +258,14 @@ def pending_unserved_route_holds(
     """The evidenced routes the next refresh would hold, judged on copies of
     the deployed manifests after the same expiry lift the refresh applies
     first. Quarantine state is not known here."""
+    return set(pending_unserved_route_hold_counts(evidence, manifest_dir=manifest_dir, now=now))
+
+
+def pending_unserved_route_hold_counts(
+    evidence: set[Route], *, manifest_dir: Path | None = None, now: datetime | None = None,
+) -> dict[Route, int]:
+    """pending_unserved_route_holds, with the hold count each would carry
+    (above 1 for a repeat hold, see next_unserved_hold_count)."""
     now = now or datetime.now(UTC)
     manifests: list[tuple[str, list[Any]]] = []
     for stem, raw_rows in _manifest_rows(manifest_dir):
@@ -198,4 +275,7 @@ def pending_unserved_route_holds(
     planned, _notes = plan_unserved_route_holds(
         evidence, manifests, manifest_stems=[stem for stem, _ in manifests],
     )
-    return {(manifests[index][0], str(row["id"])) for index, row in planned}
+    return {
+        (manifests[index][0], str(row["id"])): next_unserved_hold_count(row, now=now)
+        for index, row in planned
+    }

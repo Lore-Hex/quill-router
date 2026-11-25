@@ -102,7 +102,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, evaluations: list[Any] | None = Non
         return list(result)
 
     monkeypatch.setattr(synthetic_routes, "evaluate_route_health", evaluate)
-    monkeypatch.setattr(synthetic_routes, "_route_holds", lambda: (_held_evidence(), frozenset()))
+    monkeypatch.setattr(synthetic_routes, "_route_holds", lambda: (_held_evidence(), frozenset(), {}))
     monkeypatch.setattr(synthetic_routes, "report_catalog_freshness", lambda: None)
     # The daily digest fires only in its hour; make every hour that hour.
     monkeypatch.setattr(route_health, "DEGRADATION_DIGEST_HOUR_UTC", dt.datetime.now(dt.UTC).hour)

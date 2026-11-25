@@ -58,6 +58,7 @@ print(response.choices[0].message.content)</code></pre>
   </ul>
   <p>Even for a single-model app, TrustedRouter provides one key and one bill across 600+ models and 100+ providers, <a href="/docs/spend-controls">per-key spend controls</a>, opt-in provider failover from this pinned setup, and a <a href="/who-can-see-your-data#verify">verifiable gateway</a>. Switching to a compatible model or provider is a one-string change to the model ID or provider selection, with no new provider account; keep any provider pin and privacy filters compatible with the route you select.</p>
   <p>A gateway adds a network hop and a service dependency. Pinning removes provider selection and fallback, but it does not remove that hop. TrustedRouter is your contact for its hosted API, routing, and billing; upstream availability and processing remain dependencies. Use the <a href="/support">support path</a> for incidents and the <a href="/legal">business terms</a> to establish responsibilities in writing.</p>
+  {% with include_gateway_hop=true %}{% include "public/_gateway_processing.html" %}{% endwith %}
 </section>
 
 <section class="content-section" id="grow">

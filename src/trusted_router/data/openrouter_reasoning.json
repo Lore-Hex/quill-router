@@ -585,12 +585,6 @@
       ],
       "default_effort": "high"
     },
-    "dots-studio/dots-3-note-preview:free": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "elorian/glimpse": {
       "mandatory": false,
       "default_enabled": false,
@@ -2887,7 +2881,35 @@
       ],
       "default_effort": "high"
     },
+    "upstage/solar-mini-4-5": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "medium"
+    },
     "upstage/solar-mini4": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "medium"
+    },
+    "upstage/solar-pro-4-contributor": {
       "mandatory": false,
       "default_enabled": false,
       "supported_efforts": [
@@ -3008,13 +3030,13 @@
       ],
       "default_effort": "high"
     },
-    "xiaomi/mimo-v2.5": {
+    "xiaomi/mimo-v2.6-flash": {
       "mandatory": false,
       "default_enabled": false,
       "supported_efforts": [],
       "default_effort": null
     },
-    "xiaomi/mimo-v2.6-flash": {
+    "xiaomi/mimo-v2.6-flash-mopd": {
       "mandatory": false,
       "default_enabled": false,
       "supported_efforts": [],

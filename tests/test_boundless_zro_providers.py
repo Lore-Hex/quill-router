@@ -496,8 +496,8 @@ def test_boundless_abliterated_legacy_id_never_becomes_the_inference_target(list
 
 
 GPT_OSS_120B = "openai/gpt-oss-120b"
-# A Boundless route that still probes healthy, so it stays served.
-BOUNDLESS_CONTROL = "z-ai/glm-5.2"
+# A healthy Boundless route outside the 2026-11-26 retirement, so it stays served.
+BOUNDLESS_CONTROL = "deepseek/deepseek-v4.1-flash-1017"
 
 
 def test_boundless_gpt_oss_120b_is_held_while_the_provider_rejects_it():

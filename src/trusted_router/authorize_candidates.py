@@ -45,6 +45,7 @@ from trusted_router.catalog import (
     ModelEndpoint,
     effective_endpoint,
 )
+from trusted_router.catalog_data import PROVIDERS
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import custom_model_cost_microdollars
 from trusted_router.errors import api_error
@@ -70,6 +71,7 @@ from trusted_router.routing import (
     fetch_route_endpoint_candidates,
     image_route_endpoint_candidates,
     normalize_routing_inputs,
+    rerank_route_endpoint_candidates,
     speech_route_endpoint_candidates,
     transcription_route_endpoint_candidates,
     video_route_endpoint_candidates,
@@ -143,6 +145,7 @@ class RoutePlan:
     is_transcription: bool
     is_fetch: bool
     is_embeddings: bool
+    is_rerank: bool
     is_decide: bool
 
     @property
@@ -179,6 +182,18 @@ class CandidateOutcome:
         return self.candidates[0][1]
 
 
+def require_rerank_route(route_type: str | None, model_ids: Sequence[str]) -> None:
+    """Rerank-only models cannot enter another route's metering path."""
+    if route_type != "rerank":
+        for model_id in model_ids:
+            model = MODELS.get(model_id)
+            if model is not None and model.supports_rerank:
+                raise api_error(
+                    400, f"Model does not support chat completions: {model_id}",
+                    ErrorType.MODEL_NOT_SUPPORTED,
+                )
+
+
 def plan_route(request: CandidateRequest, settings: Settings, *, region: str) -> RoutePlan:
     """Normalize routing and refuse what the request makes impossible."""
     route_type = request.route_type
@@ -192,6 +207,12 @@ def plan_route(request: CandidateRequest, settings: Settings, *, region: str) ->
     )
     route_preferences = normalized.preferences
     requested_model = MODELS.get(route_model_id) if route_model_id else None
+    # Keep the dormant route's legacy behavior until a provider opts in.
+    is_rerank = route_type == "rerank" and (
+        any(provider.supports_rerank for provider in PROVIDERS.values())
+        or bool(requested_model and requested_model.supports_rerank)
+    )
+    require_rerank_route(route_type, (route_model_id, *normalized.model_ids))
     is_embeddings = (
         requested_model is not None
         and requested_model.supports_embeddings
@@ -208,7 +229,7 @@ def plan_route(request: CandidateRequest, settings: Settings, *, region: str) ->
     supports_live_routing = (
         route_type in {"chat.completions", "responses", "messages"}
         and named_decision_chain is None
-        and not (is_image or is_video or is_embeddings or is_decide)
+        and not (is_image or is_video or is_embeddings or is_rerank or is_decide)
     )
     if not supports_live_routing and (
         route_preferences.preferred_max_latency or route_preferences.preferred_min_throughput
@@ -253,6 +274,7 @@ def plan_route(request: CandidateRequest, settings: Settings, *, region: str) ->
         is_transcription=route_type == "audio.transcriptions",
         is_fetch=route_type == FETCH_ROUTE_TYPE,
         is_embeddings=is_embeddings,
+        is_rerank=is_rerank,
         is_decide=is_decide,
     )
 
@@ -280,7 +302,11 @@ def resolve_candidates(
     ))
     effective_preferences = normalized.preferences
     endpoint_candidates: Sequence[Candidate]
-    if user_model_candidate is not None:
+    if plan.is_rerank:
+        endpoint_candidates = rerank_route_endpoint_candidates(
+            normalized, defer_no_fallback_selection=True,
+        )
+    elif user_model_candidate is not None:
         endpoint_candidates = [user_model_candidate]
     elif plan.is_video:
         endpoint_candidates = video_route_endpoint_candidates(

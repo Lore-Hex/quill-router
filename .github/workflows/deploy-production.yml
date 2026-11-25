@@ -280,12 +280,18 @@ jobs:
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_receipt_key_versions.sh
       - name: Backfill legacy receipt attestation version projections
+        # Normally one empty page in seconds. On 2026-11-24 a run's first page
+        # read never returned and this step held the deploy lease for hours.
+        # The command now bounds each page read (30 s) and itself (600 s, then
+        # exit 3 with the resume cursor); the step timeout is the backstop.
+        # Each page commits on its own, so a rerun resumes where this stopped.
+        timeout-minutes: 15
         env:
           TR_STORAGE_BACKEND: spanner-clickhouse
           TR_GCP_PROJECT_ID: quill-cloud-proxy
           TR_SPANNER_INSTANCE_ID: trusted-router-nam6
           TR_SPANNER_DATABASE_ID: trusted-router
-        run: uv run python -m trusted_router.receipt_key_backfill_cli
+        run: uv run python -m trusted_router.receipt_key_backfill_cli --deadline-seconds 600
       - name: Apply bounded generation-record schema
         run: scripts/deploy/migrate_generation_records.sh --apply
       - name: Apply provider analytics outbox schema
@@ -1364,6 +1370,12 @@ jobs:
             echo "public backend is not live; deploying smokeable companion only"
           fi
 
+      # Observations have no deploy outputs and cannot gate or suppress a mutation.
+      - name: Observe public fleet before deployment
+        if: steps.public_stage.outputs.stage == 'routed'
+        continue-on-error: true
+        run: python3 -m scripts.deploy.public_rollout_report before
+
       - name: Deploy isolated T1 public service
         run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"
 
@@ -1387,6 +1399,14 @@ jobs:
               curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
             done
           done
+
+      - name: Report whether the public deployment changed the fleet
+        if: success() && steps.public_stage.outputs.stage == 'routed'
+        continue-on-error: true
+        env:
+          EXPECTED_IMAGE: ${{ needs.select-release.outputs.image }}
+          EXPECTED_COMMIT: ${{ needs.select-release.outputs.commit }}
+        run: python3 -m scripts.deploy.public_rollout_report after
 
   settle-drain-worker:
     # Follow every successful router rollout with the same serving image/SA.

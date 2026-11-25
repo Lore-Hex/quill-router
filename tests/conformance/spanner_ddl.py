@@ -342,4 +342,14 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'ALTER TABLE tr_speculation_shadow_event ADD ROW DELETION POLICY (OLDER_THAN(updated_at, '
  'INTERVAL 7 DAY))',
  'ALTER TABLE tr_speculation_shadow_success ADD ROW DELETION POLICY (OLDER_THAN(updated_at, '
- 'INTERVAL 7 DAY))')
+ 'INTERVAL 7 DAY))',
+ 'CREATE VIEW tr_workspace_directory_source SQL SECURITY DEFINER AS\n'
+ '    SELECT e.id AS id,\n'
+ "      JSON_QUERY(e.body, '$.id') AS workspace_id,\n"
+ "      JSON_QUERY(e.body, '$.name') AS name,\n"
+ "      JSON_QUERY(e.body, '$.deleted') AS deleted,\n"
+ "      JSON_QUERY(e.body, '$.owner_user_id') AS owner_user_id,\n"
+ "      JSON_QUERY(e.body, '$.federated_home') AS federated_home,\n"
+ "      JSON_QUERY(e.body, '$.created_at') AS created_at\n"
+ '    FROM tr_entities AS e\n'
+ "    WHERE e.kind = 'workspace'")

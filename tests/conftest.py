@@ -146,6 +146,20 @@ def lock_order_guard(request: pytest.FixtureRequest):
 
 
 @pytest.fixture(autouse=True)
+def clear_agent_cost_guide_caches() -> Iterator[None]:
+    """No guide context or expiry schedule may outlive a test's catalog inputs."""
+    from trusted_router import agent_cost_guides
+
+    caches = (agent_cost_guides._opencode_context, agent_cost_guides._gateway_cost_context,
+              agent_cost_guides._catalog_expiries)
+    for cache in caches:
+        cache.cache_clear()
+    yield
+    for cache in caches:
+        cache.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def reset_store() -> None:
     if not isinstance(STORE.target, InMemoryStore):
         configure_store(InMemoryStore())

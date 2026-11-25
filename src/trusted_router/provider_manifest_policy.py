@@ -72,9 +72,15 @@ EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
 # The price refresh holds one listed route the provider has refused to serve
 # for hours (scripts/pricing/unserved_route_holds.py) and lifts it on expiry.
 UNSERVED_ROUTE_HOLD_REASON = "provider-route-unserved"
-# When that hold was placed; it expires HOLD_HOURS later. Only meaningful while
+# When that hold was placed; it expires unserved_hold_hours(count) later. Only meaningful while
 # the row carries UNSERVED_ROUTE_HOLD_REASON.
 UNSERVED_ROUTE_HELD_AT_FIELD = "unserved_held_at"
+# Which hold of a repeat episode this is (1 = first). Each re-hold within the
+# re-qualify window doubles the hold length, so the count stays on the row
+# after the hold lifts, together with when it lifted, and is cleared once the
+# route has stayed out of the hold for the whole window.
+UNSERVED_ROUTE_HOLD_COUNT_FIELD = "unserved_hold_count"
+UNSERVED_ROUTE_LIFTED_AT_FIELD = "unserved_lifted_at"
 _CANARY_QUARANTINE_REASONS = frozenset({
     "provider-canary-failed", "upstream-usage-unavailable", "upstream-output-limit-unenforced",
     UNSERVED_ROUTE_HOLD_REASON,
@@ -178,6 +184,17 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
                     and "price_tiers" not in row
                 )
             return int(row.get("fixed_output_price_per_second_microdollars") or 0) > 0
+        if model_type == "rerank":
+            return (
+                row.get("endpoints") == ["rerank"]
+                and type(row.get("input_token_price_per_m")) is int
+                and row["input_token_price_per_m"] > 0
+                and type(row.get("output_token_price_per_m")) is int
+                and row["output_token_price_per_m"] == 0
+                and row.get("billing_unit", "tokens") == "tokens"
+                and not {"price_tiers", "cached_input_token_price_per_m",
+                         "fixed_request_price_microdollars"}.intersection(row)
+            )
         if model_type == "embedding":
             prompt = int(row.get("input_token_price_per_m") or 0)
             completion = int(row.get("output_token_price_per_m") or 0)

@@ -1,0 +1,45 @@
+{% extends "public/_base.html" %}
+{% from "public/_agent_guide_macros.html" import config_example, route_range %}
+{% block body_attributes %}data-docs-code{% endblock %}
+{% block body %}
+<div class="content-document" data-content-toc>
+<p>To use DeepSeek in OpenCode, run <code>/connect</code>, choose <code>deepseek</code>, paste a DeepSeek key and select <code>deepseek/deepseek-v4-flash</code>. OpenRouter and TrustedRouter are the other two routes through gateways. Provider IDs and setup checked <time datetime="2026-11-24">November 24, 2026</time>.</p>
+<div class="content-reference"><table class="reference-mobile-table reference-column-table"><thead><tr><th scope="col">Route</th><th scope="col">Credential</th><th scope="col">Model selector</th><th scope="col">Who serves the request</th></tr></thead><tbody>
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Route</span>Direct DeepSeek</td><td><span class="reference-cell-label" aria-hidden="true">Credential</span><code>DEEPSEEK_API_KEY</code></td><td><span class="reference-cell-label" aria-hidden="true">Model selector</span><code>deepseek/deepseek-flash</code> — DeepSeek V4.1 Flash 1017<br><code>deepseek/deepseek-v4-flash</code> — V4 Flash</td><td><span class="reference-cell-label" aria-hidden="true">Who serves the request</span>DeepSeek at <code>https://api.deepseek.com</code></td></tr>
+{% if opencode_model %}<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Route</span>OpenRouter</td><td><span class="reference-cell-label" aria-hidden="true">Credential</span><code>OPENROUTER_API_KEY</code></td><td><span class="reference-cell-label" aria-hidden="true">Model selector</span><code>openrouter/{{ opencode_model.id }}</code></td><td><span class="reference-cell-label" aria-hidden="true">Who serves the request</span>The provider selected through OpenRouter</td></tr>{% endif %}
+{% if opencode_model %}<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Route</span>TrustedRouter</td><td><span class="reference-cell-label" aria-hidden="true">Credential</span><code>TRUSTEDROUTER_API_KEY</code></td><td><span class="reference-cell-label" aria-hidden="true">Model selector</span><code>trustedrouter/{{ opencode_model.id }}</code></td><td><span class="reference-cell-label" aria-hidden="true">Who serves the request</span>A catalog provider selected through <code>{{ api_base_url }}</code></td></tr>{% endif %}
+</tbody></table></div>
+<p>V4 Flash and V4.1 Flash are different models. DeepSeek's own guide selects V4 Flash; models.dev also lists the direct <code>deepseek/deepseek-flash</code> selector as DeepSeek V4.1 Flash 1017, the October 17 update. The gateway examples select V4.1 Flash. Sources: <a href="https://models.dev/">OpenCode provider catalog</a>, <a href="https://api-docs.deepseek.com/quick_start/agent_integrations/opencode/">DeepSeek's guide</a> and <a href="https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration">OpenRouter's guide</a>.</p>
+<section class="content-section" id="direct"><h2>Connect DeepSeek directly</h2>
+<p>Use OpenCode v1.18.30 or later, the minimum version recommended by <a href="https://api-docs.deepseek.com/quick_start/agent_integrations/opencode/">DeepSeek's guide</a>.</p>
+<ol><li>Create a <a href="https://platform.deepseek.com/api_keys">DeepSeek API key</a>.</li><li>Run <code>/connect</code>, select <code>deepseek</code>, and enter that key.</li><li>Run <code>/models</code> and select DeepSeek-V4-Flash (<code>deepseek/deepseek-v4-flash</code>).</li></ol>
+</section>
+<section class="content-section" id="openrouter"><h2>Connect through OpenRouter</h2>
+<p>Run <code>/connect</code>, choose OpenRouter, and enter an OpenRouter key; then select <code>openrouter/deepseek/deepseek-v4.1-flash</code> with <code>/models</code>.</p>
+{% if opencode_model %}<p>The model is already in OpenCode's OpenRouter catalog. <a href="https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration">OpenRouter's setup guide</a> shows only the 1.x <code>provider.openrouter.models</code> shape. To add or override the model in V2, use <code>providers.openrouter.models</code>:</p>
+{% set openrouter_config = {"$schema": "https://opencode.ai/config.json", "model": "openrouter/" ~ opencode_model.id, "providers": {"openrouter": {"models": {opencode_model.id: {"name": "DeepSeek V4.1 Flash", "limit": {"context": 1048576, "output": 393216}}}}}} %}
+{{ config_example(openrouter_config, "v2", "OpenCode V2 — OpenRouter model addition") }}
+<p>OpenRouter limits in this example come from <a href="https://models.dev/">models.dev</a>: 1,048,576 context tokens and 393,216 output tokens.</p>{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+</section>
+<section class="content-section" id="trustedrouter"><h2>Connect through TrustedRouter</h2>
+<p>Create a key at <a href="/console/api-keys">Console → API Keys</a>, connect TrustedRouter with <code>/connect</code>, and add this model to your config.</p>
+{% if opencode_model %}<p>{{ opencode_model_name }} has {{ "{:,}".format(opencode_model.context_length) }} context tokens {% if opencode_model.max_completion_tokens is not none %}and {{ "{:,}".format(opencode_model.max_completion_tokens) }} output tokens{% endif %} in the <a href="/models/{{ opencode_model.id }}">TrustedRouter catalog</a>. Choose the configuration for your OpenCode generation, then select <code>trustedrouter/{{ opencode_model.id }}</code>.</p>
+{{ config_example(opencode_v2, "v2", "OpenCode V2") }}
+{{ config_example(opencode_v1, "v1", "OpenCode 1.x") }}{% else %}<p>Choose a current model and its limits from the <a href="/models">model catalog</a>.</p>{% endif %}
+<p>The built-in provider supplies its endpoint, runtime and connection; see <a href="/docs/opencode">the full TrustedRouter setup and troubleshooting guide</a>.</p>
+</section>
+{% if cost_guide.route_count %}<section class="content-section" id="price"><h2>What does DeepSeek through TrustedRouter cost?</h2>
+{{ route_range(cost_guide) }}
+<p>Compare the selected provider's privacy and limits as well as price. See <a href="/llm-gateway-pricing">gateway fees and a monthly workload</a>.</p>
+</section>{% endif %}
+<section class="content-section" id="choose"><h2>Which DeepSeek route should I choose?</h2>
+<p>Direct DeepSeek is simplest for a DeepSeek-only setup and has no gateway fee; choose a gateway when one key across model families and provider fallback are useful.</p>
+<p>TrustedRouter offers 600+ models and 100+ providers, Open, ZDR and TEE <a href="/who-can-see-your-data">privacy tiers</a>, and <a href="/docs/spend-controls">daily, weekly and monthly key limits</a>. OpenRouter's Standard fee is 5.5% on credits purchased; TrustedRouter's standard token markup is {{ cost_guide.fee_percent }}%. Compare <a href="https://openrouter.ai/pricing">OpenRouter's terms</a> and <a href="/llm-gateway-pricing">the fee table</a>.</p>
+</section>
+<section class="content-section" id="thinking"><h2>How does OpenCode handle DeepSeek thinking?</h2>
+<p>According to <a href="https://opencode.ai/docs/models/">OpenCode's model reference</a>, OpenCode reads streamed reasoning from <code>reasoning</code>, <code>reasoning_content</code> or <code>reasoning_text</code>, and restores that field in prior assistant messages.</p>
+<p><a href="https://opencode.ai/docs/models/">OpenCode's model reference</a> documents <code>compatibility.reasoningField</code> and <code>requireReasoning</code>; the latter defaults to true for DeepSeek or when a reasoning field is set.</p>
+</section>
+
+</div>
+{% endblock %}

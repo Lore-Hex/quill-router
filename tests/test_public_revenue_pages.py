@@ -757,9 +757,10 @@ def test_phala_pages_do_not_claim_verified_provider_e2ee(
 def test_public_meta_model_detail_renders_orchestration_components(
     client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
-    # GLM 5.2 Fast, a component Baseten alone serves, is carried here on a
-    # fixture route.
-    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2-fast", "baseten", author="zai")
+    # GLM 5.2 Fast, a component no host serves after Baseten's 2026-12-24
+    # retirement, is carried here on a fixture route (on Z.ai, which no
+    # retirement names): the page renders the published graph either way.
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2-fast", "zai", author="zai")
     response = client.get("/models/trustedrouter/socrates-1.1")
 
     assert response.status_code == 200

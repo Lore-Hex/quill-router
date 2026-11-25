@@ -177,6 +177,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _filter_unserved_provider_endpoints,
     _ingested_models_and_endpoints,
     _is_provider_deprecated_model,
+    _rerank_models,
     _supplemental_provider_models_and_endpoints,
 )
 from trusted_router.closed_weight_routes import closed_weight_route_disallowed
@@ -2007,3 +2008,9 @@ if not provider_model_retired(
     at=CATALOG_RESOLVED_AT,
 ):
     MODEL_ENDPOINTS[_fortanix_public_endpoint.id] = _fortanix_public_endpoint
+
+# Rerank endpoints are private to the internal authorization resolver.
+_RERANK_MODELS = {key: model for key, model in _rerank_models().items() if key not in MODELS}
+if _RERANK_MODELS:
+    MODELS.update(_RERANK_MODELS)
+    MODEL_ENDPOINTS.update(_apply_provider_manifest_expiry(_build_endpoints(_RERANK_MODELS)))

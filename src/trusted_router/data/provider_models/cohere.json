@@ -3,9 +3,9 @@
   "provider": "cohere",
   "source": "https://docs.cohere.com/docs/cohere-embed",
   "pricing_source": "https://cohere.com/pricing",
-  "generated_at": "2026-11-24T06:28:10Z",
+  "generated_at": "2026-11-25T03:28:56Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3,
+  "model_count": 5,
   "models": [
     {
       "id": "cohere/embed-v4.0",
@@ -45,6 +45,42 @@
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 0,
       "pricing_source": "legacy-pinned"
+    },
+    {
+      "id": "cohere/rerank-5-fast",
+      "upstream_id": "rerank-5-fast",
+      "display_name": "rerank-5-fast",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://cohere.com/pricing"
+    },
+    {
+      "id": "cohere/rerank-5-pro",
+      "upstream_id": "rerank-5-pro",
+      "display_name": "rerank-5-pro",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://cohere.com/pricing"
     }
   ]
 }

@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 
+from trusted_router import catalog_ingest
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_open_weights
 from trusted_router.catalog_ingest import _filter_unserved_provider_endpoints
 
@@ -116,7 +117,12 @@ def test_reseller_route_for_closed_model_is_refused(
 
 @pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
 @pytest.mark.parametrize("model_id", UNLISTED_CLOSED_MODELS)
-def test_maker_and_authorized_clouds_are_kept(model_id: str, usage_type: str) -> None:
+def test_maker_and_authorized_clouds_are_kept(
+    model_id: str, usage_type: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The closed-weight rule alone: an operator's prepaid billing hold on an
+    # authorized provider (tests/test_*_prepaid_hold.py) is a separate filter.
+    monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {})
     family = model_id.split("/", 1)[0]
     for provider in AUTHORIZED[family]:
         assert _admitted(_route(model_id, provider, usage_type)), provider
@@ -153,7 +159,7 @@ def test_catalog_has_no_unauthorized_closed_weight_route() -> None:
     "google/gemini-2.5-pro@deepinfra/prepaid",
     "google/veo-3.1@venice/prepaid",
     "openai/gpt-5.5@gmi/byok",
-    "openai/gpt-6-sol@boundless/prepaid",
+    "openai/gpt-6-luna@boundless/prepaid",
     "openai/gpt-6.2-sol@novita/prepaid",
     "openai/sora-2@venice/prepaid",
     "anthropic/claude-opus-5@deepinfra/byok",
@@ -194,7 +200,16 @@ def test_known_reseller_routes_are_absent(endpoint_id: str) -> None:
     "lightricks/ltx-2.3@venice/prepaid",
 ])
 def test_direct_and_open_weight_routes_remain(endpoint_id: str) -> None:
-    assert endpoint_id in MODEL_ENDPOINTS
+    from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+
+    provider = endpoint_id.rsplit("@", 1)[1].split("/", 1)[0]
+    if endpoint_id.endswith("/prepaid") and provider in PREPAID_PROVIDER_HOLD_REASONS:
+        # An operator hold keeps the authorized route dark, settlement-only.
+        assert endpoint_id in HELD_PREPAID_SETTLEMENT_ENDPOINTS
+        assert endpoint_id not in MODEL_ENDPOINTS
+    else:
+        assert endpoint_id in MODEL_ENDPOINTS
 
 
 def test_open_weight_badge_and_route_policy_agree() -> None:

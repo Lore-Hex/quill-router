@@ -90,9 +90,14 @@ def test_column_order_does_not_hide_real_column_changes(attribute, value):
     assert [(d["object"], d["attribute"]) for d in diffs] == [("column/t/id", attribute)]
 
 
-def test_verified_baseline_contains_only_ten_exact_historical_differences():
+def test_verified_baseline_contains_only_the_reviewed_exact_differences():
     entries = json.loads(audit.DEFAULT_ALLOWLIST.read_text())
-    assert len(entries) == 10
+    # Ten historical rolling-upgrade differences, and the emulator's STRING(0)
+    # for the seven columns of the workspace directory view.
+    assert len(entries) == 17
+    view_entries = [e for e in entries if e["object"].startswith("column/tr_workspace_directory_source/")]
+    assert len(view_entries) == 7
+    assert {(e["attribute"], e["production"], e["fixture"]) for e in view_entries} == {("SPANNER_TYPE", "STRING(MAX)", "STRING(0)")}
     assert all(entry["verified_against_production"] for entry in entries)
     diffs = [{**{key: entry[key] for key in ("object", "attribute", "production", "fixture")},
               "direction": "ATTRIBUTE-MISMATCH"} for entry in entries]

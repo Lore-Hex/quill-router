@@ -48,7 +48,7 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "deepseek/deepseek-v4-pro-0813",
     "z-ai/glm-5.2",
-    "z-ai/glm-5.2-fast",
+    "z-ai/glm-5.3-fast",
     "moonshotai/kimi-k3",
     "z-ai/glm-5.3",
 ]

@@ -1028,8 +1028,8 @@ jobs:
           print(f"lifecycle clock pinned to {stamp}")
           '
       - name: Copy oracle split weights for recording
-        # Median non-coverage proof timings from main runs 44865658379,
-        # 44870202393 and 44870524042. Keep coverage and clock profiles separate.
+        # Median non-coverage proof timings. Training and held-out run IDs:
+        # docs/design/ci-deploy-latency.md. Keep coverage and clock profiles separate.
         run: cp .test_durations-oracle durations-${{ matrix.shard }}.json
       - name: Frozen-main proof matrix without coverage
         run: >-

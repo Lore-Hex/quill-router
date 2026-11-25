@@ -43,6 +43,9 @@ _OPERATOR_HOLD_REASONS: dict[str, str] = {
     # public /api/catalog, /models and /openapi.json still list the exact id
     # openai/gpt-oss-120b as serving, so the upstream id has not changed.
     # Its other probed routes still serve, so only this route is held.
+    # Boundless's follow-up notice of 2026-11-24 retires it at the 26 Nov
+    # 23:59 UTC cutoff (provider_lifecycle), so the hold covers the time until
+    # then and is never lifted: Boundless will not serve the route again.
     "openai/gpt-oss-120b": "provider-access-unavailable",
 }
 _ALIASES = {

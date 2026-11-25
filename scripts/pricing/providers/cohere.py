@@ -14,6 +14,7 @@ from scripts.pricing.base import (
     normalize_parser_input,
 )
 from scripts.pricing.manifest import write_embedding_provider_manifest
+from scripts.pricing.parsers import cohere as parser
 
 SLUG = "cohere"
 URL = "https://cohere.com/pricing"
@@ -55,14 +56,26 @@ def embed4_rate_unpublished(html: str) -> bool:
 def fetch() -> ProviderPricingResult:
     html = normalize_parser_input(fetch_html(URL))
     if embed4_rate_unpublished(html):
-        return ProviderPricingResult(
+        result = ProviderPricingResult(
             slug=SLUG,
-            prices={EMBED_V4_MODEL_ID: ModelPrice(EMBED_V4_PINNED_MICRO_PER_M, 0)},
+            prices={
+                EMBED_V4_MODEL_ID: ModelPrice(EMBED_V4_PINNED_MICRO_PER_M, 0),
+                **{key: ModelPrice(value["prompt_micro_per_m"], 0)
+                   for key, value in parser.parse_rerank(html).items()},
+            },
             source=PINNED_SOURCE,
             fetched_url=URL,
             notes=["embed-v4.0 pinned at its last published rate; cohere.com/pricing publishes no Embed 4 rate"],
         )
-    return fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS)
+    else:
+        result = fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS)
+    for name, unit in re.findall(r'"modelName":"(Rerank [^"]+)","per":"([^"]+)"', html.replace(r'\"', '"')):
+        model_id = "cohere/" + name.lower().replace(" ", "-")
+        if model_id not in result.prices:
+            result.notes.append(f"skipped {name}: no positive per-token price (source unit: {unit})")
+    result.price_index_model_ids = frozenset(key for key in result.prices
+                                             if not key.startswith("cohere/rerank-"))
+    return result
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
@@ -70,6 +83,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         result,
         manifest_path=MANIFEST_PATH,
         required_model_ids=frozenset(EXPECTED_MODELS),
+        rerank_model_ids=frozenset(key for key in result.prices if key.startswith("cohere/rerank-")),
     )
     if result.source == PINNED_SOURCE:
         raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))

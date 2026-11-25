@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 38,
+    "model_count": 39,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 76,
+    "route_count": 78,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 77,
+    "model_count": 78,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 153,
+    "route_count": 155,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -298,19 +298,19 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 60,
+    "model_count": 57,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 60,
+    "route_count": 57,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -631,10 +631,10 @@
   },
   "nextbit-eu": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 3,
     "name": "NextBit (EU)",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "nextbit-eu"
   },
@@ -721,10 +721,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 6,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },

@@ -65,7 +65,11 @@
       "output_token_price_per_m": 0,
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": null
+      "pricing_valid_until": null,
+      "settlement_prices": {
+        "input_token_price_per_m": 84000,
+        "output_token_price_per_m": 0
+      }
     },
     {
       "display_name": "Decision Models s1-vision (EU)",
@@ -303,7 +307,11 @@
       "pricing_valid_until": null,
       "routable": true,
       "input_token_price_per_m": 84000,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "settlement_prices": {
+        "input_token_price_per_m": 84000,
+        "output_token_price_per_m": 0
+      }
     },
     {
       "display_name": "Decision Models reax-1 (EU)",
@@ -531,7 +539,11 @@
       "pricing_valid_until": null,
       "routable": true,
       "input_token_price_per_m": 84000,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "settlement_prices": {
+        "input_token_price_per_m": 84000,
+        "output_token_price_per_m": 0
+      }
     },
     {
       "display_name": "Decision Models bison-1 (EU)",
@@ -664,7 +676,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-11-24T06:28:10Z",
+  "generated_at": "2026-11-25T03:28:56Z",
   "price_scale": "microdollars_per_million",
   "model_count": 20
 }
