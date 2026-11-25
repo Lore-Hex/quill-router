@@ -399,7 +399,21 @@
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 10000,
-      "limits_source": "placeholder"
+      "limits_source": "placeholder",
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 100000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 500000,
+          "cached_input_token_price_per_m": 10000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 50000
+        }
+      ]
     },
     {
       "display_name": "Claude Fable 5.2",
@@ -431,7 +445,7 @@
   ],
   "provider": "anthropic",
   "source": "https://www.anthropic.com/pricing",
-  "generated_at": "2026-11-25T09:00:02Z",
+  "generated_at": "2026-11-25T20:14:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 15
 }
