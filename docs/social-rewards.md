@@ -17,7 +17,8 @@ of tokens; token usage depends on model pricing.
 Existing accounts are not enrolled retroactively. Existing signup exclusions
 continue to apply, including delegated signups and accounts that do not qualify
 for starter credit. Accounts created while rewards are disabled retain the normal
-signup-credit behavior and are not retroactively enrolled when rewards return.
+signup-credit behavior ($0.03 by default for eligible new accounts) and are not
+retroactively enrolled when rewards return. This does not change existing balances.
 
 The allowance belongs to the account and its original signup workspace. Switching
 workspaces, spending credit, or repeating an action does not reset it. Losing
