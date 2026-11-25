@@ -26,6 +26,7 @@ from trusted_router.operational_analytics import (
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
+from trusted_router.services.abuse_tripwires import run_hourly_tripwire_sweep
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.storage_rate_limits import InMemoryRateLimits
@@ -363,6 +364,7 @@ async def _run_and_record_impl(
             await run_in_threadpool(_client_watch_pass, settings, samples)
         except Exception:
             log.warning("client_watch.pass_failed", exc_info=True)
+        await _abuse_tripwire_pass(settings)
         result: dict[str, Any] = {
             "data": {
                 "recorded": len(samples),
@@ -549,6 +551,7 @@ def register(router: APIRouter) -> None:
                 await run_in_threadpool(_client_watch_pass, settings, samples)
             except Exception:
                 log.warning("client_watch.pass_failed", exc_info=True)
+            await _abuse_tripwire_pass(settings)
             return {"data": {"recorded": len(samples)}}
         finally:
             slot.release()
@@ -757,6 +760,14 @@ def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
 def _record_benchmark_samples(samples: list[ProviderBenchmarkSample]) -> None:
     for sample in samples:
         STORE.record_provider_benchmark(sample)
+
+
+async def _abuse_tripwire_pass(settings: Settings) -> None:
+    """One hourly abuse sweep riding the monitor tick; never fails the tick."""
+    try:
+        await run_in_threadpool(run_hourly_tripwire_sweep, settings, STORE)
+    except Exception:
+        log.warning("abuse_tripwire.pass_failed", exc_info=True)
 
 
 def _client_watch_pass(settings: Settings, samples: list[SyntheticProbeSample]) -> None:

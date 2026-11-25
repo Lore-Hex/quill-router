@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
@@ -34,6 +35,8 @@ from trusted_router.storage_models import CreditProvenance
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
 from trusted_router.url_validation import parse_url
+
+log = logging.getLogger(__name__)
 
 _TOKEN_CACHE_SECONDS_SKEW = 60
 _TOKEN_CACHE_LOCK = threading.Lock()
@@ -184,6 +187,8 @@ def capture_paypal_order_for_workspace(
         client_error_message="PayPal order could not be captured",
     )
     result = credit_paypal_capture(order, expected_workspace_id=workspace_id)
+    if result.status == "COMPLETED":
+        record_paypal_payer_email_match(order, workspace_id=result.workspace_id)
     if result.order_id == "":
         return PayPalCaptureResult(
             order_id=order_id,
@@ -196,6 +201,43 @@ def capture_paypal_order_for_workspace(
             charge_amount_microdollars=result.charge_amount_microdollars,
         )
     return result
+
+
+def paypal_payer_email(order: Mapping[str, Any]) -> str | None:
+    """The payer email on a captured order, when PayPal reports one."""
+    payer = order.get("payer")
+    if not isinstance(payer, Mapping):
+        return None
+    email = payer.get("email_address")
+    return email.strip().lower() if isinstance(email, str) and "@" in email else None
+
+
+def record_paypal_payer_email_match(order: Mapping[str, Any], *, workspace_id: str) -> bool | None:
+    """Record, as a boolean on the paying user, whether PayPal's payer email
+    equals the account email. An abuse signal only: nothing is refused on it.
+
+    The payer's address is compared in memory and never stored or logged.
+    Runs after the credit committed and swallows every failure, so it can
+    never fail a capture. Returns the recorded value, or None when skipped.
+    """
+    try:
+        payer_email = paypal_payer_email(order)
+        if payer_email is None:
+            return None
+        parsed = _extract_capture(order)
+        user_id = parsed.get("initiating_user_id")
+        if not user_id:
+            workspace = STORE.get_workspace(workspace_id)
+            user_id = workspace.owner_user_id if workspace is not None else None
+        user = STORE.get_user(user_id) if user_id else None
+        if user is None or not user.email:
+            return None
+        matches = user.email.strip().lower() == payer_email
+        STORE.set_user_paypal_payer_match(user.id, matches)
+        return matches
+    except Exception:  # noqa: BLE001 - a signal write must never fail a committed capture
+        log.warning("paypal.payer_match_record_failed", exc_info=True)
+        return None
 
 
 def credit_paypal_capture(

@@ -630,6 +630,11 @@ class Settings(BaseSettings):
     # switch and ``new_signups_enabled`` must both be on to create one.
     wallet_signup_enabled: bool = False
 
+    # Hourly abuse tripwires (services/abuse_tripwires.py): shared client
+    # sessions across workspaces and first-week single-model spend. Alert
+    # only; nothing is paused or refused. Needs the ClickHouse reader.
+    abuse_tripwires_enabled: bool = True
+
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
     sentry_local_enabled: bool = False
