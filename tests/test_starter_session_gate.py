@@ -393,3 +393,24 @@ def test_the_replay_lookup_runs_under_the_gate_deadline(monkeypatch: pytest.Monk
     assert decision == starter_session_gate.EXEMPT
     assert seen[0] is not None and seen[0] <= starter_session_gate.GATE_RPC_SECONDS
     assert after is not None and after > 19
+
+
+def test_gate_rpcs_are_capped_per_call() -> None:
+    import time
+
+    from trusted_router.storage_gcp_io import _SPANNER_RPC_MAX_SECONDS, spanner_rpc_deadline
+
+    seen: list[float | None] = []
+
+    class Store(_NoAttributionStore):
+        def claim_starter_session(self, *args: Any, **kwargs: Any) -> None:
+            seen.append(_SPANNER_RPC_MAX_SECONDS.get())
+            return None
+
+    with spanner_rpc_deadline(time.monotonic() + 20):
+        starter_session_gate.check(
+            Store(credits=300_000), _Workspace(), SESSION,
+            now=dt.datetime.now(dt.UTC), starter_credit_microdollars=300_000,
+        )
+    # A per-RPC cap is what turns off the SDK's two-second reset backoff.
+    assert seen == [starter_session_gate.GATE_RPC_SECONDS]

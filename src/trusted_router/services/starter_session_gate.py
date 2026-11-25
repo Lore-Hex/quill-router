@@ -30,7 +30,9 @@ store calls run under their own ``GATE_RPC_SECONDS`` Spanner deadline, nested in
 the request's shared one, so a slow gate read can never spend the time the
 billing reservation needs; the gate is skipped when less than
 ``GATE_MIN_REMAINING_SECONDS`` of the shared budget is left. On Postgres the
-claim's statements carry their own ``statement_timeout``.
+claim's statements carry their own ``statement_timeout``; the funding read is
+the same ledger read (and pool) the reservation itself makes on every
+request, so it adds no stall the reservation would not already hit.
 
 Claims are small entities written only for distinctive sessions of
 never-funded workspaces under 14 days old, so they grow with new free signups
@@ -132,7 +134,10 @@ def _gate_deadline() -> Iterator[None]:
     remaining = shared_rpc_budget_remaining()
     if remaining is not None and remaining < GATE_MIN_REMAINING_SECONDS:
         raise _BudgetTooLow
-    with spanner_rpc_deadline(time.monotonic() + GATE_RPC_SECONDS):
+    # The per-RPC cap also switches off the SDK's fixed two-second reset
+    # backoff (configure_spanner_rpc_deadlines), so a transport reset fails
+    # open within the gate's budget instead of sleeping past it.
+    with spanner_rpc_deadline(time.monotonic() + GATE_RPC_SECONDS, max_rpc_seconds=GATE_RPC_SECONDS):
         yield
 
 
