@@ -79,6 +79,7 @@ def fetch() -> ProviderPricingResult:
     )
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
+    notes: list[str] = []
     for source in rows:
         native_id = source.get("id")
         if not isinstance(native_id, str) or not native_id.startswith("jina-ai/"):
@@ -86,13 +87,17 @@ def fetch() -> ProviderPricingResult:
         output_modalities = {
             str(value).casefold() for value in (source.get("output_modalities") or [])
         }
-        if "embeddings" not in output_modalities:
+        rerank = output_modalities == {"scores"}
+        if "embeddings" not in output_modalities and not rerank:
             continue
         price = _embedding_price(source)
         if price is None:
+            if rerank:
+                notes.append(f"skipped {native_id}: no positive per-token input price")
             continue
         upstream_id = native_id.removeprefix("jina-ai/")
         row: dict[str, Any] = {
+            "model_type": "rerank" if rerank else "embedding",
             "id": native_id,
             "upstream_id": upstream_id,
             "display_name": str(source.get("name") or native_id),
@@ -112,6 +117,8 @@ def fetch() -> ProviderPricingResult:
     representative = "jina-ai/jina-embeddings-v5-text-nano"
     healthy = _probe(api_key, discovered[representative]["upstream_id"])
     for row in discovered.values():
+        if row["model_type"] == "rerank":
+            continue
         row["routable"] = healthy
         if not healthy:
             row["routable_reason"] = "provider-canary-failed"
@@ -122,7 +129,8 @@ def fetch() -> ProviderPricingResult:
         source="api",
         fetched_url=URL,
         notes=[
-            f"discovered {len(discovered)} priced embedding models",
+            f"discovered {len(discovered)} priced embedding and rerank models",
+            *notes,
             f"representative embedding canary {'passed' if healthy else 'failed'}",
         ],
         include_in_price_index=False,

@@ -89,7 +89,7 @@ _DEFAULT_PROVIDER_SLUGS: tuple[str, ...] = (
 
 def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str, object]:
     public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS
-                     and not model.internal_only and not is_listing_alias(model.id, MODELS)]
+                     and not model.internal_only and not model.supports_rerank and not is_listing_alias(model.id, MODELS)]
     public_model_ids = {model.id for model in public_models}
     public_endpoints = [
         endpoint

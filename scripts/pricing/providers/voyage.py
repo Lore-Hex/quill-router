@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
@@ -31,7 +32,20 @@ MANIFEST_PATH = (
 
 
 def fetch() -> ProviderPricingResult:
-    return fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS)
+    sources: list[str] = []
+
+    def capture(source: str) -> str:
+        sources.append(source)
+        return source
+
+    result = fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS,
+                            source_transform=capture)
+    for model_id in sorted(set(re.findall(r"`(rerank-[^`]+)`", "\n".join(sources)))):
+        if f"voyage/{model_id}" not in result.prices:
+            result.notes.append(f"skipped {model_id}: no positive per-token price in the supported tables")
+    result.price_index_model_ids = frozenset(key for key in result.prices
+                                             if not key.startswith("voyage/rerank-"))
+    return result
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
@@ -39,4 +53,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         result,
         manifest_path=MANIFEST_PATH,
         required_model_ids=frozenset({"voyage/voyage-3-large"}),
+        rerank_model_ids=frozenset(key for key in result.prices if key.startswith("voyage/rerank-")),
     )

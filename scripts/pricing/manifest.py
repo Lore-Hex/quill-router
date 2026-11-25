@@ -73,6 +73,7 @@ def write_embedding_provider_manifest(
     *,
     manifest_path: Path,
     required_model_ids: frozenset[str],
+    rerank_model_ids: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Update input-only embedding prices in a provider manifest.
 
@@ -85,16 +86,34 @@ def write_embedding_provider_manifest(
     if not isinstance(rows, list):
         raise RuntimeError(f"{result.slug} manifest has no models list")
 
+    existing_ids = {row.get("id") for row in rows if isinstance(row, dict)}
+    for model_id in sorted(rerank_model_ids - existing_ids):
+        rows.append({
+            "id": model_id,
+            "upstream_id": model_id.split("/", 1)[1],
+            "display_name": model_id.split("/", 1)[1],
+            "model_type": "rerank",
+            "endpoints": ["rerank"],
+            "input_modalities": ["text"],
+            "output_modalities": ["scores"],
+        })
     updated: list[str] = []
     for row in rows:
-        if not isinstance(row, dict) or row.get("model_type") != "embedding":
+        if not isinstance(row, dict) or row.get("model_type") not in {"embedding", "rerank"}:
             continue
         model_id = row.get("id")
         if not isinstance(model_id, str):
             continue
         price = result.prices.get(model_id)
         if price is None:
+            if row.get("model_type") == "rerank":
+                row["routable"] = False
+                row["routable_reason"] = "price-unavailable"
             continue
+        if row.get("model_type") == "rerank" and (
+            price.prompt_micro_per_m <= 0 or price.tiers[0].prompt_cached_micro_per_m is not None
+        ):
+            raise RuntimeError(f"{result.slug} rerank price for {model_id} must be positive and uncached")
         if len(price.tiers) != 1 or price.completion_micro_per_m != 0:
             raise RuntimeError(
                 f"{result.slug} embedding price for {model_id} must be single-tier and input-only"
@@ -143,12 +162,13 @@ def write_discovered_embedding_manifest(
                 f"{result.slug} embedding price for {model_id} must be single-tier and input-only"
             )
         row = dict(source)
+        rerank = source.get("model_type") == "rerank"
         row.update(
             {
                 "id": model_id,
-                "model_type": "embedding",
-                "endpoints": ["embeddings"],
-                "output_modalities": ["embeddings"],
+                "model_type": "rerank" if rerank else "embedding",
+                "endpoints": ["rerank"] if rerank else ["embeddings"],
+                "output_modalities": ["scores"] if rerank else ["embeddings"],
             }
         )
         normalized[model_id] = row

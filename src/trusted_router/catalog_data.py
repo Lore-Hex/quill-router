@@ -29,6 +29,7 @@ class Provider:
     supports_chat: bool = True
     supports_messages: bool = False
     supports_embeddings: bool = False
+    supports_rerank: bool = False
     supports_prepaid: bool = False
     supports_byok: bool = True
     attested_gateway: bool = True
@@ -426,6 +427,7 @@ class Model:
     supports_chat: bool = True
     supports_messages: bool = False
     supports_embeddings: bool = False
+    supports_rerank: bool = False
     supports_video: bool = False
     # Decision ("System One") models: state + typed questions in, typed
     # answers with probabilities out. No text generation, so output is free

@@ -184,6 +184,17 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
                     and "price_tiers" not in row
                 )
             return int(row.get("fixed_output_price_per_second_microdollars") or 0) > 0
+        if model_type == "rerank":
+            return (
+                row.get("endpoints") == ["rerank"]
+                and type(row.get("input_token_price_per_m")) is int
+                and row["input_token_price_per_m"] > 0
+                and type(row.get("output_token_price_per_m")) is int
+                and row["output_token_price_per_m"] == 0
+                and row.get("billing_unit", "tokens") == "tokens"
+                and not {"price_tiers", "cached_input_token_price_per_m",
+                         "fixed_request_price_microdollars"}.intersection(row)
+            )
         if model_type == "embedding":
             prompt = int(row.get("input_token_price_per_m") or 0)
             completion = int(row.get("output_token_price_per_m") or 0)
