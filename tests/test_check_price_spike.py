@@ -211,6 +211,17 @@ def test_akashml_kimi_cache_price_review_is_exact():
         assert check({other: before[route]}, {other: after[route]})[0]
 
 
+def test_siliconflow_kimi_k25_cache_price_review_is_exact():
+    # Exact values from the held hourly refreshes of 2026-11-24.
+    route = "moonshotai/kimi-k2.5 [siliconflow:siliconflow:moonshotai/Kimi-K2.5] cached-input"
+    before = {route: {"prompt": "7E-8", "completion": "0"}}
+    after = {route: {"prompt": "1.5E-7", "completion": "0"}}
+    assert check(before, after)[0] == []
+    assert check(before, {route: {"prompt": "1.6E-7", "completion": "0"}})[0]
+    for other in (route.replace("siliconflow:siliconflow:", "other:other:"), route.removesuffix(" cached-input")):
+        assert check({other: before[route]}, {other: after[route]})[0]
+
+
 def test_tencent_step5_verified_output_correction_is_exact():
     route = "stepfun/step-5-preview [tencent:tencent:step-5-preview]"
     before = {route: {"prompt": "0.000001", "completion": "0.00000027"}}
