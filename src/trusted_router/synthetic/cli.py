@@ -579,7 +579,22 @@ async def _post_remediator(
                 return True
         response.raise_for_status()
         payload = response.json()
-        decisions = payload.get("data", {}).get("decisions") if isinstance(payload, dict) else None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if (
+            response.status_code == 202
+            and isinstance(data, dict)
+            and data.get("deadline_exceeded") is True
+        ):
+            # The pass outlived its request deadline. The control plane logs
+            # it, and escalates repeated overruns itself; one is expected.
+            print(
+                "remediator deadline exceeded: "
+                f"worker={data.get('worker')} "
+                f"elapsed_seconds={data.get('elapsed_seconds')} "
+                f"consecutive={data.get('consecutive_overruns')}"
+            )
+            return True
+        decisions = data.get("decisions") if isinstance(data, dict) else None
         if not isinstance(decisions, int):
             raise ValueError("remediator response did not contain a decision count")
         print(f"remediator decisions: {decisions}")

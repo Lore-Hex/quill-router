@@ -2477,3 +2477,30 @@ def test_memory_account_refusal_read_filters_and_orders() -> None:
     assert [row.id for row in store.provider_account_refusal_samples(
         cutoff="2026-11-20T16:00:00Z", per_route_limit=2, limit=10,
     )] == ["recovered", "new"]
+
+
+def test_read_timeout_cap_shortens_reads_only_inside_its_context() -> None:
+    from trusted_router.operational_analytics import read_timeout_cap
+
+    seen: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.extensions["timeout"]["read"])
+        return httpx.Response(200, json={"data": []})
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test", user="read", password="test",  # noqa: S106
+        transport=httpx.MockTransport(handler),
+    )
+    client.synthetic_samples(limit=1)
+    with read_timeout_cap(2.5):
+        client.synthetic_samples(limit=1)
+        # A nested, looser cap never loosens the outer one.
+        with read_timeout_cap(60.0):
+            client.synthetic_samples(limit=1)
+    client.synthetic_samples(limit=1)
+
+    assert seen == [20.0, 2.5, 2.5, 20.0]
+    with pytest.raises(ValueError, match="positive"):
+        with read_timeout_cap(0):
+            pass

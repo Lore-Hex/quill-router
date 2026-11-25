@@ -20,6 +20,7 @@ _OBSERVER_TOKEN = "observer-admission-token"  # noqa: S105 - test token.
 @pytest.fixture(autouse=True)
 def _reset_operation_limits() -> Iterator[None]:
     synthetic_routes._OPERATION_RATE_LIMITS.reset()  # noqa: SLF001
+    synthetic_routes._note_remediator_finished()  # noqa: SLF001
     yield
     deadline = time.monotonic() + 2
     while synthetic_routes._BACKGROUND_RUNS and time.monotonic() < deadline:  # noqa: SLF001
@@ -264,7 +265,7 @@ def test_remediator_deadline_keeps_slot_until_abandoned_worker_exits(
         synthetic_remediator_deadline_seconds=0.2,
     )
     try:
-        with caplog.at_level("ERROR"):
+        with caplog.at_level("WARNING"):
             assert asyncio.run(synthetic_routes._run_scheduled_remediator_pass(settings)) is None  # noqa: SLF001
         assert started.is_set()
         assert worker_names == ["synthetic-remediator_0"]
@@ -351,3 +352,198 @@ def test_synthetic_run_has_a_small_route_specific_cadence(
 
     assert [response.status_code for response in responses] == [200, 200, 429]
     assert responses[-1].headers["retry-after"]
+
+
+def _wait_until(predicate: Any, *, seconds: float = 2.0) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    pytest.fail("condition was not reached in time")
+
+
+def test_remediate_deadline_overrun_is_a_structured_202_not_a_500(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """QUILL-ROUTER-B7: an overrun answered 500 with an unhandled TimeoutError."""
+    started = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    running = 0
+    max_running = 0
+    calls = 0
+
+    def blocking_pass(_settings: Settings) -> list[object]:
+        nonlocal running, max_running, calls
+        with lock:
+            calls += 1
+            first = calls == 1
+            running += 1
+            max_running = max(max_running, running)
+        try:
+            if first:
+                started.set()
+                release.wait(5)
+            return ["decision"]
+        finally:
+            with lock:
+                running -= 1
+
+    monkeypatch.setattr(synthetic_routes, "run_remediator_pass", blocking_pass)
+    try:
+        with _client(synthetic_remediator_deadline_seconds=0.2) as client, caplog.at_level(
+            "WARNING"
+        ):
+            overrun = client.post("/v1/internal/synthetic/remediate", headers=_headers())
+            assert overrun.status_code == 202
+            data = overrun.json()["data"]
+            assert data["deadline_exceeded"] is True
+            assert data["worker"] == "continuing"
+            assert data["decisions"] is None
+            assert data["consecutive_overruns"] == 1
+            assert data["elapsed_seconds"] >= 0.2
+            assert started.is_set()
+
+            # The still-running worker owns the slot: the next tick is told a
+            # pass is in progress instead of starting a second one.
+            overlap = client.post("/v1/internal/synthetic/remediate", headers=_headers())
+            assert overlap.status_code == 429
+            assert overlap.json()["error"]["message"] == (
+                "Synthetic operation is already in progress"
+            )
+            assert calls == 1
+
+            release.set()
+            semaphore = synthetic_routes._OPERATION_SLOTS["remediate"]  # noqa: SLF001
+
+            def slot_free() -> bool:
+                if semaphore.acquire(blocking=False):
+                    semaphore.release()
+                    return True
+                return False
+
+            _wait_until(slot_free)
+            synthetic_routes._OPERATION_RATE_LIMITS.reset()  # noqa: SLF001
+            finished = client.post("/v1/internal/synthetic/remediate", headers=_headers())
+            assert finished.status_code == 200
+            assert finished.json() == {"data": {"decisions": 1}}
+    finally:
+        release.set()
+
+    assert max_running == 1
+    overrun_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("synthetic.remediator_deadline_exceeded")
+    ]
+    # One expected overrun is a warning, never an ERROR (which reaches Sentry).
+    assert [record.levelname for record in overrun_logs] == ["WARNING"]
+    assert "worker=continuing consecutive=1" in overrun_logs[0].getMessage()
+
+
+def test_remediator_overrun_releases_slot_when_worker_never_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def counting_pass(_settings: Settings) -> list[object]:
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(synthetic_routes, "run_remediator_pass", counting_pass)
+    # Occupy the single remediator worker thread so the pass stays queued.
+    occupy = threading.Event()
+    blocker = synthetic_routes._REMEDIATOR_EXECUTOR.submit(occupy.wait, 5)  # noqa: SLF001
+    settings = Settings(environment="test", synthetic_remediator_deadline_seconds=0.1)
+    try:
+        slot = synthetic_routes._HeldOperationSlot(  # noqa: SLF001
+            synthetic_routes._admit_operation("remediate")  # noqa: SLF001
+        )
+        result = asyncio.run(
+            synthetic_routes._run_remediator_with_deadline(settings, slot)  # noqa: SLF001
+        )
+    finally:
+        occupy.set()
+        blocker.result(timeout=5)
+
+    assert isinstance(result, synthetic_routes.RemediatorOverrun)
+    assert result.worker == "abandoned"
+    # Cancelled before it started: it never runs, and the admission is free.
+    time.sleep(0.05)
+    assert calls == 0
+    semaphore = synthetic_routes._OPERATION_SLOTS["remediate"]  # noqa: SLF001
+    assert semaphore.acquire(blocking=False)
+    semaphore.release()
+
+
+def test_repeated_remediator_overruns_escalate_to_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gate = threading.Event()
+
+    def slow_pass(_settings: Settings) -> list[object]:
+        gate.wait(0.3)
+        return []
+
+    monkeypatch.setattr(synthetic_routes, "run_remediator_pass", slow_pass)
+    settings = Settings(environment="test", synthetic_remediator_deadline_seconds=0.05)
+    semaphore = synthetic_routes._OPERATION_SLOTS["remediate"]  # noqa: SLF001
+
+    def overrun_once() -> Any:
+        _wait_until(lambda: semaphore.acquire(blocking=False))
+        slot = synthetic_routes._HeldOperationSlot(semaphore)  # noqa: SLF001
+        return asyncio.run(
+            synthetic_routes._run_remediator_with_deadline(settings, slot)  # noqa: SLF001
+        )
+
+    with caplog.at_level("WARNING"):
+        results = [overrun_once() for _ in range(3)]
+    assert [r.consecutive for r in results] == [1, 2, 3]
+    levels = [
+        record.levelname
+        for record in caplog.records
+        if record.getMessage().startswith("synthetic.remediator_deadline_exceeded")
+    ]
+    assert levels == ["WARNING", "WARNING", "ERROR"]
+
+    # A pass that finishes resets the run.
+    gate.set()
+    _wait_until(lambda: semaphore.acquire(blocking=False))
+    slot = synthetic_routes._HeldOperationSlot(semaphore)  # noqa: SLF001
+    assert asyncio.run(
+        synthetic_routes._run_remediator_with_deadline(settings, slot)  # noqa: SLF001
+    ) == 0
+    assert synthetic_routes._note_remediator_overrun() == 1  # noqa: SLF001
+
+
+def test_remediator_real_failure_still_surfaces_and_frees_the_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_pass(_settings: Settings) -> list[object]:
+        raise RuntimeError("analytics schema drift")
+
+    monkeypatch.setattr(synthetic_routes, "run_remediator_pass", broken_pass)
+    with _client(raise_server_exceptions=False) as client:
+        failed = client.post("/v1/internal/synthetic/remediate", headers=_headers())
+        assert failed.status_code == 500
+
+        monkeypatch.setattr(synthetic_routes, "run_remediator_pass", lambda _s: [])
+        recovered = client.post("/v1/internal/synthetic/remediate", headers=_headers())
+        assert recovered.status_code == 200
+        assert recovered.json() == {"data": {"decisions": 0}}
+
+    synthetic_routes._OPERATION_RATE_LIMITS.reset()  # noqa: SLF001
+    monkeypatch.setattr(synthetic_routes, "run_remediator_pass", broken_pass)
+    slot = synthetic_routes._HeldOperationSlot(  # noqa: SLF001
+        synthetic_routes._admit_operation("remediate")  # noqa: SLF001
+    )
+    with pytest.raises(RuntimeError, match="schema drift"):
+        asyncio.run(
+            synthetic_routes._run_remediator_with_deadline(  # noqa: SLF001
+                Settings(environment="test"), slot
+            )
+        )

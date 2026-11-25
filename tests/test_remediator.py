@@ -372,3 +372,82 @@ def test_fleet_snapshot_carries_remediator_section() -> None:
         "heartbeat-stale:scheduler:fleet-dead" == row["decision"]
         for row in snapshot["remediator"]["decisions"]
     )
+
+
+def test_detectors_run_concurrently_under_the_read_timeout_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QUILL-ROUTER-B7: sequential reads at the client's 20 s default let one
+    slow analytics answer outlive the 15 s request deadline. Detectors now run
+    together, and every read inside the pass is capped by settings."""
+    import threading
+
+    from trusted_router import operational_analytics
+
+    # Each detector waits for the other: this only passes if they overlap.
+    barrier = threading.Barrier(2, timeout=5)
+    caps: list[float | None] = []
+
+    def first(settings: Settings) -> list[Decision]:
+        caps.append(operational_analytics._READ_TIMEOUT_CAP_SECONDS.get())  # noqa: SLF001
+        barrier.wait()
+        return [Decision("p", "first", "d", page=False)]
+
+    def second(settings: Settings) -> list[Decision]:
+        caps.append(operational_analytics._READ_TIMEOUT_CAP_SECONDS.get())  # noqa: SLF001
+        barrier.wait()
+        return [Decision("p", "second", "d", page=False)]
+
+    monkeypatch.setattr(remediator, "DETECTORS", (first, second))
+    decisions = run_remediator_pass(
+        _settings(synthetic_remediator_read_timeout_seconds=1.5)
+    )
+
+    # Recorded in detector order, whatever order the threads finished in.
+    assert [d.subject for d in decisions] == ["first", "second"]
+    assert caps == [1.5, 1.5]
+    assert operational_analytics._READ_TIMEOUT_CAP_SECONDS.get() is None  # noqa: SLF001
+
+
+def test_transaction_detector_reads_each_probe_type_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[str | None] = []
+    original = InMemoryStore.synthetic_probe_samples
+
+    def counting(self: InMemoryStore, **kwargs: object) -> list[SyntheticProbeSample]:
+        reads.append(kwargs.get("probe_type"))  # type: ignore[arg-type]
+        return original(self, **kwargs)  # type: ignore[arg-type]
+
+    _record(
+        SyntheticProbeSample(
+            id="syn_txn_alive",
+            probe_type="chat",
+            target="x",
+            target_url="",
+            monitor_region="test-1",
+            status="up",
+        )
+    )
+    monkeypatch.setattr(InMemoryStore, "synthetic_probe_samples", counting)
+    decisions = remediator._detect_transaction_probe_stale(  # noqa: SLF001
+        _settings(
+            service_surface="internal",
+            synthetic_monitor_api_key="sk-test",
+            internal_gateway_token="internal-token",  # noqa: S106
+        )
+    )
+
+    typed = [read for read in reads if read is not None]
+    assert sorted(typed) == sorted(set(typed))
+    assert set(typed) == {
+        "gateway_authorize",
+        "gateway_authorize_settle",
+        "gateway_settle",
+        "provider_fallback",
+    }
+    assert {d.subject for d in decisions} == {
+        "gateway_authorize",
+        "gateway_settle",
+        "provider_fallback",
+    }
