@@ -254,6 +254,11 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
     ("key_limit.name", "scripts/expand_billing_shards.py", "mutations"): (
         "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[("scripts/expand_billing_shards.py", "mutations")]
     ),
+    # Round 18: a dict display renders as a part not known holding its text,
+    # so the mutation payload given to changes.append names the table there.
+    ("key_limit.sql", "scripts/expand_billing_shards.py", "mutations"): (
+        "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[("scripts/expand_billing_shards.py", "mutations")]
+    ),
     ("key_limit.name", "scripts/expand_billing_shards.py", "Reader.plan"): (
         "a limit-column exception: " + LIMIT_COLUMN_EXCEPTIONS[('scripts/expand_billing_shards.py', 'Reader.plan')]
     ),
@@ -570,7 +575,8 @@ KEY_LIMIT_FORMS = [
     ("mutable mutation payload", "def f(tx):\n    payload = {'update': {'table': 'tr_key_limit', "
      "'columns': ['key_hash', 'shard', 'reserved'], 'values': [('probe', 0, 0, 1)]}}\n"
      "    payload['update']['columns'].append('usage')\n    tx.update(**payload['update'])\n",
-     {("key_limit.name", "f"): True}),
+     # (round 18: the subscript holds the payload's text, so its call fails closed)
+     {("key_limit.name", "f"): True, ("key_limit.sql", "f"): True}),
     ("a %(name)s mapping with an unknown value", "def f(c, col):\n"
      "    c.execute('UPDATE tr_key_limit SET %(col)s = 1' % {'col': col})\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a %(name)s mapping of a known column", "def f(c):\n"
@@ -822,8 +828,10 @@ KEY_LIMIT_FORMS = [
      "    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
     # The default path, by constructs the review did not use.
+    # (Round 18: a generator holds its elements' text as a part not known,
+    # so the statement fails closed.)
     ("a generator", "def f(c, run_all):\n    run_all(c, (s for s in ['UPDATE tr_key_limit SET reserved=0']))\n",
-     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("functools.reduce", "import functools\ndef f(c):\n    c.execute(functools.reduce(lambda a, b: a + b, "
      "['UPDATE tr_key_limit SET reserved=0', ', day_limit_micro=1']))\n",
      {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
@@ -848,14 +856,17 @@ KEY_LIMIT_FORMS = [
      "    c.execute(q + ', day_limit_micro=1')\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a global", "Q = ''\ndef f():\n    global Q\n    Q = 'UPDATE tr_key_limit SET reserved=0'\n",
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    # (Round 18: an element holds its container's text as a part not known.)
     ("an element bound and given to a helper", "def f(c, helper):\n    batch = ['UPDATE tr_key_limit SET reserved=0']\n"
-     "    q = batch[0]\n    helper(q)\n", {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+     "    q = batch[0]\n    helper(q)\n", {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("appended to a list given to a helper", "def f(helper):\n    statements = []\n"
      "    statements.append('UPDATE tr_key_limit SET reserved=0')\n    helper(statements)\n",
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    # (Round 18: encode is a str method not rendered: a part not known holding
+    # the receiver's text, so the statement fails closed.)
     ("a str method's result given to a helper", "def f(helper):\n"
      "    helper('UPDATE tr_key_limit SET reserved=0'.encode())\n",
-     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("str() of it given to a helper", "def f(helper):\n    helper(str('UPDATE tr_key_limit SET reserved=0'))\n",
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
     ("a helper that runs and returns it", "def run(c, q):\n    c.execute(q)\n    return q\n"
@@ -885,9 +896,10 @@ KEY_LIMIT_FORMS = [
     ("added with += through an alias", "def f(helper):\n    a = []\n    b = a\n"
      "    b += ['UPDATE tr_key_limit SET reserved=0']\n    helper(a)\n",
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+    # (Round 18: the element holds the dict's text as a part not known.)
     ("a dict constant of another scope's statements", "STATEMENTS = {'reserve': 'UPDATE tr_key_limit SET reserved=0'}\n"
      "def f(helper):\n    helper(STATEMENTS['reserve'])\n",
-     {("key_limit.sql", "<module>.STATEMENTS"): False, ("key_limit.escape", "f"): True}),
+     {("key_limit.sql", "<module>.STATEMENTS"): False, ("key_limit.escape", "f"): True, ("key_limit.sql", "f"): True}),
     # Routes the rule allows.
     ("given to an executor with its parameters", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n"
      "    c.execute(sql + ' WHERE key_hash=%s', ('k',))\n", {("key_limit.sql", "f"): False}),
@@ -947,8 +959,9 @@ KEY_LIMIT_FORMS = [
      {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
     ("str.translate with an object", "def f(table):\n    'UPDATE tr_key_limit SET reserved=0'.translate(table)\n",
      {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
+    # (Round 18: as above, encode's result holds the receiver's text.)
     ("a codec not shipped with Python", "def f():\n    'UPDATE tr_key_limit SET reserved=0'.encode('probe-codec')\n",
-     {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
+     {("key_limit.sql", "f"): True, ("key_limit.escape", "f"): True}),
     ("a set with an element not builtin (__eq__, __hash__)", "def f(key):\n"
      "    {'UPDATE tr_key_limit SET reserved=0', key}\n", {("key_limit.sql", "f"): False, ("key_limit.escape", "f"): True}),
     ("isinstance of a class not builtin (__instancecheck__)", "def f(cls):\n"
@@ -1378,9 +1391,11 @@ KEY_LIMIT_FORMS = [
     ('rstrip with an argument not known',
      "def f(c, chars):\n    c.execute('UPDATE ' + 'tr_key_limits'.rstrip(chars) + ' SET day_limit_micro=1')\n",
      {('sql.dynamic', 'f'): True}),
+    # (Round 18: rstrip applies to the known segment; the stripped run joins
+    # the part not known, so the table is named.)
     ('rstrip of text holding a part not known',
      "def f(c, x):\n    c.execute('UPDATE ' + ('tr_key_limits' + x).rstrip('s') + ' SET day_limit_micro=1')\n",
-     {('sql.dynamic', 'f'): True}),
+     {('sql.dynamic', 'f'): True, ('key_limit.sql', 'f'): True}),
     ('an f-string spec holding a field of its own',
      "def f(c, w):\n    t = 'tr_key_limit_archive'\n    c.execute(f'UPDATE {t:{w}} SET day_limit_micro=1')\n",
      {('sql.dynamic', 'f'): True}),
@@ -2715,6 +2730,7 @@ def test_the_scanners_claim_names_tests_that_exist() -> None:
         "test_the_round_15_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_15),
         "test_the_round_16_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_16),
         "test_the_round_17_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_17),
+        "test_the_round_18_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_18),
     }
     named = re.findall(r"\b(test_\w+)\b(?!\.py)(?:\[(.*?)\])?", section)
     assert len(named) >= 20
@@ -2816,66 +2832,117 @@ def _renderings(expression: str, preamble: str = "") -> list[str]:
 
 
 _U = "\x00"
+
+
+def _held(*segments: str) -> str:
+    """A part not known holding these known segments."""
+    return _U + _U.join(segments) + _U
+
+
 # Round 17: form 2 is a small plain subset, rendered exactly; anything else
-# is a part not known, in place, the known text around it kept.
+# is a part not known, in place, the known text around it kept. Round 18: a
+# part not known also holds the known text it may contain (a value, an
+# element, a receiver), and the text after any field is kept.
 _RENDERINGS = [
     ("%s fields", "'%s-%s' % ('a', 'b')", ["a-b"]),
     ("a %(name)s field", "'%(a)s|' % {'a': 'x'}", ["x|"]),
     ("%% is %", "'%s%%' % ('a',)", ["a%"]),
     ("one %s given one value", "'<%s>' % 'a'", ["<a>"]),
-    ("any other % code: the rest not known", "'UPDATE %d SET x' % (1,)", ["UPDATE " + _U]),
-    ("a % spec: the rest not known", "'<%.2s>' % ('abc',)", ["<" + _U]),
-    ("a % mapping with a spread", "'<%(t)s>' % {'t': 'a', **extra}", ["<" + _U + ">"]),
-    ("a computed % key", "'<%(t)s>' % {'t': 'a', 't' + '': 'b'}", ["<" + _U + ">"]),
-    ("a duplicate % key", "'<%(t)s>' % {'t': 'a', 't': 'b'}", ["<" + _U + ">"]),
-    ("a numeric % value", "'<%s>' % (1,)", ["<" + _U + ">"]),
-    ("a bytes % value", "'<%s>' % (b'a',)", ["<" + _U + ">"]),
-    ("% values that do not match", "'%s<%s>' % ('a',)", [_U + "<" + _U + ">"]),
+    ("any other % code: that field not known, the text after it kept", "'UPDATE %d SET x' % (1,)",
+     ["UPDATE " + _held("1") + " SET x"]),  # noqa: S608 (rendered only)
+    ("a % spec: that field not known, the text after it kept", "'<%.2s>' % ('abc',)", ["<" + _held("abc") + ">"]),
+    ("an unsupported % field before DML (the reviewer's)", "'--%d\\nUPDATE tr_' % 1",
+     ["--" + _held("1") + "\nUPDATE tr_"]),
+    ("a % key with punctuation, to its closing parenthesis", "'%(a-b)s|' % {'a-b': 'x'}", [_held("x") + "|"]),
+    ("a % key with parentheses inside, to the one that closes it", "'%(a(b))s|' % {'a(b)': 'x'}", [_held("x") + "|"]),
+    ("a % field cut short", "'abc%' % ()", ["abc" + _U]),
+    ("a % mapping with a spread", "'<%(t)s>' % {'t': 'a', **extra}", ["<" + _held("a") + ">"]),
+    ("a computed % key", "'<%(t)s>' % {'t': 'a', 't' + '': 'b'}", ["<" + _held("a", "b") + ">"]),
+    ("a duplicate % key", "'<%(t)s>' % {'t': 'a', 't': 'b'}", ["<" + _held("a", "b") + ">"]),
+    ("a numeric % value", "'<%s>' % (1,)", ["<" + _held("1") + ">"]),
+    ("a bytes % value, its text", "'<%s>' % (b'a',)", ["<" + _held("b'a'") + ">"]),
+    ("% values that do not match", "'%s<%s>' % ('a',)", [_held("a") + "<" + _held("a") + ">"]),
     ("a % value that may be a tuple", "'<%s>' % values", ["<" + _U + ">"]),
     (".format automatic fields", "'{}-{}'.format('a', 'b')", ["a-b"]),
     (".format numbered fields", "'{1}{0}'.format('a', 'b')", ["ba"]),
     (".format named fields and escapes", "'{{x}}{n}'.format(n='a')", ["{x}a"]),
-    ("a .format spec", "'<{:.2}>'.format('abc')", ["<" + _U + ">"]),
-    ("a .format conversion", "'<{!r}>'.format('a')", ["<" + _U + ">"]),
-    ("a .format starred argument", "'<{}>'.format(*['a'])", ["<" + _U + ">"]),
-    ("a .format ** spread", "'<{x}>'.format(**{'x': 'a'})", ["<" + _U + ">"]),
-    ("a .format attribute field", "'<{0.real}>'.format('a')", ["<" + _U + ">"]),
-    ("automatic and manual .format numbering", "'<{}{0}>'.format('a')", ["<" + _U + _U + ">"]),
-    ("a numeric .format value", "'<{}>'.format(1)", ["<" + _U + ">"]),
+    ("a .format spec", "'<{:.2}>'.format('abc')", ["<" + _held("abc") + ">"]),
+    ("a .format conversion", "'<{!r}>'.format('a')", ["<" + _held("a") + ">"]),
+    ("a .format starred argument", "'<{}>'.format(*['a'])", ["<" + _held("a") + ">"]),
+    ("a .format ** spread", "'<{x}>'.format(**{'x': 'a'})", ["<" + _held("x", "a") + ">"]),
+    ("a .format attribute field", "'<{0.real}>'.format('a')", ["<" + _held("a") + ">"]),
+    ("automatic and manual .format numbering", "'<{}{0}>'.format('a')", ["<" + _held("a", "a") + ">"]),
+    ("a numeric .format value", "'<{}>'.format(1)", ["<" + _held("1") + ">"]),
+    ("a .format brace never matched", "'{x'.format()", [_U + "x"]),
     ("an f-string field", "f'<{\"a\"}>'", ["<a>"]),
-    ("an f-string spec", "f'<{\"abc\":.2}>'", ["<" + _U + ">"]),
-    ("an f-string conversion", "f'<{\"a\"!r}>'", ["<" + _U + ">"]),
-    ("an f-string bytes value", "f'<{b\"a\"}>'", ["<" + _U + ">"]),
-    ("an f-string numeric value", "f'<{1}>'", ["<" + _U + ">"]),
+    ("an f-string spec", "f'<{\"abc\":.2}>'", ["<" + _held("abc") + ">"]),
+    ("an f-string conversion", "f'<{\"a\"!r}>'", ["<" + _held("a") + ">"]),
+    ("an f-string bytes value", "f'<{b\"a\"}>'", ["<" + _held("b'a'") + ">"]),
+    ("an f-string numeric value", "f'<{1}>'", ["<" + _held("1") + ">"]),
     ("a conditional", "('a' if flag else 'b') + '|'", ["a|", "b|"]),
     ("a str method with literal arguments", "'tr_key_limits'.rstrip('s')", ["tr_key_limit"]),
     ("join of a tuple display", "'_'.join(('a', 'b'))", ["a_b"]),
-    ("replace with a count", "'ab'.replace('a', 'c', 1)", ["ab" + _U]),
-    ("a str method with an argument not known", "'ab'.rstrip(chars)", ["ab" + _U]),
-    ("another str method", "'ab'.title()", ["ab" + _U]),
-    ("join of something not a display", "'_'.join(parts)", [_U]),
+    ("join of a display with an element not known", "'\\nUPDATE '.join(['--', 'tr_' + x])", ["--\nUPDATE tr_" + _U]),
+    ("join with a starred part not known", "', '.join(['a', *rest, 'b'])", ["a" + _held(", ") + "b"]),
+    ("join of something else keeps the separator (the reviewer's)", "'\\nUPDATE '.join(parts)",
+     [_held("\nUPDATE ")]),
+    ("replace with a count", "'ab'.replace('a', 'c', 1)", [_held("ab", "a", "c", "1")]),
+    ("a str method with an argument not known", "'ab'.rstrip(chars)", [_held("ab")]),
+    ("another str method", "'ab'.title()", [_held("ab")]),
+    ("an argument holding the marker character is not known", "('a' + x + 'b').replace('\\x00', '')",
+     [_held("a", "b")]),
+    ("replace across a part not known", "('xar' + x + 'chive').replace('archive', 'k')", ["x" + _U]),
+    ("replace with a border across a part not known", "('aaa' + x).replace('aa', 'b')", [_U]),
+    ("replace with a border, the other way", "(x + 'aaa').replace('aa', 'b')", [_U]),
+    ("a segment that may lie inside a match across two parts not known",
+     "('a' + x + 'rch' + y + 'ive').replace('archive', 'k')", [_U]),
+    ("replace of the empty string after a part not known", "(x + 'ab').replace('', '-')", ["-" + _U + "a-b-"]),
+    ("replace of the empty string around a part not known", "('ab' + x).replace('', '-')", ["-a-b-" + _U]),
+    ("lstrip across a part not known", "('  ' + x + '  UPDATE').lstrip()", [_U + "UPDATE"]),
+    ("removeprefix across a part not known", "(x + '--UPDATE').removeprefix('--')", [_U + "UPDATE"]),
+    ("removesuffix across a part not known", "('UPDATE--' + x).removesuffix('--')", ["UPDATE" + _U]),
+    ("upper around a part not known", "('a' + x).upper()", ["A" + _U]),
+    ("a capital sigma next to a part not known", "('a\u03a3' + x).lower()", ["a" + _U]),
     ("a call", "make('a')", [_U]),
-    ("a bytes literal", "b'abc'", [_U]),
-    ("a + of lists", "['a'] + ['b']", [_U]),
-    ("an automatic .format field after a part not known", "('<' + x + '{}>').format('a')", ["<" + _U + _U + ">"]),
-    ("a .format numbered field after a starred argument", "'<{1}>'.format(*pair, 'z')", ["<" + _U + ">"]),
+    ("a walrus, its value", "(q := 'UPDATE tr_') + 'key_limit'", ["UPDATE tr_key_limit"]),
+    ("or, either operand", "x or 'UPDATE'", [_U, "UPDATE"]),
+    ("text repeated: none, one, or two copies then a part not known", "'ab' * 2",
+     ["ab", _held("2"), "abab" + _U, "ab" + _held("2"), _held("2", "ab"), _held("2", "2"), ""]),
+    ("str() of text, the text", "str('a' + x)", ["a" + _U]),
+    ("repr() holds its argument's text", "repr('ab')", [_held("ab")]),
+    ("decode holds the receiver's text", "b'UPDATE'.decode()", [_held("b'UPDATE'")]),
+    ("a bytes literal, its text", "b'abc'", [_held("b'abc'")]),
+    ("a list display, its elements", "['UPDATE tr_', 'key_limit']", [_held("UPDATE tr_", "key_limit")]),
+    ("a + of lists", "['a'] + ['b']", [_held("a", "b")]),
+    ("an automatic .format field after a part not known", "('<' + x + '{}>').format('a')", ["<" + _held("a") + ">"]),
+    ("a .format numbered field after a starred argument", "'<{1}>'.format(*pair, 'z')", ["<" + _held("z") + ">"]),
 ]
 
 
 _R17_BOUND_33 = "".join(f"q = 'UPDATE tr_key_limit SET n{i}=1'\n" for i in range(33))  # noqa: S608 (rendered only)
 _R17_MANY = " else ".join(f"('n{i}' if flag" for i in range(31)) + " else 'n31'" + ")" * 31
+_N32 = [f"n{i}" for i in range(32)]
 
 
 @pytest.mark.parametrize(("name", "preamble", "expression", "expected"), [
     ("join of a name bound once to a tuple", "parts = ('a', 'b')\n", "'_'.join(parts)", ["a_b"]),
-    ("join of a name bound twice", "parts = ('a', 'b')\nparts = ('c',)\n", "'_'.join(parts)", [_U]),
-    ("join of a name bound to a list", "parts = ['a', 'b']\n", "'_'.join(parts)", [_U]),
-    ("a loop's target, not rendered", "PARTS = ('a', 'b')\ndef g():\n    for p in PARTS:\n        rendered = p + '|'\n",
-     "", [_U + "|"]),
-    ("replace past the bound", "old = 'a' if flag else 'b'\nnew = " + _R17_MANY + "\n", "'ab'.replace(old, new)",
-     ["ab" + _U]),
-    ("% renderings past the bound", "x = " + _R17_MANY + "\n", "('a%s' if flag else 'b%s') % (x,)", [_U]),
-    ("a name bound past the bound", _R17_BOUND_33, "q", ["UPDATE tr_key_limit SET n" + _U + "=1"]),  # noqa: S608
+    ("join of a name bound twice", "parts = ('a', 'b')\nparts = ('c',)\n", "'_'.join(parts)",
+     [_held("_", "a", "b", "c")]),
+    ("join of a name bound to a list", "parts = ['a', 'b']\n", "'_'.join(parts)", [_held("_", "a", "b")]),
+    ("a loop's target, its iterable's text",
+     "PARTS = ('a', 'b')\ndef g():\n    for p in PARTS:\n        rendered = p + '|'\n", "", [_held("a", "b") + "|"]),
+    ("an element of a tuple constant", "ROWS = ('UPDATE tr_', 'x')\n", "ROWS[0] + 'key_limit'",
+     [_held("UPDATE tr_", "x") + "key_limit"]),
+    ("replace past the bound keeps every result", "old = 'a' if flag else 'b'\nnew = " + _R17_MANY + "\n",
+     "'ab'.replace(old, new)", [_held(*(n + "b" for n in _N32), *("a" + n for n in _N32))]),
+    ("% renderings past the bound keep every one", "x = " + _R17_MANY + "\n", "('a%s' if flag else 'b%s') % (x,)",
+     [_held(*("a" + n for n in _N32), *("b" + n for n in _N32))]),
+    ("a name bound past the bound, a word at the common end kept whole",
+     "".join(f"q = 'a{i}tr_key_limit'\n" for i in range(33)), "q", [_held(*(f"a{i}tr_key_limit" for i in range(33)))]),
+    ("an assignment inside a module's if", "if F:\n    Q = 'UPDATE tr_key_limit SET day_limit_micro=1'\n"
+     "def g():\n    rendered = Q\n", "", ["UPDATE tr_key_limit SET day_limit_micro=1"]),  # noqa: S608
+    ("a name bound past the bound", _R17_BOUND_33, "q",  # noqa: S608
+     ["UPDATE tr_key_limit SET " + _held(*(f"n{i}" for i in range(33))) + "=1"]),  # noqa: S608 (rendered only)
 ], ids=lambda value: value if isinstance(value, str) and " " in value and "\n" not in value else None)
 def test_each_construction_with_bindings_is_rendered_whole_or_not_known(name: str, preamble: str, expression: str,
                                                                      expected: list[str]) -> None:
@@ -2887,11 +2954,25 @@ def test_each_construction_is_rendered_whole_or_not_known(name: str, expression:
     assert _renderings(expression) == expected, name
 
 
-def test_a_bound_on_renderings_keeps_the_known_text_around_what_varies() -> None:
+def test_a_bound_on_renderings_keeps_every_word() -> None:
+    """Round 18: past the bound, one rendering keeps the common start and
+    end in place, every known segment of what varies, and every word that
+    runs across pieces that vary (a part not known holds them)."""
     choices = " + ".join(f"('{c}' if flag else 'x{i}')" for i, c in enumerate("abcdef"))
     rendered = _renderings("'UPDATE ' + " + choices + " + ' SET day_limit_micro=1'")  # noqa: S608 (rendered only)
-    assert rendered == ["UPDATE \x00 SET day_limit_micro=1"]
+    assert len(rendered) == 1
+    assert rendered[0].startswith("UPDATE " + _U) and rendered[0].endswith(_U + " SET day_limit_micro=1")
+    segments = set(rendered[0].split(_U))
+    assert {"abcdef", "x0x1x2x3x4x5", "abcdex5", "x0bcdef"} <= segments
     assert len(_renderings(" + ".join(f"('{c}' if flag else 'x{i}')" for i, c in enumerate("abcde")))) == 32
+    # A write verb split across pieces that vary is still a word of the one rendering.
+    split = _renderings("f'{u}{v}{w0}{w1}{w2}{w3}'", "u = 'UPD' if a else 'XUPD'\nv = 'ATE tr_' if b else 'ATX tr_'\n"
+                        + "".join(f"w{i} = '{i}' if c{i} else 'y{i}'\n" for i in range(4)))
+    assert len(split) == 1 and {"UPDATE", "tr_0123", "tr_y0y1y2y3"} <= set(split[0].split(_U))
+    # The reviewer's: 64 renderings sharing an interior UPDATE keep it.
+    interior = _renderings("(('--a\\nUPDATE tr_archive SET day_limit_micro=%s' if flag else "
+                           "'--b\\nUPDATE tr_archive SET day_limit_micro=%s') % x)", "x = " + _R17_MANY + "\n")
+    assert len(interior) == 1 and "a\nUPDATE tr_archive SET day_limit_micro=n0" in interior[0].split(_U)
 
 
 def test_a_helper_chain_longer_than_any_fixed_round_count_is_followed(tmp_path: Path) -> None:
@@ -3012,3 +3093,164 @@ def test_a_write_with_a_part_not_known_is_dynamic_in_any_scope(tmp_path: Path) -
               "def h(c, where):\n    c.execute('SELECT a FROM tr_other WHERE ' + where)\n")
     assert _scan_sample(tmp_path, "probe_dynamic.py", source) == {
         ("sql.dynamic", "f"): True, ("sql.dynamic", "g"): True}
+
+
+# Review round 18: the renderer still lost known text in five ways. The
+# reviewer's five items: an unsupported % field dropped the text after it, join
+# of anything but a display fell back to wholly not known, the bound kept only
+# a common start and end, a str method could remove the marker, and += pieces
+# were joined in reverse. Each control is the same construction, known in
+# full, naming another table.
+_R18_EIGHT = " else ".join(f"('n{i}' if flag" for i in range(7)) + " else 'n7'" + ")" * 7
+_ROUND_18 = {
+    "1. an unsupported % field before DML (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute(('--%d\\nUPDATE tr_' % 1) + 'key_' + 'limit SET day_limit_micro=1')\n"),
+    "1. a % spec before DML (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute(('--%.1s\\nUPDATE tr_' % 'xx') + 'key_' + 'limit SET day_limit_micro=1')\n"),
+    "2. join of a list holding a helper's result (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_tail():\n    return 'key_' + 'limit SET day_limit_micro=1'\n"
+        "def probe_built(c):\n    parts = ['--', 'tr_' + probe_tail()]\n    c.execute('\\nUPDATE '.join(parts))\n"),
+    "2. join over a loop's target (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    for tail in ['key_' + 'limit SET day_limit_micro=1']:\n"
+        "        c.execute('\\nUPDATE '.join(['--', 'tr_' + tail]))\n"),
+    "3. 64 renderings sharing an interior UPDATE (the reviewer's)": (
+        "probe_built(conn, False)\n",
+        "def probe_built(c, flag):\n    x = " + _R17_MANY + "\n"
+        "    c.execute((('--a\\nUPDATE tr_archive SET day_limit_micro=%s' if flag else "
+        "'--b\\nUPDATE tr_archive SET day_limit_micro=%s') % x).replace('archive', 'key_limit'))\n"),
+    "4. replace removing the marker character (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    t = f\"tr_{b'key_limit'}\".replace(\"b'\", \"\").replace(\"'\", \"\").replace(\"\\x00\", \"\")\n"
+        "    c.execute('UPDATE ' + t + ' SET day_limit_micro=1')\n"),
+    "5. += in source order (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    q = 'UPDATE tr_'\n    q += 'key_'\n    q += 'limit SET day_limit_micro=1'\n"
+        "    c.execute(q)\n"),
+    "5. += with a branch and a loop": (
+        "probe_built(conn, True)\n",
+        "def probe_built(c, flag):\n    q = 'UPDATE tr_'\n    if flag:\n        q += 'key_'\n"
+        "    for _ in range(1):\n        q += 'limit'\n    q += ' SET day_limit_micro=1'\n    c.execute(q)\n"),
+}
+_ROUND_18_CONTROLS = {
+    "1. a %s field before DML, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute(('--%s\\nUPDATE tr_' % 'x') + 'enti' + 'ties SET a=1')\n"),
+    "2. join of a display, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute('\\nUPDATE '.join(['--', 'tr_' + 'entities SET a=1']))\n"),
+    "3. 16 renderings sharing an interior UPDATE, another table": (
+        "probe_built(conn, False)\n",
+        "def probe_built(c, flag):\n    x = " + _R18_EIGHT + "\n"
+        "    c.execute((('--a\\nUPDATE tr_archive SET day_limit_micro=%s' if flag else "
+        "'--b\\nUPDATE tr_archive SET day_limit_micro=%s') % x).replace('archive', 'entities'))\n"),
+    "4. replace on text known in full, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    t = f\"tr_{'entities'}\".replace(\"b'\", \"\").replace(\"'\", \"\")\n"
+        "    c.execute('UPDATE ' + t + ' SET a=1')\n"),
+    "5. += in source order, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    q = 'UPDATE tr_'\n    q += 'enti'\n    q += 'ties SET a=1'\n    c.execute(q)\n"),
+}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_18))
+def test_the_round_18_forms_injected_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    assert _round_15_flagged(tmp_path, *_ROUND_18[label]), label
+
+
+@pytest.mark.parametrize("label", list(_ROUND_18_CONTROLS))
+def test_the_round_18_controls_are_not(tmp_path: Path, label: str) -> None:
+    assert not _round_15_flagged(tmp_path, *_ROUND_18_CONTROLS[label]), label
+
+
+@pytest.mark.parametrize(("name", "source", "expected"), [
+    ("three appends", "def g():\n    q = 'UPDATE tr_'\n    q += 'key_'\n    q += 'limit SET '\n"
+     "    q += 'day_limit_micro=1'\n    rendered = q\n", ["UPDATE tr_key_limit SET day_limit_micro=1"]),
+    ("an append in a branch may be absent", "def g(flag):\n    q = 'UPDATE tr_'\n    if flag:\n        q += 'x_'\n"
+     "    q += 'key_'\n    q += 'limit SET day_limit_micro=1'\n    rendered = q\n",
+     ["UPDATE tr_x_key_limit SET day_limit_micro=1", "UPDATE tr_key_limit SET day_limit_micro=1"]),
+    ("an append in a loop may be absent or repeat", "def g(cols):\n    q = 'UPDATE tr_key_limit SET a=1'\n"
+     "    for c in cols:\n        q += ', b=2'\n    q += ' WHERE k=1'\n    rendered = q\n",
+     ["UPDATE tr_key_limit SET a=1, b=2 WHERE k=1", "UPDATE tr_key_limit SET a=1, b=2, b=2" + _U + " WHERE k=1",  # noqa: S608 (rendered only)
+      "UPDATE tr_key_limit SET a=1 WHERE k=1"]),
+    ("appends in a try and its finally", "def g():\n    q = 'a'\n    try:\n        q += 'b'\n    finally:\n"
+     "        q += 'c'\n    rendered = q\n", ["abc", "ab", "ac", "a"]),
+    ("a module's appends", "Q = 'UPDATE tr_'\nQ += 'key_'\nQ += 'limit SET day_limit_micro=1'\n"
+     "def g():\n    rendered = Q\n", ["UPDATE tr_key_limit SET day_limit_micro=1"]),
+    ("a class body's appends", "class K:\n    Q = 'UPDATE tr_'\n    Q += 'key_'\n"
+     "    Q += 'limit SET day_limit_micro=1'\n    rendered = Q\n", ["UPDATE tr_key_limit SET day_limit_micro=1"]),
+    ("an attribute's append", "def g(o):\n    o.q = 'UPDATE tr_'\n    o.q += 'key_limit SET day_limit_micro=1'\n"
+     "    rendered = o.q\n", ["UPDATE tr_", "UPDATE tr_key_limit SET day_limit_micro=1",
+                         _U + "key_limit SET day_limit_micro=1"]),
+    ("an attribute's two appends of text: a possible write", "def g(o):\n    o.q = 'UPDATE tr_'\n"
+     "    o.q += 'key_'\n    o.q += 'limit SET day_limit_micro=1'\n    rendered = o.q\n",
+     ["UPDATE tr_", "UPDATE tr_key_", _U + "\x01" + _U + "key_", "UPDATE tr_limit SET day_limit_micro=1",
+      _U + "\x01" + _U + "limit SET day_limit_micro=1"]),
+], ids=lambda value: value if isinstance(value, str) and "\n" not in value else None)
+def test_augmented_assignments_render_in_source_order(name: str, source: str, expected: list[str]) -> None:
+    """Round 18: x += piece is x's earlier value followed by every piece in
+    source order; a piece in a branch, loop or try may be absent, and one in
+    a loop may repeat (two copies, then a part not known)."""
+    assert _renderings("", source) == expected, name
+
+
+def test_a_str_method_never_removes_or_changes_a_part_not_known() -> None:
+    """Round 18: a rendered str method applies to known segments only; every
+    part not known stays, the possible-write mark too, whatever the
+    arguments hold (the marker characters included)."""
+    from tests.key_limit_writers import WRITE, _apply
+
+    texts = ["a\x00b", "\x00ab\x00", "x\x00\x01\x00y", "\x00", "ab\x00\x01\x00"]
+    calls = [("replace", ("\x00", "")), ("replace", ("\x01", "")), ("replace", ("", "-")), ("replace", ("a", "")),
+             ("strip", ("\x00\x01ab",)), ("lstrip", ("ab\x00",)), ("rstrip", ("\x01b",)), ("strip", ()),
+             ("removeprefix", ("a\x00",)), ("removesuffix", ("\x00b",)), ("removeprefix", ("ab",)),
+             ("upper", ()), ("lower", ())]
+    for text in texts:
+        for method, arguments in calls:
+            result = _apply(text, method, arguments)
+            assert _U in result, (text, method, arguments, result)
+            assert (WRITE in text.split(_U)) <= (WRITE in result.split(_U)), (text, method, arguments, result)
+
+
+def test_past_every_bound_the_rendering_may_write() -> None:
+    """Round 18: past MAX_RENDERINGS ** 2 words running across pieces, or
+    str method calls to compute, the one rendering holds a possible-write
+    mark, so the dynamic-write rule fires on it."""
+    from tests.key_limit_writers import WRITE, _combine, _may_write, _spanning
+
+    pieces = [[f"a{i}" for i in range(32)]] * 3
+    assert _spanning(pieces) is None
+    assert _may_write(_combine(pieces)[0])
+    choices = "".join(f"{name} = " + " else ".join(f"('{name}{i}' if f" for i in range(31)) + f" else '{name}31'"
+                      + ")" * 31 + "\n" for name in ("o", "p"))
+    rendered = _renderings("('xo1y' if c else 'zo2w').replace(o, p)", choices)
+    assert len(rendered) == 1 and WRITE in rendered[0].split(_U)
+    assert _may_write("SELECT 1 FOR " + _U + "UPDATE x SET a=1")  # noqa: S608 (a lock, a part not known, a verb)
+    assert not _may_write("SELECT 1 FOR UPDATE")
+
+
+def test_a_possible_write_not_run_is_dynamic(tmp_path: Path) -> None:
+    """Round 18: a string with a possible-write mark is dynamic SQL even
+    where it is not run."""
+    source = ("def f(o):\n    o.q = 'UPDATE tr_'\n    o.q += 'key_'\n    o.q += 'limit SET day_limit_micro=1'\n"
+              "    return o.q + ' WHERE 1'\n")
+    assert ("sql.dynamic", "f") in _scan_sample(tmp_path, "probe_possible.py", source)
+
+
+def test_the_backstop_sees_a_write_verb_built_from_pieces(tmp_path: Path) -> None:
+    """Round 18: the backstop reads rendered strings segment by segment, so a
+    write verb that exists only once pieces are joined still counts."""
+    source = ("KEY_LIMIT_TABLE = 'tr_key_limit'\n"
+              "def f(table):\n    if table == KEY_LIMIT_TABLE:\n"
+              "        print(KEY_LIMIT_TABLE, 'day_limit_micro', 'UPD' + 'ATE')\n"
+              "def g(table):\n    if table == KEY_LIMIT_TABLE:\n"
+              "        print(KEY_LIMIT_TABLE, 'day_limit_micro', 'UPD' + 'X')\n")
+    found = _scan_sample(tmp_path, "probe_backstop.py", source)
+    assert found[("key_limit.name", "f")] is True
+    assert found[("key_limit.name", "g")] is False
+

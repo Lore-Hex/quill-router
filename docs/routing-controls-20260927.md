@@ -119,16 +119,20 @@ each named case exists:
 
 1. direct SQL in a scope, its columns read by a small grammar;
 2. SQL built from literal parts, in a small plain subset rendered exactly:
-   str literals and names bound only to them, conditional expressions of
-   them, `+`, f-string and `format`/`%` fields that
-   are exactly `{}`, `{name}`, `{0}`, `%s` or `%(name)s` (no spec, no
-   conversion, str values only), and `join`, `replace`, the strip family,
-   `removeprefix`/`removesuffix` and `upper`/`lower` with str-literal
-   arguments. Everything else is a part not known, the known text around it
-   kept, and a statement run with a part not known whose known text has a
-   write verb is dynamic SQL in any scope;
+   str literals and names bound to them, conditional expressions of them,
+   `+`, f-string and `format`/`%` fields that are exactly `{}`, `{name}`,
+   `{0}`, `%s` or `%(name)s` (no spec, no conversion), and `join`,
+   `replace`, the strip family, `removeprefix`/`removesuffix` and
+   `upper`/`lower` with arguments known in full. Everything else is a part
+   not known holding the known text it may contain (a value, an element, a
+   receiver, a separator), the known text around it kept; a str method
+   never removes or changes a part not known; past the bound on renderings
+   one rendering keeps every known segment and every word that runs across
+   the pieces; and a statement run with a part not known whose known text
+   has a write verb is dynamic SQL in any scope;
 3. names, and containers made in the same function, holding the SQL;
-4. augmented assignment;
+4. augmented assignment, the pieces in source order (a piece in a branch,
+   loop or try may be absent, one in a loop may repeat);
 5. helpers of the same module, when the callee is the helper by every
    binding;
 6. executors by name and through settled aliases, and `getattr` with a

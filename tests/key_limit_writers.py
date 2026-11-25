@@ -229,12 +229,15 @@ cleared only when what it writes to the table is understood.
   a carriage return, and any other line end inside one, any block comment,
   ``#``, a backslash in a quote, a tripled quote or a prefixed literal fails
   closed.
-- Python SQL is rendered only in a plain subset (form 2 below, and
-  _Module._render); ``x += piece`` is modelled as every piece in order and
-  each piece alone. Everything else is a part not known, in place, the
-  known text around it kept; a statement run with a part not known whose
-  known text has a write verb is dynamic SQL in any scope, and any string
-  holding DML whose target holds a part not known is dynamic, run or not.
+- Python SQL is rendered exactly only in a plain subset (form 2 below,
+  and _Module._render); ``x += piece`` is the earlier value followed by
+  every piece in source order (form 4). Everything else is a part not
+  known, in place, holding the known text it may contain, the known text
+  around it kept; no known text is dropped and no part not known removed.
+  A statement run with a part not known whose known text has a write verb
+  (in one known segment) or a possible-write mark is dynamic SQL in any
+  scope, and any string holding DML whose target holds a part not known is
+  dynamic, run or not.
   Any call given SQL text naming the table, any executor (by name, or
   through a name or attribute bound to one: run = conn.execute,
   self.run = conn.execute, setattr(obj, "run", conn.execute)), and any of
@@ -290,21 +293,31 @@ checks that each one exists):
    Spanner's INSERT OR UPDATE keeps the columns it omits],
    test_reads_and_mentions_are_not_writes.
 2. SQL built from literal parts, in this plain subset only, rendered
-   exactly: str literals, and names bound only to renderable str values; a
-   conditional expression of them; concatenation with +; f-string fields,
-   and str.format or % fields, that are exactly {}, {name}, {0}, %s or
-   %(name)s, with no spec and no conversion, their values str literals or
-   names bound only to str values; and join, replace, strip, lstrip, rstrip,
-   removeprefix, removesuffix, upper and lower with str-literal arguments
-   (join's a list or tuple display of them, or a name bound once to a tuple
-   display). Everything else is a part not known: any spec, conversion or
-   other % code, a numeric or bytes value, a spread, a computed or duplicate
-   key, a starred argument, any other str method or call, a loop's target,
-   values that do not match their fields, and any bound exceeded
-   (MAX_RENDERINGS renderings: the text that varies becomes not known). A
-   part not known keeps the known text around it, and a statement run with
-   one whose known text has a write verb is dynamic SQL (it fails closed) in
-   any scope.
+   exactly: str literals, and names bound to renderable values; a
+   conditional expression, x or y and x and y (either operand), and a walrus
+   (its value); concatenation with +; f-string fields, and str.format or %
+   fields, that are exactly {}, {name}, {0}, %s or %(name)s, with no spec
+   and no conversion, each rendered as its value is; str() of text; and
+   join, replace, strip, lstrip, rstrip, removeprefix, removesuffix, upper
+   and lower with arguments known in full (join's a list or tuple display,
+   or a name bound once to a tuple display, the separator between its
+   elements). Everything else is a part not known holding the known text it
+   may contain: a field with a spec or conversion (its value's text), any
+   other % code or field to its end, with the text after it kept, or a field
+   whose value is not matched (every value's text), a number or bytes (its
+   text), a container, comprehension, loop target, element or slice (the
+   text it is taken from), text * n (none, one, or two copies then a part
+   not known), repr or format of a value, any other str method or one given
+   an argument not known (the receiver's and arguments' text), and join of
+   anything else (the separator and the elements' text); a call of anything
+   else holds nothing. A rendered str method applies to known segments only:
+   a part not known is never removed or changed, and known text an argument
+   could reach across one joins it. Past MAX_RENDERINGS renderings, one
+   keeps the common start and end in place and holds every known segment and
+   every word running across pieces that vary (past MAX_RENDERINGS ** 2 such
+   words, or method calls, a possible-write mark). A statement run with a
+   part not known whose known text has a write verb is dynamic SQL (it fails
+   closed) in any scope.
    test_each_way_to_write_tr_key_limit_is_found[concatenated table
    name | f-string table from a constant | format() SQL | %-formatted SQL |
    named format alternatives | str.replace SQL | % with an unknown argument |
@@ -323,16 +336,30 @@ checks that each one exists):
    mapping overwritten by a spread (the reviewer's) | 2. a numeric branch
    given to %c (the reviewer's) | 3. a bytes value in an f-string (the
    reviewer's) | 4. replace past the bound (the reviewer's)],
+   test_the_round_18_forms_injected_into_a_listed_scope_are_caught[1. an
+   unsupported % field before DML (the reviewer's) | 2. join of a list
+   holding a helper's result (the reviewer's) | 3. 64 renderings sharing an
+   interior UPDATE (the reviewer's) | 4. replace removing the marker
+   character (the reviewer's)],
    test_each_construction_is_rendered_whole_or_not_known,
-   test_a_bound_on_renderings_keeps_the_known_text_around_what_varies,
+   test_a_bound_on_renderings_keeps_every_word,
+   test_a_str_method_never_removes_or_changes_a_part_not_known,
    test_a_write_with_a_part_not_known_is_dynamic_in_any_scope.
 3. Names and containers made in the same function holding the SQL.
    test_each_way_to_write_tr_key_limit_is_found[a walrus | an element bound
    and given to a helper | appended to a list given to a helper | put into a
    container through an alias | statements looped over].
-4. Augmented assignment.
+4. Augmented assignment: in a function, a class body or a module, x's
+   earlier value followed by every piece in source order, a piece inside a
+   branch, loop or try possibly absent and one in a loop possibly repeated;
+   an attribute's append, any other value of it followed by the piece, or a
+   part not known followed by it (a possible write when two appends or more
+   hold text). Reads are not ordered against the statements.
    test_each_way_to_write_tr_key_limit_is_found[augmented SQL | conditional
-   += | a string built with +=, then run | added with += through an alias].
+   += | a string built with +=, then run | added with += through an alias],
+   test_the_round_18_forms_injected_into_a_listed_scope_are_caught[5. +=
+   in source order (the reviewer's) | 5. += with a branch and a loop],
+   test_augmented_assignments_render_in_source_order.
 5. Helpers of the same module, the callee being the helper by every
    binding. test_each_way_to_write_tr_key_limit_is_found[a helper of the
    module that changes the statement | a chain of helpers | a helper given
@@ -421,11 +448,13 @@ Not modelled (code review covers these):
   and a cross-module helper whose result runs in a scope that mentions the
   table fails closed (test_a_cross_module_helpers_statement_fails_closed);
 - a statement whose known text has no write verb made into a write by a
-  part not known (an interpolated value carrying SQL, or a str method whose
-  arguments are not known rewriting the text): a part not known makes a
-  statement dynamic only when its known text has a write verb, and a str
-  method's result with arguments not known is rendered as the receiver's
-  text followed by a part not known.
+  part not known (an interpolated value carrying SQL, a call's result, or a
+  str method whose arguments are not known rewriting the text): a part not
+  known makes a statement dynamic only when its known text has a write verb;
+  and text a part not known may change is kept as it is written (a str
+  method outside the subset, a field with a spec or conversion, a % or
+  .format field opened inside a part not known), so the known text may hold
+  more than the statement does, never less.
 
 api_key entity writers are out of scope by design: whatever writes an entity,
 the mirror changes only through the guarded functions above.
@@ -438,7 +467,8 @@ import builtins
 import hashlib
 import itertools
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from os.path import commonprefix
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -491,6 +521,16 @@ MAX_RENDERINGS = 32
 #: Stands for a part of a string the scanner cannot resolve to literals (an
 #: f-string interpolation, a % or .format argument, a str method's result).
 UNKNOWN = "\x00"
+#: Inside a part not known, a mark that it may hold a write (a word may run
+#: across pieces past the bound): the dynamic-write rule fires on it.
+WRITE = "\x01"
+_MAY_WRITE = UNKNOWN + WRITE + UNKNOWN
+#: str method calls computed for one expression, at most.
+_EVALUATED = MAX_RENDERINGS * MAX_RENDERINGS
+_PERCENT_SPEC = re.compile(r"[#0\- +]*(?:\*|\d+)?(?:\.(?:\*|\d*))?[hlL]?")
+_WORD_END = re.compile(r"\w*\Z")
+_WORD_START = re.compile(r"\w*")
+_LETTER = re.compile(r"[A-Za-z_]")
 
 PY_EXCLUDED = ("tests", "tests-e2e", ".venv", "node_modules", ".git", "docs", "frontend")
 TEXT_SUFFIXES = (".sh", ".sql", ".tf", ".yaml", ".yml", ".go")
@@ -908,16 +948,20 @@ def _scope_nodes(start: Iterable[ast.AST]) -> Iterator[ast.AST]:
             queue += list(ast.iter_child_nodes(node))
 
 
-def _collect(node: ast.AST, found: dict[str, list[ast.AST]], appended: dict[str, list[ast.AST]],
+def _collect(node: ast.AST, found: dict[str, list[ast.AST]], appended: dict[str, list[ast.AST]] | None,
              local: set[str]) -> None:
     """Record the binding one node of a scope makes: name -> each value it
-    may be bound to (x += piece goes to appended)."""
+    may be bound to. An ``x += piece`` statement goes to appended (for
+    _append_chains), or, when appended is None, its piece to found."""
     def bind(name: str, value: ast.AST) -> None:
         found.setdefault(name, []).append(value)
 
     if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
         if isinstance(node.op, ast.Add):
-            appended.setdefault(node.target.id, []).append(node.value)
+            if appended is None:
+                bind(node.target.id, node.value)
+            else:
+                appended.setdefault(node.target.id, []).append(node)
         else:
             bind(node.target.id, ast.Name(id="<parameter>"))
     elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
@@ -1458,7 +1502,10 @@ class _Index:
                             self.class_members.setdefault(member, set()).add(id(tree))
             for node in ids.nodes:
                 if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Attribute):
-                    self.globals.setdefault(node.target.attr, []).append(ast.Name(id="<parameter>"))
+                    if isinstance(node.op, ast.Add):
+                        self._record(node.target.attr, _attribute_append(node.target.attr, node.value))
+                    else:
+                        self.globals.setdefault(node.target.attr, []).append(ast.Name(id="<parameter>"))
                 elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                     for target in targets:
@@ -1485,16 +1532,16 @@ class _Index:
             exposes = bool(ids.namespace_reads) or ids.rebinder
             names: set[str] = set()
             body = {id(node) for node in tree.body}
+            self._module_bindings(tree, tree.body, parents)
             for node in tree.body:
-                self._module_assign(node)
                 if isinstance(node, ast.ClassDef):
+                    self._module_bindings(node, node.body, parents)
                     for item in node.body:
-                        self._module_assign(item)
                         names.update(self._recorded(item))
             for node in _scope_nodes(tree.body):
                 recorded = self._recorded(node) if id(node) in body else set()
                 found: dict[str, list[ast.AST]] = {}
-                _collect(node, found, found, self.local)
+                _collect(node, found, None, self.local)
                 names.update(found)
                 self.opaque.update(set(found) - recorded)
             if exposes:
@@ -1509,14 +1556,29 @@ class _Index:
             return {target.id for target in targets if isinstance(target, ast.Name)}
         return set()
 
-    def _module_assign(self, node: ast.AST) -> None:
-        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-            self.globals.setdefault(node.target.id, []).append(ast.Name(id="<parameter>"))
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                if isinstance(target, ast.Name):
-                    self._record(target.id, node.value)
+    def _module_bindings(self, scope: ast.AST, statements: list[ast.stmt], parents: dict[int, ast.AST]) -> None:
+        """A module's (or a top-level class body's) assignments to names,
+        those inside its if, try, with and loops too: each value, and
+        ``x += piece`` as x's earlier values with the pieces in source order
+        (_append_chains)."""
+        found: dict[str, list[ast.AST]] = {}
+        appended: dict[str, list[ast.AST]] = {}
+        for node in sorted(_scope_nodes(statements), key=lambda node: (getattr(node, "lineno", 0),
+                                                                       getattr(node, "col_offset", 0))):
+            if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+                if isinstance(node.op, ast.Add):
+                    appended.setdefault(node.target.id, []).append(node)
+                else:
+                    found.setdefault(node.target.id, []).append(ast.Name(id="<parameter>"))
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        found.setdefault(target.id, []).append(node.value)
+        _append_chains(scope, statements, found, appended, parents)
+        for name, values in found.items():
+            for value in values:
+                self._record(name, value)
 
     def _record(self, name: str, value: ast.AST) -> None:
         self.globals.setdefault(name, []).append(value)
@@ -1677,16 +1739,7 @@ class _Module:
                             *([arguments.vararg] if arguments.vararg else []),
                             *([arguments.kwarg] if arguments.kwarg else [])]:
                     found.setdefault(arg.arg, []).append(ast.Name(id="<parameter>"))
-            for appended_name, pieces in appended.items():
-                tail = cast(ast.expr, pieces[0])
-                for piece in pieces[1:]:
-                    tail = ast.BinOp(left=tail, op=ast.Add(), right=cast(ast.expr, piece))
-                tails = [tail, *(cast(ast.expr, piece) for piece in pieces)] if len(pieces) > 1 else [tail]
-                bases = found.get(appended_name) or [ast.Name(id="<parameter>")]
-                found[appended_name] = [
-                    _augmented(ast.BinOp(left=cast(ast.expr, base), op=ast.Add(), right=one))
-                    for base in bases for one in tails
-                ]
+            _append_chains(function, body, found, appended, self.parents)
             for name, kind in declared.items():
                 values = found.pop(name, [])
                 if kind == "nonlocal" and values:
@@ -1708,7 +1761,7 @@ class _Module:
         found: dict[str, list[ast.AST]] = {}
         declared: set[str] = set()
         for node in _scope_nodes(cls.body):
-            _collect(node, found, found, self.index.local)
+            _collect(node, found, None, self.index.local)
             if isinstance(node, ast.Nonlocal):
                 declared.update(node.names)
             inner = (self._class_outward(node) if isinstance(node, ast.ClassDef)
@@ -1723,8 +1776,10 @@ class _Module:
         """What each name a class body binds may be bound to."""
         if id(cls) not in self._classes:
             found: dict[str, list[ast.AST]] = {}
+            appended: dict[str, list[ast.AST]] = {}
             for node in _scope_nodes(cls.body):
-                _collect(node, found, found, self.index.local)
+                _collect(node, found, appended, self.index.local)
+            _append_chains(cls, cls.body, found, appended, self.parents)
             self._classes[id(cls)] = found
         return self._classes[id(cls)]
 
@@ -1864,6 +1919,8 @@ class _Module:
                 result = True
             elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
                 result = self._is_sequence(node.left) or self._is_sequence(node.right)
+            elif isinstance(node, _Appended):
+                result = self._is_sequence(node.body)
             elif isinstance(node, (ast.Name, ast.Attribute)):
                 bound = (self.bindings(node, node.id) if isinstance(node, ast.Name)
                          else self.index.globals.get(node.attr)) or []
@@ -1884,12 +1941,13 @@ class _Module:
         return result
 
     def texts(self, node: ast.AST, seen: frozenset[int] = frozenset()) -> list[str]:
-        """Renderings of a string expression in the plain subset, exactly;
-        everything else is a part not known (UNKNOWN), in place, the known
-        text around it kept (_render). At most MAX_RENDERINGS: past that,
-        the parts that vary are not known instead. (seen is kept for the
-        callers that pass it; cycles are cut here, a node met again while it
-        is being rendered not known.)"""
+        """Renderings of a string expression: the plain subset exactly, and
+        everything else a part not known (UNKNOWN) in place, holding any
+        known text it may contain and with the known text around it kept
+        (_render). At most MAX_RENDERINGS: past that, one rendering keeps
+        every known segment (_bounded). (seen is kept for the callers that
+        pass it; cycles are cut here, a node met again while it is being
+        rendered not known.)"""
         key = id(node)
         if key in self._texts:
             return self._texts[key]
@@ -1908,53 +1966,99 @@ class _Module:
         return result
 
     def _render(self, node: ast.AST, seen: frozenset[int]) -> list[str]:
-        """The plain subset, rendered exactly:
+        """Rendered exactly, the plain subset:
 
-        - a str literal; a name or attribute every binding of which renders
-          (a parameter does not), with its alternatives;
-        - a conditional expression of such (either branch);
-        - a concatenation (+) of such;
+        - a str literal; a name or attribute, through every value it may be
+          bound to (a parameter is not known);
+        - a conditional expression, x or y and x and y (either operand), a
+          walrus (its value), and str() of text (the text);
+        - a concatenation (+);
         - an f-string, and a str.format or % template, whose fields are
           exactly {} / {name} / {0} or %s / %(name)s, with no spec and no
-          conversion, each value a str literal or a name bound only to
-          renderable str values (_field_values);
+          conversion, each rendered as its value is;
         - join, replace, strip, lstrip, rstrip, removeprefix, removesuffix,
-          upper and lower, with str-literal arguments (join's a list or
-          tuple display of them, or a name bound only, once, to a tuple
-          display of them, its starred elements such tuples).
+          upper and lower with arguments known in full (_apply; join's a
+          list or tuple display, or a name bound only, once, to a tuple
+          display, its elements in turn with the separator between).
 
-        Anything else is not known: any spec or conversion, any other % code,
-        a numeric or bytes value, a spread, a computed or duplicate key, a
-        starred argument, any other str method or callee, an argument that
-        does not match its field, a bound exceeded. A str method that is not
-        rendered keeps its receiver's text, a part not known after it."""
+        Anything else is a part not known, holding the known text it may
+        contain: a field with a spec or conversion (its value's text), any
+        other % code or a field whose value is not matched (the text of
+        every value given), a number or bytes (its text), a container, a
+        comprehension, a loop's target, an element or slice (the text of
+        what it is taken from), text * n (none, one, or two copies then a
+        part not known), repr or format of a value (its text), any other str
+        method or one with an argument not known (the receiver's and the
+        arguments' text), join of anything else (the separator and the
+        elements' text). A call of anything else is a part not known."""
         if isinstance(node, ast.Constant):
-            return [node.value] if isinstance(node.value, str) else [UNKNOWN]
+            return [node.value] if isinstance(node.value, str) else [_union([str(node.value)])]
         if isinstance(node, ast.JoinedStr):
             pieces: list[list[str]] = []
             for part in node.values:
                 if isinstance(part, ast.Constant) and isinstance(part.value, str):
                     pieces.append([part.value])
-                elif isinstance(part, ast.FormattedValue) and part.conversion == -1 and part.format_spec is None:
-                    pieces.append(self._field_values(part.value, seen) or [UNKNOWN])
+                elif isinstance(part, ast.FormattedValue):
+                    values = self.texts(part.value, seen)
+                    plain = part.conversion == -1 and part.format_spec is None
+                    pieces.append(values if plain else [_union(values)])
                 else:
                     pieces.append([UNKNOWN])
             return _combine(pieces)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-            if self._is_sequence(node.left, frozenset()) or self._is_sequence(node.right, frozenset()):
-                return [UNKNOWN]
             return _combine([self.texts(node.left, seen), self.texts(node.right, seen)])
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
             return self._percent_texts(node, seen)
+        if isinstance(node, _Appended):
+            once = self.texts(node.body)
+            again = _combine([once, once, [UNKNOWN]]) if node.repeat else []
+            return [*once, *again, ""]
         if isinstance(node, ast.IfExp):
             return [*self.texts(node.body), *self.texts(node.orelse)]
+        if isinstance(node, ast.BoolOp):  # x or y, x and y: one of the operands
+            return [text for value in node.values for text in self.texts(value)]
+        if isinstance(node, ast.NamedExpr):
+            return self.texts(node.value)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+            # text * n: none, one, or two copies then a part not known.
+            once = [*self.texts(node.left), *self.texts(node.right)]
+            return [*once, *_combine([once, once, [UNKNOWN]]), ""]
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return [_union(text for element in node.elts for text in self.texts(
+                element.value if isinstance(element, ast.Starred) else element))]
+        if isinstance(node, ast.Dict):
+            return [_union(text for part in [*node.keys, *node.values] if part is not None
+                           for text in self.texts(part))]
+        if isinstance(node, _COMPREHENSIONS):
+            parts = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+            return [_union(text for part in parts for text in self.texts(part))]
+        if isinstance(node, (ast.Starred, ast.Subscript)):
+            # A loop's (or a comprehension's) target, an element or a slice:
+            # some of what it is taken from.
+            return [_union(self.texts(node.value))]
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr == "format":
                 return self._format_texts(node, seen)
             if node.func.attr in _RENDERED_METHODS:
                 return self._method_texts(node, seen)
             if node.func.attr in _STRING_METHODS:
-                return _bounded([text + UNKNOWN for text in self.texts(node.func.value, seen)])
+                return self._opaque(node, self.texts(node.func.value, seen))
+        if isinstance(node, ast.Call) and _builtin_name(self, node.func) in ("str", "repr", "format"):
+            if _builtin_name(self, node.func) == "str" and len(node.args) == 1 and not node.keywords and not (
+                    isinstance(node.args[0], ast.Starred)):
+                return self.texts(node.args[0])  # str of text is the text; anything else renders as not known
+            return self._opaque(node, [""])
+        if isinstance(node, _Earlier):
+            earlier = [value for value in self.index.globals.get(node.attr, []) if not getattr(value, "appended", False)]
+            pieces_appended = [cast(ast.BinOp, value).right for value in self.index.globals.get(node.attr, [])
+                               if getattr(value, "appended", False)]
+            # Two appends or more of text: a word may run across them, so the
+            # value before one may be a write.
+            spanned = len(pieces_appended) > 1 and any(
+                _LETTER.search(segment) for piece in pieces_appended for text in self.texts(piece)
+                for segment in text.split(UNKNOWN))
+            return [*(text for value in earlier for text in ([UNKNOWN] if _is_unknown(value) else self.texts(value))),
+                    _MAY_WRITE if spanned else UNKNOWN]
         if isinstance(node, (ast.Name, ast.Attribute)):
             bound = (self.bindings(node, node.id) if isinstance(node, ast.Name)
                      else self.index.globals.get(node.attr)) or []
@@ -1963,25 +2067,20 @@ class _Module:
             through: list[str] = []
             for value in bound:
                 through.extend([UNKNOWN] if _is_unknown(value) else self.texts(value))
-            return _bounded(through)
+            return through
         return [UNKNOWN]
 
-    def _field_values(self, node: ast.AST, seen: frozenset[int]) -> list[str] | None:
-        """A field's values: a str literal, or a name bound only to
-        renderable str values, with no part not known; None otherwise (a
-        number, bytes, anything else; a container renders as not known)."""
-        if isinstance(node, ast.Constant):
-            return [node.value] if isinstance(node.value, str) else None
-        if not isinstance(node, (ast.Name, ast.Attribute)):
-            return None
-        rendered = self.texts(node, seen)
-        return None if any(UNKNOWN in text for text in rendered) else rendered
+    def _known(self, node: ast.AST) -> list[str] | None:
+        """An argument's renderings when each is known in full; else None."""
+        rendered = self.texts(node)
+        return None if any(UNKNOWN in text or WRITE in text for text in rendered) else rendered
 
-    def _sequence_strings(self, node: ast.AST, depth: int) -> list[list[str]] | None:
-        """The elements join is given, each with its values: a list or tuple
-        display of str values (a starred element a tuple of them), or a name
-        bound only, once, to a tuple display of them (a tuple cannot change);
-        None otherwise."""
+    def _join_elements(self, node: ast.AST, depth: int) -> list[tuple[bool, list[str]]] | None:
+        """What join is given, element by element: a list or tuple display
+        (a starred display or tuple constant in it expanded), or a name bound
+        only, once, to a tuple display (a tuple cannot change). Each element
+        is (True, its renderings), or (False, the renderings of a starred
+        part whose elements are not known). None for anything else."""
         if depth > 4:
             return None
         if isinstance(node, (ast.Name, ast.Attribute)):
@@ -1989,36 +2088,35 @@ class _Module:
                      else self.index.globals.get(node.attr)) or []
             if len(bound) != 1 or not isinstance(bound[0], ast.Tuple):
                 return None
-            return self._sequence_strings(bound[0], depth + 1)
+            return self._join_elements(bound[0], depth + 1)
         if not isinstance(node, (ast.List, ast.Tuple)):
             return None
-        out: list[list[str]] = []
+        out: list[tuple[bool, list[str]]] = []
         for element in node.elts:
             if isinstance(element, ast.Starred):
-                inner = self._sequence_strings(element.value, depth + 1)
-                if inner is None or isinstance(element.value, ast.List):
-                    return None
-                out.extend(inner)
+                inner = self._join_elements(element.value, depth + 1)
+                out.extend(inner if inner is not None else [(False, self.texts(element.value))])
             else:
-                values = self._field_values(element, frozenset())
-                if values is None:
-                    return None
-                out.append(values)
+                out.append((True, self.texts(element)))
         return out
 
     def _percent_texts(self, node: ast.BinOp, seen: frozenset[int]) -> list[str]:
         """template % values, in the subset: %% is %; %s takes the next value
-        of a tuple literal (or the one value given, when it is the only
-        field), %(name)s the value of that str key in a dict literal with
-        only str-literal keys, each once. Any other % sequence makes the
-        text from it on not known; values that do not match make every field
-        not known."""
+        of a tuple display (or the one value given, when it is the only
+        field), %(name)s the value of that str key in a dict display with
+        only str-literal keys, each once. Any other % field is a part not
+        known to its end (_percent_fields), the text after it kept; a field
+        whose value is not matched holds the text of every value given."""
         right = node.right
         positional: list[ast.AST] | None = None
         named: dict[str, ast.AST] | None = None
-        if isinstance(right, ast.Tuple) and not any(isinstance(e, ast.Starred) for e in right.elts):
-            positional = list(right.elts)
+        given: list[ast.AST] = [right]
+        if isinstance(right, ast.Tuple):
+            given = [e.value if isinstance(e, ast.Starred) else e for e in right.elts]
+            if not any(isinstance(e, ast.Starred) for e in right.elts):
+                positional = list(right.elts)
         elif isinstance(right, ast.Dict):
+            given = list(right.values)
             keys = [k.value if isinstance(k, ast.Constant) and isinstance(k.value, str) else None for k in right.keys]
             if None not in keys and len(set(keys)) == len(keys):
                 named = dict(zip(cast(list[str], keys), right.values, strict=True))
@@ -2028,85 +2126,126 @@ class _Module:
             fields = [token for token in tokens if isinstance(token, tuple)]
             values = _assign(fields, positional, named, right if positional is None and named is None else None,
                              UNKNOWN in template)
-            out.extend(self._fill(tokens, values, seen))
+            out.extend(self._fill(tokens, values, given))
         return out
 
     def _format_texts(self, node: ast.Call, seen: frozenset[int]) -> list[str]:
         """template.format(...), in the subset: {{ and }} are braces; {} takes
         the next positional value, {0} that one, {name} that keyword's.
         Any other field (a spec, a conversion, an attribute or index, a
-        nested field) is not known, and then so is every field; a starred
-        argument or a ** spread, numbering both automatic and manual, or a
-        value that is missing makes the fields not known."""
+        nested field) is a part not known, and then every field holds the
+        text of every value given; so does each field when an argument is
+        starred or a ** spread, numbering is both automatic and manual, or a
+        value is missing."""
         plain = not any(isinstance(a, ast.Starred) for a in node.args) and all(k.arg for k in node.keywords)
         positional: list[ast.AST] | None = list(node.args) if plain else None
         named: dict[str, ast.AST] | None = {cast(str, k.arg): k.value for k in node.keywords} if plain else None
+        given: list[ast.AST] = [*(a.value if isinstance(a, ast.Starred) else a for a in node.args),
+                                *(k.value for k in node.keywords)]
         out: list[str] = []
         for template in self.texts(cast(ast.Attribute, node.func).value, seen):
             tokens = _format_fields(template)
             fields = [token for token in tokens if isinstance(token, tuple)]
-            out.extend(self._fill(tokens, _assign(fields, positional, named, None, UNKNOWN in template), seen))
+            out.extend(self._fill(tokens, _assign(fields, positional, named, None, UNKNOWN in template), given))
         return out
 
     def _fill(self, tokens: list[str | tuple[str, str]], values: list[ast.AST | None],
-              seen: frozenset[int]) -> list[str]:
+              given: list[ast.AST]) -> list[str]:
+        """A template's renderings: its literal text, each matched field as
+        its value renders, and each other field a part not known holding the
+        text of every value given."""
         pieces: list[list[str]] = []
         remaining = iter(values)
+        spread: list[str] | None = None
         for token in tokens:
             if isinstance(token, str):
                 pieces.append([token])
+                continue
+            value = next(remaining)
+            if value is not None:
+                pieces.append(self.texts(value))
             else:
-                value = next(remaining)
-                pieces.append((self._field_values(value, seen) if value is not None else None) or [UNKNOWN])
+                if spread is None:
+                    spread = [_union(text for one in given for text in self.texts(one))]
+                pieces.append(spread)
         return _combine(pieces)
+
+    def _opaque(self, node: ast.Call, receivers: list[str]) -> list[str]:
+        """A str method not rendered (or given an argument not known): a part
+        not known holding the receiver's text and its arguments' text."""
+        arguments = [*(a.value if isinstance(a, ast.Starred) else a for a in node.args),
+                     *(k.value for k in node.keywords)]
+        held = _union(text for argument in arguments for text in self.texts(argument))
+        return [_collapse(UNKNOWN + text + held) for text in receivers]
 
     def _method_texts(self, node: ast.Call, seen: frozenset[int]) -> list[str]:
         """join, replace, strip, lstrip, rstrip, removeprefix, removesuffix,
-        upper and lower with str-literal arguments, computed exactly (a
-        receiver's part not known kept in place); with any other argument,
-        or past the bound, the receiver's text, a part not known after it."""
+        upper and lower with arguments known in full, computed exactly, the
+        receiver's parts not known kept in place and untouched (_apply);
+        with any other argument, a part not known holding the receiver's and
+        the arguments' text (_opaque); join of anything but a display or a
+        tuple constant, the separator between parts not known holding the
+        elements' text."""
         method = cast(ast.Attribute, node.func).attr
         receivers = self.texts(cast(ast.Attribute, node.func).value, seen)
-        arguments: list[list[object]] | None = None
-        if not node.keywords and not any(isinstance(a, ast.Starred) for a in node.args):
-            arguments = []
-            for argument in node.args:
-                elements = self._sequence_strings(argument, 0) if method == "join" else None
-                if elements is not None:
-                    arguments.append([list(c) for c in itertools.islice(
-                        itertools.product(*elements), MAX_RENDERINGS + 1)])
-                elif method != "join":
-                    values = self._field_values(argument, seen)
-                    if values is None:
-                        arguments = None
-                        break
-                    arguments.append(list(values))
-                else:
-                    arguments = None
-                    break
-        count = len(receivers)
-        for alternatives in arguments or []:
-            count *= len(alternatives)
-        if arguments is None or count > MAX_RENDERINGS:
-            return [UNKNOWN] if method == "join" else [text + UNKNOWN for text in receivers]
+        if node.keywords or any(isinstance(a, ast.Starred) for a in node.args):
+            return self._opaque(node, receivers)
+        if method == "join":
+            return self._join_texts(node, receivers) if len(node.args) == 1 else self._opaque(node, receivers)
+        arguments: list[list[str]] = []
+        for argument in node.args:
+            values = self._known(argument)
+            if values is None:
+                return self._opaque(node, receivers)
+            arguments.append(values)
+        choices = list(itertools.islice(itertools.product(*arguments), _EVALUATED + 1))
+        if len(receivers) * len(choices) > _EVALUATED:
+            # Too many to compute: every text involved, and a possible write.
+            return [_union([*receivers, *(value for values in arguments for value in values)]) + WRITE + UNKNOWN]
         rendered: list[str] = []
         for text in receivers:
-            for choice in itertools.product(*arguments):
+            for choice in choices:
                 try:
-                    rendered.append(getattr(text, method)(*choice))
+                    rendered.append(_apply(text, method, choice))
                 except (TypeError, ValueError):
-                    rendered.append(text + UNKNOWN)
-        return list(dict.fromkeys(rendered))
+                    rendered.append(_collapse(UNKNOWN + text + UNKNOWN))
+        return rendered
+
+    def _join_texts(self, node: ast.Call, receivers: list[str]) -> list[str]:
+        """sep.join(elements): each known element in turn with the separator
+        between two of them; a starred part whose elements are not known is
+        a part not known holding the separator and their text. Anything else
+        given to join: the separator between parts not known holding the
+        elements' text (it appears once there are two)."""
+        argument = node.args[0]
+        elements = self._join_elements(argument, 0)
+        if elements is None:
+            held = _union(self.texts(argument))
+            return [_collapse(UNKNOWN + separator + held) for separator in receivers]
+        out: list[str] = []
+        for separator in receivers:
+            pieces: list[list[str]] = []
+            previous = False
+            for known, texts in elements:
+                if not known:
+                    pieces.append([_union([separator, *texts])])
+                elif previous:
+                    pieces += [[separator], texts]
+                else:
+                    pieces.append(texts)
+                previous = known
+            out.extend(_combine(pieces) if pieces else [""])
+        return out
 
 
-#: The str methods rendered exactly with str-literal arguments.
+#: The str methods rendered exactly with arguments known in full.
 _RENDERED_METHODS = frozenset({"join", "replace", "strip", "lstrip", "rstrip", "removeprefix", "removesuffix",
                                "upper", "lower"})
-#: Other str methods: a string expression, its receiver's text kept, then a
-#: part not known.
+#: Other str methods: a string expression, a part not known holding the
+#: receiver's and the arguments' text.
 _STRING_METHODS = _RENDERED_METHODS | frozenset({
     "format", "casefold", "swapcase", "title", "capitalize", "zfill", "center", "ljust", "rjust", "expandtabs",
-    "format_map", "translate", "partition", "rpartition", "split", "rsplit"})
+    "format_map", "translate", "partition", "rpartition", "split", "rsplit", "splitlines", "encode", "decode"})
 
 
 def _augmented(node: ast.BinOp) -> ast.BinOp:
@@ -2115,10 +2254,72 @@ def _augmented(node: ast.BinOp) -> ast.BinOp:
     return node
 
 
+class _Appended(ast.IfExp):
+    """The piece of an ``x += piece`` statement that may not run (inside a
+    branch, a loop, a try or a with): rendered as the piece or nothing, and,
+    inside a loop, also as two copies then a part not known (it may
+    repeat)."""
+
+    def __init__(self, piece: ast.expr, repeat: bool) -> None:
+        super().__init__(test=ast.Constant(value=True), body=piece, orelse=ast.Constant(value=""))
+        self.repeat = repeat
+
+
+def _append_chains(scope: ast.AST, body: list[ast.stmt] | list[ast.expr], found: dict[str, list[ast.AST]],
+                   appended: dict[str, list[ast.AST]], parents: dict[int, ast.AST]) -> None:
+    """x += piece in one scope's body (a function's, a class's or a
+    module's): each earlier value of x followed by every piece in source
+    order. A piece whose statement is not directly in the body may be absent
+    (_Appended), and one inside a loop may repeat. Reads are not ordered
+    against the statements: each read sees the value after all of them."""
+    direct = {id(statement) for statement in body}
+    for name, statements in appended.items():
+        chain: ast.expr | None = None
+        for statement in sorted(statements, key=lambda node: (getattr(node, "lineno", 0),
+                                                               getattr(node, "col_offset", 0))):
+            piece = cast(ast.AugAssign, statement).value
+            part: ast.expr = piece
+            if id(statement) not in direct:
+                part = _Appended(piece, _inside_loop(statement, scope, parents))
+            chain = part if chain is None else ast.BinOp(left=chain, op=ast.Add(), right=part)
+        if chain is None:
+            continue
+        bases = found.get(name) or [ast.Name(id="<parameter>")]
+        found[name] = [_augmented(ast.BinOp(left=cast(ast.expr, base), op=ast.Add(), right=chain))
+                       for base in bases]
+
+
+class _Earlier(ast.expr):
+    """An attribute's value before an ``obj.attr += piece`` statement, which
+    may run anywhere and in any order: any other value of the attribute, or
+    a part not known (earlier appends)."""
+
+    _fields = ()
+
+    def __init__(self, attr: str) -> None:
+        super().__init__()
+        self.attr = attr
+
+
+def _attribute_append(attr: str, piece: ast.expr) -> ast.BinOp:
+    node = ast.BinOp(left=_Earlier(attr), op=ast.Add(), right=piece)
+    node.appended = True  # type: ignore[attr-defined]
+    return node
+
+
+def _inside_loop(node: ast.AST, scope: ast.AST, parents: dict[int, ast.AST]) -> bool:
+    current = parents.get(id(node))
+    while current is not None and current is not scope:
+        if isinstance(current, (ast.For, ast.AsyncFor, ast.While)):
+            return True
+        current = parents.get(id(current))
+    return False
+
+
 def _percent_fields(template: str) -> list[str | tuple[str, str]]:
-    """A %-template's literal text and subset fields (("", "") for %s,
-    ("name", "") for %(name)s); at any other % sequence, the rest of the
-    template is one field not known (("?", "")), and %% is %."""
+    """A %-template's literal text and fields: ("", "") for %s, ("name", "")
+    for %(name)s, and ("?", "") for any other field, which runs to its end
+    (_percent_end); %% is %. The literal text after any field is kept."""
     tokens: list[str | tuple[str, str]] = []
     literal: list[str] = []
     i = 0
@@ -2127,33 +2328,51 @@ def _percent_fields(template: str) -> list[str | tuple[str, str]]:
             literal.append(template[i])
             i += 1
             continue
-        named = re.match(r"\((\w+)\)s", template[i + 1:])
-        field: tuple[str, str] | None = None
         if template.startswith("%%", i):
             literal.append("%")
             i += 2
             continue
+        named = re.match(r"\((\w+)\)s", template[i + 1:])
+        field: tuple[str, str]
         if template.startswith("%s", i):
-            field, i = ("", ""), i + 2
+            field, end = ("", ""), i + 2
         elif named:
-            field, i = (named.group(1), ""), i + 1 + named.end()
+            field, end = (named.group(1), ""), i + 1 + named.end()
+        else:
+            field, end = ("?", ""), _percent_end(template, i)
         if literal:
             tokens.append("".join(literal))
             literal = []
-        if field is None:
-            tokens.append(("?", ""))  # not the subset: from here on, not known
-            return tokens
         tokens.append(field)
+        i = end
     if literal:
         tokens.append("".join(literal))
     return tokens
 
 
+def _percent_end(template: str, start: int) -> int:
+    """Where a % field ends, read only for its extent: a mapping key in
+    balanced parentheses, flags, a width, a precision, a length modifier
+    and one conversion character. A field cut short (the template cannot
+    run) is the % alone."""
+    j = start + 1
+    if template.startswith("(", j):
+        depth, j = 1, j + 1
+        while j < len(template) and depth:
+            depth += {"(": 1, ")": -1}.get(template[j], 0)
+            j += 1
+        if depth:
+            return start + 1
+    j = _PERCENT_SPEC.match(template, j).end()  # type: ignore[union-attr]
+    return j + 1 if j < len(template) else start + 1
+
+
 def _format_fields(template: str) -> list[str | tuple[str, str]]:
     """A .format template's literal text and subset fields (("", "auto"),
     ("0", "index"), ("name", "name")); any other field, or a brace outside
-    one, is one field not known (("?", "")), its extent to the matching
-    brace (or the rest of the template)."""
+    one, is one field not known (("?", "")) to its matching brace, a brace
+    never matched (the template cannot run) only itself. The literal text
+    after any field is kept."""
     tokens: list[str | tuple[str, str]] = []
     literal: list[str] = []
     i = 0
@@ -2178,12 +2397,16 @@ def _format_fields(template: str) -> list[str | tuple[str, str]]:
         while j < len(template) and depth:
             depth += {"{": 1, "}": -1}.get(template[j], 0)
             j += 1
-        content = template[i + 1:j - 1] if not depth else None
+        if depth:
+            tokens.append(("?", ""))
+            i += 1
+            continue
+        content = template[i + 1:j - 1]
         if content == "":
             tokens.append(("", "auto"))
-        elif content is not None and content.isdigit():
+        elif content.isdigit():
             tokens.append((content, "index"))
-        elif content is not None and content.isidentifier():
+        elif content.isidentifier():
             tokens.append((content, "name"))
         else:
             tokens.append(("?", ""))
@@ -2195,9 +2418,9 @@ def _format_fields(template: str) -> list[str | tuple[str, str]]:
 
 def _assign(fields: list[tuple[str, str]], positional: list[ast.AST] | None, named: dict[str, ast.AST] | None,
             single: ast.AST | None, unknown_template: bool) -> list[ast.AST | None]:
-    """The value each subset field takes, None where it is not known: every
-    field when any is not the subset, when automatic and manual numbering
-    are mixed, or when the values do not match the fields exactly;
+    """The value each subset field takes, None where it is not matched:
+    every field when any is not the subset, when automatic and manual
+    numbering are mixed, or when the values do not match the fields exactly;
     automatic and %s fields when the template holds a part not known (it may
     hold fields of its own)."""
     kinds = {kind for _key, kind in fields}
@@ -2229,30 +2452,150 @@ def _assign(fields: list[tuple[str, str]], positional: list[ast.AST] | None, nam
     return out
 
 
+# -- str methods on a rendering that holds a part not known -----------------
+
+
+def _apply(text: str, method: str, arguments: tuple[str, ...]) -> str:
+    """A rendered str method on one rendering. Without a part not known it
+    is Python's own. With one, it applies to the known segments only: each
+    part not known stays where it is and as it is (a method never removes
+    or changes one), and known text the arguments could reach across a part
+    not known joins that part."""
+    if UNKNOWN not in text:
+        return cast(str, getattr(text, method)(*arguments))
+    segments = text.split(UNKNOWN)
+    fixed = [segment == WRITE for segment in segments]
+    out = list(segments)
+    if method in ("upper", "lower"):
+        for i, segment in enumerate(segments):
+            if not fixed[i]:
+                # lower() reads a capital sigma's neighbours: next to a part
+                # not known it is not known.
+                parts = segment.split("\u03a3") if method == "lower" else [segment]
+                out[i] = UNKNOWN.join(getattr(part, method)() for part in parts)
+    elif method in ("strip", "lstrip", "rstrip"):
+        chars = arguments[0] if arguments else None
+        if method != "rstrip":
+            _strip_edge(out, fixed, chars, range(len(out)), str.lstrip)
+        if method != "lstrip":
+            _strip_edge(out, fixed, chars, range(len(out) - 1, -1, -1), str.rstrip)
+    elif method == "removeprefix":
+        out = _remove_prefix(out, fixed, arguments[0])
+    elif method == "removesuffix":
+        reverse = _remove_prefix([segment[::-1] for segment in reversed(out)], fixed[::-1], arguments[0][::-1])
+        out = [segment[::-1] for segment in reversed(reverse)]
+    else:
+        out = _replace_segments(out, fixed, arguments[0], arguments[1])
+    return _collapse(UNKNOWN.join(out))
+
+
+def _strip_edge(out: list[str], fixed: list[bool], chars: str | None, order: Iterable[int],
+                strip: Callable[[str, str | None], str]) -> None:
+    """Strip one end: a segment stripped to nothing lets the part not known
+    after it be stripped too, so the next segment's run of stripped
+    characters joins that part."""
+    for i in order:
+        if fixed[i]:
+            continue
+        out[i] = strip(out[i], chars)
+        if out[i]:
+            return
+
+
+def _remove_prefix(out: list[str], fixed: list[bool], prefix: str) -> list[str]:
+    """removeprefix on segments: exact when the first segment decides it;
+    otherwise each segment the prefix could reach (it starts before
+    len(prefix), the parts not known empty) loses to the part before it its
+    longest start that occurs in the prefix."""
+    out = list(out)
+    first = out[0]
+    if not prefix or (first and not first.startswith(prefix) and not prefix.startswith(first)):
+        return out
+    if first.startswith(prefix):
+        out[0] = first[len(prefix):]
+        return out
+    reach = 0
+    for i, segment in enumerate(list(out)):
+        if reach >= len(prefix):
+            break
+        if fixed[i]:
+            continue
+        cut = 0
+        while cut < len(segment) and segment[:cut + 1] in prefix:
+            cut += 1
+        out[i] = segment[cut:]
+        reach += len(segment)
+    return out
+
+
+def _replace_segments(out: list[str], fixed: list[bool], old: str, new: str) -> list[str]:
+    """replace on segments. With old empty, new goes before each character
+    and at the end: exact. Otherwise a match may run across a part not
+    known: a segment that could lie inside one joins it whole, and a
+    segment's start (end) that could finish (begin) one joins the part
+    before (after) it, with every match overlapping that run (one with a
+    border shifts the next). The rest is replaced exactly."""
+    out = list(out)
+    if old == "":
+        for i, segment in enumerate(out):
+            if not fixed[i]:
+                out[i] = (new if i == 0 else "") + "".join(char + new for char in segment)
+        return out
+    width, last = len(old), len(out) - 1
+    for i, segment in enumerate(list(out)):
+        if fixed[i] or not segment:
+            continue
+        before, after = i > 0, i < last
+        if before and after and segment in old:
+            out[i] = ""
+            continue
+        reach = range(1, min(len(segment), width - 1) + 1)
+        head = max((k for k in reach if old.endswith(segment[:k])), default=0) if before else 0
+        tail = max((k for k in reach if old.startswith(segment[-k:])), default=0) if after else 0
+        if head or tail:
+            starts = [p for p in range(len(segment) - width + 1) if segment.startswith(old, p)]
+            for p in starts:
+                if head and p < head:
+                    head = max(head, p + width)
+            for p in reversed(starts):
+                if tail and p + width > len(segment) - tail:
+                    tail = max(tail, len(segment) - p)
+        out[i] = "" if head + tail >= len(segment) else segment[head:len(segment) - tail].replace(old, new)
+    return out
+
+
+# -- bounds ------------------------------------------------------------------
+
+
 def _bounded(renderings: list[str]) -> list[str]:
-    """At most MAX_RENDERINGS renderings; past the bound, one rendering with
-    the text that varies not known (_common), so the known text around it
-    stays."""
+    """At most MAX_RENDERINGS renderings; past the bound, one that keeps
+    every known segment of them (_common)."""
     distinct = list(dict.fromkeys(renderings)) or [UNKNOWN]
     return distinct if len(distinct) <= MAX_RENDERINGS else [_common(distinct)]
 
 
 def _common(renderings: list[str]) -> str:
-    """What every rendering holds: their common start and end around one
-    part not known (or the one rendering, when they agree)."""
+    """One rendering for many: their common start and end, cut back to
+    whole words, in place, and between them a part not known holding every
+    distinct known segment of what varies (_union). So no known text is
+    dropped, no word is split, and every word of every rendering is still
+    there (the one rendering, when they agree)."""
     distinct = list(dict.fromkeys(renderings))
     if len(distinct) == 1:
         return distinct[0]
-    start = distinct[0]
-    for text in distinct[1:]:
-        while not text.startswith(start):
-            start = start[:-1]
+    start = commonprefix(distinct)
+    start = start[:len(start) - len(_WORD_END.search(start).group())]  # type: ignore[union-attr]
     rests = [text[len(start):] for text in distinct]
-    end = rests[0]
-    for rest in rests[1:]:
-        while not rest.endswith(end):
-            end = end[1:]
-    return _collapse(start + UNKNOWN + end)
+    end = commonprefix([rest[::-1] for rest in rests])[::-1]
+    end = end[len(_WORD_START.match(end).group()):]  # type: ignore[union-attr]
+    return _collapse(start + _union(rest[:len(rest) - len(end)] for rest in rests) + end)
+
+
+def _union(renderings: Iterable[str]) -> str:
+    """A part not known holding every distinct known segment of the given
+    renderings, each between parts not known."""
+    segments = dict.fromkeys(segment for text in renderings for segment in text.split(UNKNOWN) if segment)
+    return _collapse(UNKNOWN + UNKNOWN.join(segments) + UNKNOWN)
 
 
 def _collapse(text: str) -> str:
@@ -2260,15 +2603,50 @@ def _collapse(text: str) -> str:
 
 
 def _combine(pieces: list[list[str]]) -> list[str]:
-    """Every rendering of a sequence of pieces; past the bound, one with each
-    piece that varies not known (the known pieces around them kept)."""
+    """Every rendering of a sequence of pieces. Past the bound, one: each
+    piece that varies as _common renders it, then a part not known holding
+    every word that runs across pieces in some choice of them (_spanning),
+    so no word is lost; past the bound on those words, a possible write."""
     pieces = [piece or [UNKNOWN] for piece in pieces]
     count = 1
     for piece in pieces:
         count *= len(piece)
     if count > MAX_RENDERINGS:
-        return [_collapse("".join(_common(piece) for piece in pieces))]
-    return ["".join(choice) for choice in itertools.product(*pieces)] or [""]
+        words = _spanning(pieces)
+        held = _MAY_WRITE if words is None else _union(words)
+        return [_collapse("".join(_common(piece) for piece in pieces) + held)]
+    return [_collapse("".join(choice)) for choice in itertools.product(*pieces)] or [""]
+
+
+def _spanning(pieces: list[list[str]]) -> list[str] | None:
+    """Every word (a run of word characters) that runs across two pieces or
+    more in some choice of them; the words inside one piece are in its own
+    segments. None past MAX_RENDERINGS ** 2 of them."""
+    words: dict[str, None] = {}
+    running: set[tuple[str, bool]] = {("", False)}  # the word running at the end so far, and whether it spans
+    for piece in pieces:
+        following: set[tuple[str, bool]] = set()
+        for text in piece:
+            head = _WORD_START.match(text).group()  # type: ignore[union-attr]
+            if head == text:  # all word characters (or nothing): the running word goes on
+                following |= {(run + text, spans or bool(run and text)) for run, spans in running}
+                continue
+            for run, spans in running:
+                if spans or (run and head):
+                    words[run + head] = None
+            following.add((_WORD_END.search(text).group(), False))  # type: ignore[union-attr]
+        running = following
+        if len(running) > _EVALUATED or len(words) > _EVALUATED:
+            return None
+    words.update((run, None) for run, spans in running if spans)
+    return list(words)
+
+
+def _may_write(text: str) -> bool:
+    """Whether a rendering may be a write: a write verb in one of its known
+    segments, each read alone (so a lock and a verb on either side of a part
+    not known are not joined), or a possible-write mark."""
+    return any(segment == WRITE or _DML_WORD.search(_LOCK.sub(" ", segment)) for segment in text.split(UNKNOWN))
 
 
 def _callee(call: ast.Call) -> str:
@@ -2614,7 +2992,7 @@ def scope_marks(m: _Module) -> dict[str, tuple[set[str], ast.AST]]:
                 seen.add("table")
             if _LIMIT_WORD.search(known):
                 seen.add("limit")
-            if _DML_WORD.search(_LOCK.sub(" ", known)):
+            if _may_write(text):
                 seen.add("write")
     return marks
 
@@ -2636,9 +3014,9 @@ def _statement_calls(m: _Module, mentions: set[str]) -> Iterator[_Finding]:
             for text in texts:
                 if classify(text) == "sql":
                     yield _Finding("key_limit.sql", node, changed or assigns_limit_column(text))
-                known = text.replace(UNKNOWN, " ")
-                if UNKNOWN in text and _DML_WORD.search(_LOCK.sub(" ", known)):
+                if UNKNOWN in text and _may_write(text):
                     # A write with a part not known: dynamic SQL, in any scope.
+                    known = text.replace(UNKNOWN, " ")
                     yield _Finding("key_limit.sql" if names_table(known) else "sql.dynamic", node, True)
             if changed and (mentioned or any(names_table(text) for text in texts)):
                 yield _Finding("key_limit.sql", node, True)
@@ -2828,7 +3206,7 @@ def _plain_decorator(m: _Module, function: ast.AST, decorator: ast.expr) -> bool
 def _class_bindings(item: ast.AST) -> set[str]:
     found: dict[str, list[ast.AST]] = {}
     for node in _scope_nodes([item]):
-        _collect(node, found, found, set())
+        _collect(node, found, None, set())
     return set(found)
 
 
@@ -4036,7 +4414,7 @@ def _string_findings(m: _Module) -> Iterator[_Finding]:
                 yield _Finding("key_limit." + kind, node, kind == "sql" and assigns_limit_column(text))
             elif _unknown_could_write(text):
                 yield _Finding("key_limit.sql", node, True)
-            if _DYNAMIC.search(text) or _DYNAMIC_HEAD.match(text):
+            if _DYNAMIC.search(text) or _DYNAMIC_HEAD.match(text) or WRITE in text.split(UNKNOWN):
                 yield _Finding("sql.dynamic", node, True)
 
     inside_strings = {id(sub) for node in strings for sub in ast.walk(node) if sub is not node}
