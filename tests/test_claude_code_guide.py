@@ -18,12 +18,14 @@ from trusted_router import catalog
 from trusted_router.catalog import Model, ModelEndpoint
 from trusted_router.pricing import PriceTier
 
-CHEAP = "anthropic/claude-haiku-fixture"
+CHEAP = "anthropic/claude-haiku-9.1"
+SONNET = "anthropic/claude-sonnet-9.3"
 OPUS = "anthropic/claude-opus-9.10"
 OLDER = "anthropic/claude-opus-9.2"
 HIDDEN = "anthropic/claude-hidden-fixture"
 OTHER = "example/non-messages-fixture"
-PRICES = {CHEAP: (1055000, 5275000), OPUS: (4220000, 21100000), OLDER: (5275000, 26375000)}
+PRICES = {CHEAP: (1055000, 5275000), SONNET: (2110000, 10550000), OPUS: (4220000, 21100000),
+          OLDER: (5275000, 26375000)}
 PATH = "/docs/claude-code"
 
 
@@ -50,6 +52,10 @@ def controlled_claude_catalog(monkeypatch: pytest.MonkeyPatch) -> dict[str, Mode
     alternative = replace(endpoints[CHEAP + "@anthropic/credits"], id=CHEAP + "@amazon-bedrock/credits",
                           provider="amazon-bedrock", price_tiers=(PriceTier(None, 3165000, 15825000),))
     endpoints[alternative.id] = alternative
+    # A cheaper BYOK row for the same model must never set the listed price.
+    byok = replace(endpoints[CHEAP + "@anthropic/credits"], id=CHEAP + "@anthropic/byok",
+                   usage_type="BYOK", price_tiers=(PriceTier(None, 1000, 1000),))
+    endpoints[byok.id] = byok
     monkeypatch.setattr(guides, "MODELS", models)
     monkeypatch.setattr(guides, "MODEL_ENDPOINTS", endpoints)
     monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
@@ -101,6 +107,32 @@ def test_exact_exports_and_messages_check(client: TestClient) -> None:
         "model": CHEAP, "messages": [{"role": "user", "content": "Reply with PONG only."}], "max_tokens": 16,
     }
     assert soup.select_one('a[href="https://code.claude.com/docs/en/llm-gateway-connect"]')
+
+
+def test_model_aliases_are_pinned_to_listed_ids(client: TestClient, monkeypatch: pytest.MonkeyPatch,
+                                                controlled_claude_catalog: dict[str, ModelEndpoint]) -> None:
+    soup = page(client)
+    # Newest numbered model of each family: 9.10 is newer than 9.2.
+    assert soup.select_one('pre[data-example="pins"]').get_text() == (
+        f'export ANTHROPIC_DEFAULT_OPUS_MODEL="{OPUS}"\n'
+        f'export ANTHROPIC_DEFAULT_SONNET_MODEL="{SONNET}"\n'
+        f'export ANTHROPIC_DEFAULT_HAIKU_MODEL="{CHEAP}"'
+    )
+    setup = soup.select_one("#setup").get_text(" ", strip=True)
+    assert "carry the anthropic/ prefix" in setup and "are not accepted" in setup
+    assert "ANTHROPIC_MODEL" in setup and "claude --model" in setup
+    assert "/status" in setup and "~/.claude/settings.json" in setup
+    assert "has no /v1" in setup
+    for key, endpoint in list(controlled_claude_catalog.items()):
+        if endpoint.model_id == SONNET:
+            del controlled_claude_catalog[key]
+    guides._claude_code_context.cache_clear()
+    assert "SONNET_MODEL" not in page(client).select_one('pre[data-example="pins"]').get_text()
+    guides._claude_code_context.cache_clear()
+    monkeypatch.setattr(guides, "MODELS", {})
+    empty = page(client)
+    assert not empty.select('pre[data-example="pins"]')
+    assert "ANTHROPIC_MODEL" in empty.select_one("#setup").get_text()
 
 
 @pytest.mark.parametrize("missing", ["all", "price", "opus", "all-prices", "all-opus"])
@@ -167,12 +199,23 @@ def test_copy_and_links(client: TestClient) -> None:
     assert [h.get_text() for h in soup.select(".content-document h2")] == [
         "Set it up", "Which Claude models", "What a session costs", "Limits",
     ]
-    for path in ("/docs", "/docs/agent-setup", "/pricing"):
-        assert f'href="{PATH}"' in client.get(path).text
+    limits = soup.select_one("#limits").get_text(" ", strip=True)
+    assert "budget_strict: true" in limits and "budget_alert_only: false" in limits
+    assert "cache_control" in limits and "/v1/messages" in limits
+    assert f'href="{PATH}"' in client.get("/docs").text
+    for path in ("/docs/agent-setup", "/pricing", "/docs/opencode", "/docs/cut-llm-api-costs"):
+        other = BeautifulSoup(client.get(path).text, "html.parser")
+        for footer in other.select("footer"):
+            footer.decompose()
+        assert other.select_one(f'a[href="{PATH}"]'), path
     assert f"<loc>https://trustedrouter.com{PATH}</loc>" in client.get("/sitemap-core.xml").text
     for path in ("/llms.txt", "/llms-full.txt", "/docs/llms.txt", "/docs/llms-full.txt"):
         assert PATH in client.get(path).text
     graphs = [json.loads(script.string) for script in soup.select('script[type="application/ld+json"]')]
     faq = next(node for graph in graphs for node in graph["@graph"] if node["@type"] == "FAQPage")
     assert len(faq["mainEntity"]) == 4
-    assert all("ANTHROPIC_" in item["acceptedAnswer"]["text"] for item in faq["mainEntity"])
+    answers = [item["acceptedAnswer"]["text"] for item in faq["mainEntity"]]
+    assert all("ANTHROPIC_" in answer for answer in answers)
+    assert "ANTHROPIC_BASE_URL=https://api.trustedrouter.com without /v1" in answers[1]
+    assert all("anthropic/ prefix" in answer and "ANTHROPIC_MODEL" in answer for answer in answers[:2])
+    assert not any("trustedrouter.com/v1" in answer for answer in answers)

@@ -42,6 +42,11 @@ COST_GUIDE_ROUTES = (
 # A working session, not a single prompt: each request re-sends the files and
 # tool results read so far. Chosen so the totals are round token millions.
 CLAUDE_SESSION_REQUESTS = 50
+CLAUDE_CODE_ALIAS_VARIABLES = (
+    ("opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+    ("sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+    ("haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+)
 CLAUDE_SESSION_INPUT_TOKENS = 20_000
 CLAUDE_SESSION_OUTPUT_TOKENS = 1_000
 REQUESTS = 10_000
@@ -219,6 +224,12 @@ def _opencode_context(revision: tuple[tuple[int, str], int]) -> dict[str, Any]:
     }
 
 
+def _newest_claude(rows: list[dict[str, Any]], family: str) -> dict[str, Any] | None:
+    numbered = [(tuple(map(int, match.group(1).split("."))), row) for row in rows
+                if (match := re.fullmatch(rf"anthropic/claude-{family}-(\d+(?:\.\d+)*)", row["model"].id))]
+    return max(numbered, key=lambda entry: entry[0])[1] if numbered else None
+
+
 def claude_code_context() -> dict[str, Any]:
     return _claude_code_context(_context_revision())
 
@@ -257,13 +268,17 @@ def _claude_code_context(revision: tuple[tuple[int, str], int]) -> dict[str, Any
             cheapest = min(routes, key=lambda row: (row["total_exact"], row["provider"]))
             rows.append({**cheapest, "model": model, "providers": len({r["provider"] for r in routes})})
     rows.sort(key=lambda row: (row["total_exact"], row["model"].id))
-    # The catalog has no capability rank. Select the newest numbered Opus
-    # explicitly, rather than treating the highest price as a quality score.
-    opus = [(tuple(map(int, match.group(1).split("."))), row) for row in rows
-            if (match := re.fullmatch(r"anthropic/claude-opus-(\d+(?:\.\d+)*)", row["model"].id))]
-    premium = max(opus, key=lambda entry: entry[0])[1] if opus else None
+    # The catalog has no capability rank. Select the newest numbered model of
+    # each family explicitly, rather than treating the highest price as a
+    # quality score.
+    newest = {family: _newest_claude(rows, family) for family, _ in CLAUDE_CODE_ALIAS_VARIABLES}
+    premium = newest["opus"]
+    # Claude Code sends Anthropic's own ids for its aliases; this API accepts
+    # catalog ids, so the guide pins each alias to a listed one.
+    pins = [{"variable": variable, "model_id": row["model"].id}
+            for family, variable in CLAUDE_CODE_ALIAS_VARIABLES if (row := newest[family]) is not None]
     return {"claude_guide": {
-        "rows": rows, "cheapest": rows[0] if rows else None, "premium": premium,
+        "rows": rows, "cheapest": rows[0] if rows else None, "premium": premium, "pins": pins,
         "requests": CLAUDE_SESSION_REQUESTS,
         "input_tokens": CLAUDE_SESSION_INPUT_TOKENS, "output_tokens": CLAUDE_SESSION_OUTPUT_TOKENS,
         "input_millions": _rate(Decimal(CLAUDE_SESSION_REQUESTS * CLAUDE_SESSION_INPUT_TOKENS) / _MILLION),

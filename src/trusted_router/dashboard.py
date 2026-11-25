@@ -1526,10 +1526,13 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             ("How do I point Claude Code at a gateway, proxy or router?",
              "Set ANTHROPIC_BASE_URL to https://api.trustedrouter.com and "
-             "ANTHROPIC_AUTH_TOKEN to your TrustedRouter API key. Choose a listed Claude model in Claude Code as usual."),
+             "ANTHROPIC_AUTH_TOKEN to your TrustedRouter API key. Then pin the model with ANTHROPIC_MODEL, or the "
+             "ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL and ANTHROPIC_DEFAULT_HAIKU_MODEL aliases, "
+             "to listed IDs, which carry the anthropic/ prefix."),
             ("What ANTHROPIC_BASE_URL should Claude Code use?",
              "Use ANTHROPIC_BASE_URL=https://api.trustedrouter.com without /v1; the client appends /v1/messages. "
-             "Set ANTHROPIC_AUTH_TOKEN to your TrustedRouter key."),
+             "Set ANTHROPIC_AUTH_TOKEN to your TrustedRouter key, and pin ANTHROPIC_MODEL to a listed ID with the "
+             "anthropic/ prefix."),
             ("Can I set a Claude Code spend limit per key?",
              "Yes: use a dedicated TrustedRouter key as ANTHROPIC_AUTH_TOKEN with daily, weekly or monthly limits. "
              "Strict mode includes outstanding estimates; actual charges can exceed estimates."),
@@ -1537,7 +1540,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
              "Add up the input and output tokens of every request in the session and multiply by the model's "
              "price per million. The guide works an example of 50 requests at current prices for the cheapest "
              "listed Claude model and the newest Opus; listed prices already include the 5.5% fee. "
-             "Usage is billed to the key set in ANTHROPIC_AUTH_TOKEN."),
+             "Usage is metered against the key set in ANTHROPIC_AUTH_TOKEN."),
         ),
     ),
     "docs/opencode": PublicPage(

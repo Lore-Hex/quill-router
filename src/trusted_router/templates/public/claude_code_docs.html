@@ -4,14 +4,20 @@
 {% block body %}
 {% set g = claude_guide %}
 <div class="content-document" data-content-toc>
-<p>Claude Code uses Claude models only through this Messages API path; use <a href="/docs/opencode">OpenCode</a> for other models.</p>
+<p>This path serves Claude models only. For other models in a coding agent, use <a href="/docs/opencode">OpenCode</a>.</p>
 <section class="content-section" id="setup">
 <h2>Set it up</h2>
 <pre data-example="exports"><code>export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
 export ANTHROPIC_AUTH_TOKEN="$TRUSTEDROUTER_API_KEY"</code></pre>
 <p>Create a key in <a href="/console/api-keys">Console → API Keys</a> and set <code>TRUSTEDROUTER_API_KEY</code> before running these exports. The base URL has no <code>/v1</code>: Claude Code appends <code>/v1/messages</code>. See <a href="https://code.claude.com/docs/en/llm-gateway-connect">Claude Code's gateway documentation</a>.</p>
+<p>Then pin the models. TrustedRouter model IDs carry the <code>anthropic/</code> prefix, so the IDs Claude Code sends by default, such as <code>claude-sonnet-4-6</code>, are not accepted.</p>
+{% if g.pins %}<pre data-example="pins"><code>{% for pin in g.pins %}export {{ pin.variable }}="{{ pin.model_id }}"{% if not loop.last %}
+{% endif %}{% endfor %}</code></pre>
+<p>These set what the <code>opus</code>, <code>sonnet</code> and <code>haiku</code> aliases resolve to. To use one model for the whole session instead, set <code>ANTHROPIC_MODEL</code>, or start with <code>claude --model</code>, and a listed ID.</p>
+{% else %}<p>Set <code>ANTHROPIC_MODEL</code>, or start with <code>claude --model</code>, and a listed ID from the <a href="/models">model catalog</a>.</p>{% endif %}
+<p>Run <code>/status</code> in Claude Code to confirm the Anthropic base URL in use. To keep the setup across terminals, put the same variables in the <code>env</code> block of <code>~/.claude/settings.json</code>.</p>
 {% if g.cheapest %}{{ pong_check("https://api.trustedrouter.com/v1", g.cheapest.model, messages=true) }}
-<p>The response should contain <code>PONG</code>. Choose a model in Claude Code as usual; it must be one of the listed Claude models.</p>
+<p>The response should contain <code>PONG</code>.</p>
 {% else %}<p>Check the <a href="/models">model catalog</a> for an available Claude model before sending a Messages request.</p>{% endif %}
 </section>
 <section class="content-section" id="models">
