@@ -1641,9 +1641,16 @@ def _authorize_gateway_sync_impl(
     )
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
     starter_gate = starter_session_gate.EXEMPT
-    if has_credit_candidate and not is_monitor_request and settings.starter_session_gate_enabled:
+    if (
+        has_credit_candidate
+        and not is_monitor_request
+        and settings.starter_session_gate_enabled
+        and not workspace.federated_home
+        and not api_key.federated_home
+    ):
         # Only a request that can spend credits can spend starter credit; a
-        # BYOK-only request is the customer's own provider account.
+        # BYOK-only request is the customer's own provider account. A
+        # federated shadow's funding lives on its home plane, not this ledger.
 
         def _has_existing_authorization() -> bool:
             if not request_idempotency_key:

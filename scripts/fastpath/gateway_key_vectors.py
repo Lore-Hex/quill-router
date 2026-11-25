@@ -128,6 +128,11 @@ ROUTE_READS: dict[str, str] = {
         "federated keys are delegated to Python before composition"
     ),
     "speculation_shadow.resolved": "not a check: an isolated shadow observation",
+    "_starter_session_gate": (
+        "Python only, not an edge fact: a never-funded workspace under 14 days old "
+        "reusing another such workspace's client session gets a 402. Edge-decided "
+        "requests are not checked; see services/starter_session_gate.py"
+    ),
 }
 
 AT = dt.datetime(2026, 10, 23, 12, 0, 0, 250000, tzinfo=dt.UTC)
