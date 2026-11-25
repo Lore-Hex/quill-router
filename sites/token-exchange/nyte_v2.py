@@ -134,6 +134,15 @@ PAGES = {
         "group": "buy",
         "menu_description": "",
     },
+    # Served by the bucket for any missing path (deploy.py sets it as the web error page).
+    "not-found": {
+        "route": "/404",
+        "label": None,
+        "title": "Page not found | New York Token Exchange",
+        "description": "This page doesn’t exist. Start from the New York Token Exchange home page.",
+        "group": "exchange",
+        "menu_description": "",
+    },
     "media-kit": {
         "route": "/media-kit",
         "label": None,
@@ -457,6 +466,8 @@ def render_nyte(
     if page == "accelerator" and not v3_body:
         accelerator_version = hashlib.sha256((SOURCE / "accelerator.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/accelerator.css?v={accelerator_version}">'
+    if page == "not-found":
+        extra_head += '<meta name="robots" content="noindex">'
     if page == "manage":
         manage_version = hashlib.sha256((SOURCE / "manage.js").read_bytes()).hexdigest()[:12]
         extra_head += f'<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex"><script src="/assets/nyte-v2/manage.js?v={manage_version}" defer></script>'
