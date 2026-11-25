@@ -38,7 +38,7 @@ def test_daily_rerank_probe_sends_one_small_prepaid_request(monkeypatch):
     assert "provider" not in payload
 
 
-@pytest.mark.parametrize("case", ["status", "count", "repeat", "order", "ties", "cost", "shape", "score"])
+@pytest.mark.parametrize("case", ["status", "count", "repeat", "order", "ties", "top", "document", "cost", "shape", "score"])
 def test_daily_rerank_probe_requires_complete_result(monkeypatch, case):
     body = valid_body()
     status = 200
@@ -52,6 +52,10 @@ def test_daily_rerank_probe_requires_complete_result(monkeypatch, case):
         body["results"].reverse()
     elif case == "ties":
         body["results"] = [{"index": 1, "relevance_score": 1}, {"index": 0, "relevance_score": 1}]
+    elif case == "top":
+        body["results"] = [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.1}]
+    elif case == "document":
+        body["results"][0]["document"] = {"text": "private text"}
     elif case == "cost":
         body["usage"]["cost_microdollars"] = 0
     elif case == "shape":
@@ -85,4 +89,6 @@ def test_daily_rerank_workflow_reuses_existing_identity_and_secret():
     assert "python3 scripts/prod_rerank_probe.py" in workflow
     assert workflow.count("--secret=trustedrouter-synthetic-monitor-api-key") == 2
     assert workflow.count("service_account:") == 1
+    rerank_step = workflow.split("- name: Probe rerank on GCP", 1)[1]
+    assert "if: ${{ !cancelled() }}" in rerank_step.split("run:", 1)[0]
     assert "tr-ci-probe@quill-cloud-proxy.iam.gserviceaccount.com" in workflow

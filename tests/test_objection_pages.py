@@ -23,6 +23,10 @@ from trusted_router.schemas import GatewayAuthorizeRequest
 
 PAGES = ("/who-can-see-your-data", "/docs/simple-start")
 LLMS_DOCUMENTS = ("/llms.txt", "/llms-full.txt", "/docs/llms.txt", "/docs/llms-full.txt")
+RERANK_SCOPE = (
+    "reranking is available through post /v1/rerank with voyage rerank models, prepaid, on the "
+    "gcp api hosts; it is not yet served on the aws or azure api hosts."
+)
 
 
 @pytest.mark.parametrize("path", PAGES)
@@ -142,6 +146,9 @@ def test_objection_pages_and_agent_text_scope_reranking(
                       "not yet served on the aws or azure api hosts"):
             assert claim in text
     assert "no reranking endpoint today" not in text
+    if path in (*PAGES, "/llms.txt", "/docs/llms.txt"):
+        # Permit the one scoped sentence, but no other reranking claim.
+        assert "rerank" not in " ".join(text.split()).replace(RERANK_SCOPE, "")
 
 
 def test_simple_start_scopes_capabilities_and_business_claims(client: TestClient) -> None:

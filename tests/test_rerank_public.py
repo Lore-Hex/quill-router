@@ -4,6 +4,7 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import bypass_catalog_caches
 from tests.rerank_manifest_fixtures import install_public_rerank_models
 from trusted_router import catalog, dashboard
 from trusted_router.catalog import MODELS, PROVIDERS, is_publicly_listed
@@ -14,6 +15,9 @@ from trusted_router.openrouter_coverage import coverage_map
 
 @pytest.fixture(autouse=True)
 def public_rerank_catalog(monkeypatch, tmp_path):
+    # Projections are recomputed from the installed rows, not read from a
+    # session cache built on whatever the latest price refresh checked in.
+    bypass_catalog_caches(monkeypatch)
     install_public_rerank_models(monkeypatch, tmp_path)
 
 
@@ -23,7 +27,8 @@ def test_every_voyage_rerank_page_uses_catalog_price_context_and_examples(client
     for model in models:
         response = client.get(f"/models/{model.id}")
         assert response.status_code == 200
-        soup = BeautifulSoup(response.text, "html.parser")
+        response_text = response.text
+        soup = BeautifulSoup(response_text, "html.parser")
         text = soup.get_text(" ", strip=True)
         assert "reranking model" in text
         assert f"{model.context_length:,}-token context window" in text
@@ -50,6 +55,10 @@ def test_every_voyage_rerank_page_uses_catalog_price_context_and_examples(client
             assert "chat.completions.create" not in response.text
             if section in {"pricing", "api"}:
                 assert section_soup.find("a", href="/docs#rerank")
+            description = section_soup.find("meta", attrs={"name": "description"})["content"]
+            assert "OpenAI-compatible" not in description and "streaming" not in description
+        assert "Output tokens billed separately" not in response_text
+        assert "Prepaid reranking through POST /v1/rerank" in response_text
 
 
 def test_rerank_listing_matches_embedding_projections(client):

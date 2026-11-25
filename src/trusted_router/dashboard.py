@@ -6545,6 +6545,8 @@ def _model_section_description(model: Model, section: str) -> str:
             "on TrustedRouter using continuously collected metadata-only measurements."
         )
     if section == "api":
+        if model.supports_rerank:
+            return f"Call {name} through POST /v1/rerank on TrustedRouter: prepaid, on the GCP API hosts."
         return (
             f"Use the OpenAI-compatible API quickstart for {name} on TrustedRouter, with model IDs, "
             "streaming examples, authentication, fallback behavior, and SDK configuration."
@@ -7700,6 +7702,9 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
         "@type": "Service",
         "name": model.name,
         "description": (
+            f"{model.name} via TrustedRouter. Prepaid reranking through POST /v1/rerank; "
+            "pricing shown is USD per million input tokens."
+            if model.supports_rerank else
             f"{model.name} via TrustedRouter. Pay-per-token API; pricing "
             f"shown is USD per million prompt tokens (cheapest provider). "
             f"Output tokens billed separately at the endpoint's published rate."

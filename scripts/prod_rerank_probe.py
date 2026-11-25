@@ -40,6 +40,10 @@ def probe(api_key: str) -> tuple[bool, str]:
             return False, "invalid score"
         if results != sorted(results, key=lambda row: (-row["relevance_score"], row["index"])):
             return False, "incorrect ordering"
+        if results[0]["index"] != 0:
+            return False, "unexpected top result"
+        if any("document" in row for row in results):
+            return False, "document returned when not requested"
         usage = body["usage"]
         if not any(type(usage.get(field)) in (int, float) and math.isfinite(usage[field])
                    and usage[field] > 0
