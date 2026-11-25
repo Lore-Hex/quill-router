@@ -10,7 +10,11 @@ from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.serialization import member_shape, workspace_shape
-from trusted_router.signup_gate import require_new_account_creation
+from trusted_router.signup_gate import (
+    is_disposable_email,
+    require_new_account_creation,
+    require_non_disposable_email,
+)
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -136,6 +140,11 @@ def register_workspace_routes(router: APIRouter) -> None:
                 STORE.find_user_by_email(email) is None for email in normalized_emails
             ):
                 require_new_account_creation(settings)
+            # An invite creates an account for an unknown address, and that
+            # address can then sign in as a returning user.
+            for email in normalized_emails:
+                if is_disposable_email(email) and STORE.find_user_by_email(email) is None:
+                    require_non_disposable_email(email)
             members = STORE.add_members(
                 id,
                 normalized_emails,

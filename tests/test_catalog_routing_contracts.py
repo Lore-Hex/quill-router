@@ -1195,14 +1195,14 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
     socrates_1_1_candidates = [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "minimax/minimax-m3",
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         "deepseek/deepseek-v4-flash",
         "trustedrouter/zeus-1.0",
     ]
     socrates_2_0_candidates = [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "minimax/minimax-m3",
-        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.3-fast",
         DEEPSEEK_V4_PRO_0813_MODEL_ID,
         ZEUS_2_0_MODEL_ID,
     ]
@@ -1389,17 +1389,17 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             DEEPSEEK_V4_PRO_0423_MODEL_ID,
         ],
         ARISTOTLE_1_1_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             "trustedrouter/zeus-1.0",
         ],
         ARISTOTLE_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             ZEUS_2_0_MODEL_ID,
         ],
         ARISTOTLE_2_0_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             ZEUS_2_0_MODEL_ID,
         ],
@@ -1441,21 +1441,21 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         SOCRATES_PRO_PLUS_1_0_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "minimax/minimax-m3",
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "deepseek/deepseek-v4-flash",
             "trustedrouter/zeus-1.0",
         ],
         SOCRATES_1_1_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "minimax/minimax-m3",
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "deepseek/deepseek-v4-flash",
             "trustedrouter/zeus-1.0",
         ],
         SOCRATES_2_0_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "minimax/minimax-m3",
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             DEEPSEEK_V4_PRO_0813_MODEL_ID,
             ZEUS_2_0_MODEL_ID,
         ],
@@ -1463,7 +1463,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         SOCRATES_PRO_PLUS_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "minimax/minimax-m3",
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "deepseek/deepseek-v4-flash",
             "trustedrouter/zeus-1.0",
         ],
@@ -1472,11 +1472,11 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "trustedrouter/prometheus-1.0",
         ],
         OPEN_PATCHER_FAST1_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "trustedrouter/openpatcher-a1",
         ],
         OPEN_PATCHER_G1_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             "moonshotai/kimi-k2.7-code",
             "trustedrouter/prometheus-1.0-1m",
@@ -1594,8 +1594,10 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         # Together is Inkling's listed provider until its route retires.
         if catalog_predates(TOGETHER_NOVEMBER_6_RETIREMENT_AT):
             assert inkling.provider in provider_ids
+        # Tinker is Inkling's last host until its 2026-12-14 retirement, after
+        # which the model leaves the catalog and this block does not run.
         assert "thinkingmachines" in provider_ids or _delisted(
-            "thinkingmachines/inkling@thinkingmachines/prepaid"
+            inkling.id + "@thinkingmachines/prepaid"
         )
         assert all(endpoint.upstream_id for endpoint in endpoints)
 
@@ -1677,21 +1679,21 @@ def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() ->
 def test_athena_catalog_hides_orchestration_configuration() -> None:
     expected = {
         ATHENA_1_0_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             ZEUS_1_0_MINI_MODEL_ID,
             "moonshotai/kimi-k2.7-code",
             "moonshotai/kimi-k2.6",
         ],
         ATHENA_2_0_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             ZEUS_2_0_MODEL_ID,
             "moonshotai/kimi-k2.7-code",
             "moonshotai/kimi-k2.6",
         ],
         ATHENA_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             ZEUS_2_0_MODEL_ID,
             "moonshotai/kimi-k2.7-code",
@@ -2039,7 +2041,7 @@ def test_openpatcher_and_athena_force_us_provider_routes(
 
     # A US host and a Singapore host for the GLM models every one of these
     # presets routes to: only the US host may serve.
-    for candidate in ("z-ai/glm-5.2-fast", "z-ai/glm-5.2"):
+    for candidate in ("z-ai/glm-5.3-fast", "z-ai/glm-5.2"):
         _serve_on_fixture_routes(monkeypatch, candidate, ("deepinfra", "Credits"), ("zai", "Credits"))
     endpoints = chat_route_endpoint_candidates(
         {"model": model_id},
@@ -2071,7 +2073,7 @@ def test_openpatcher_g2_explicitly_uses_global_moonshot_k3_route() -> None:
 def test_openpatcher_g1_and_g2_stay_frozen_while_g3_uses_prometheus_3() -> None:
     expected = {
         OPEN_PATCHER_G1_MODEL_ID: [
-            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.3-fast",
             "z-ai/glm-5.2",
             "moonshotai/kimi-k2.7-code",
             PROMETHEUS_1_0_1M_MODEL_ID,

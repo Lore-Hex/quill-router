@@ -21,6 +21,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.agent_cost_guides import gateway_cost_context, opencode_context
 from trusted_router.ai_iq import ai_iq_for_model
 from trusted_router.bedrock_group_buy import (
     BEDROCK_GROUP_BUY_SPEND_SOURCES,
@@ -60,6 +61,7 @@ from trusted_router.catalog import (
     endpoint_retention_metadata,
     endpoint_zero_data_retention,
     endpoints_for_model,
+    is_publicly_listed,
     meta_candidate_models,
     model_eu_focused_provider_available,
     model_open_weights,
@@ -112,6 +114,7 @@ from trusted_router.fortanix_launch import (
     fortanix_launch_offer,
     launch_offer_facts,
 )
+from trusted_router.gateway_processing import GATEWAY_HOP_CLAIM, gateway_processing_claim
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -250,6 +253,10 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/legal",
     "/privacy",
     "/who-can-see-your-data",
+    "/docs/opencode",
+    "/docs/opencode-deepseek",
+    "/docs/cut-llm-api-costs",
+    "/llm-gateway-pricing",
     "/terms",
     "/support",
     "/bedrock-group-buy",
@@ -1502,6 +1509,68 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "The control plane never receives production inference prompt or output bodies; "
             "ordinary inference keeps no prompt or output logs. "
             "Anyone can verify the running image against the published release."
+        ),
+    ),
+    "docs/opencode": PublicPage(
+        template="public/opencode.html",
+        title="OpenCode with TrustedRouter: API key, models and config",
+        description="Set up OpenCode with TrustedRouter: API keys, seven built-in aliases, model limits, V2 and 1.x configs, and switching from OpenRouter.",
+        faq_items=(
+            ("How do I connect a TrustedRouter API key in OpenCode?",
+             "Create a key at Console → API Keys, run /connect, choose TrustedRouter, "
+             "enter the key, then run /models. A saved account takes precedence over "
+             "TRUSTEDROUTER_API_KEY in the server environment."),
+            ("Why is the OpenCode selector trustedrouter/trustedrouter/zdr?",
+             "The first trustedrouter is the OpenCode provider ID. Everything after "
+             "the first slash is the TrustedRouter model ID, trustedrouter/zdr."),
+        ),
+    ),
+    "docs/opencode-deepseek": PublicPage(
+        template="public/opencode_deepseek.html",
+        title="DeepSeek in OpenCode: direct, OpenRouter or TrustedRouter",
+        description="Compare three DeepSeek routes in OpenCode, with exact selectors, credentials, V2 and 1.x configuration, and TrustedRouter provider prices.",
+        faq_items=(
+            ("How do I use DeepSeek directly in OpenCode?",
+             "DeepSeek recommends OpenCode v1.18.30 or later. Run /connect, select "
+             "deepseek, enter a DeepSeek key, then select DeepSeek-V4-Flash."),
+            ("How do I use DeepSeek through TrustedRouter in OpenCode?",
+             "Connect TrustedRouter and add deepseek/deepseek-v4.1-flash to its models "
+             "map, then select trustedrouter/deepseek/deepseek-v4.1-flash."),
+        ),
+    ),
+    "llm-gateway-pricing": PublicPage(
+        template="public/llm_gateway_pricing.html",
+        title="LLM gateway pricing: fees, markup and a worked example",
+        description="OpenRouter and Cloudflare charge 5% to 8% on credits; Vercel has no gateway fee; TrustedRouter adds 5.5% to tokens with no monthly or seat fee.",
+        faq_items=(
+            ("What is the cheapest OpenAI-compatible LLM gateway?",
+             "Self-hosted LiteLLM has no gateway fee; include infrastructure costs. "
+             "For $100.00 of inference in gateway fee terms on fully spent credits, Vercel "
+             "costs $100.00, Cloudflare Unified Billing and OpenRouter crypto $105.00, "
+             "TrustedRouter and OpenRouter Standard $105.50, and OpenRouter Business $108.00."),
+            ("Which LLM gateways show per-request cost?",
+             "TrustedRouter, OpenRouter, LiteLLM, Portkey (Prisma AIRS AI Gateway), "
+             "Cloudflare AI Gateway and Vercel AI Gateway expose request cost or spend "
+             "views. Some show calculated estimates rather than settled charges."),
+            ("Is an LLM gateway worth the markup versus calling the provider directly?",
+             "Direct is cheaper by the fee for one provider and unchanged usage. "
+             "For several providers, fallback, one bill and per-key budgets can justify "
+             "a gateway's fee; compare the all-in cost for your workload."),
+        ),
+    ),
+    "docs/cut-llm-api-costs": PublicPage(
+        template="public/cut_llm_api_costs.html",
+        title="Cut LLM API costs without rewriting your code",
+        description="Keep your OpenAI SDK, change the base URL and model, and compare cheaper models, fallback, quality escalation, caching and 50% native Batch discounts.",
+        faq_items=(
+            ("How can I cut AI API costs without rewriting code?",
+             "Keep the OpenAI SDK request shape, configure the TrustedRouter base URL "
+             "and credential, and choose a cheaper model for suitable tasks. Compare "
+             "the 80/20 model allocation and eligible 50% native Batch discount."),
+            ("How do I route to cheaper models and fall back to premium ones?",
+             "Put the cheaper model in model and the premium model in models. "
+             "TrustedRouter tries them in order for serving failures. Quality "
+             "escalation needs application validation and can bill both calls."),
         ),
     ),
     "docs/simple-start": PublicPage(
@@ -2758,6 +2827,8 @@ def _env() -> Environment:
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
     env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
+    env.globals["gateway_processing_claim"] = gateway_processing_claim
+    env.globals["gateway_hop_claim"] = GATEWAY_HOP_CLAIM
     env.globals["vendor_exclusion_claim"] = VENDOR_EXCLUSION_CLAIM
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
@@ -3269,8 +3340,20 @@ def public_page_html(
             canonical_public_url(settings, canonical_path) if canonical_path is not None else None
         ),
         robots_meta=robots_meta,
+        extra_json_ld=(
+            {
+                "@type": "WebPage",
+                "name": page.title,
+                "url": canonical_public_url(settings, canonical_path or path),
+                "description": page.description,
+            },
+        ) if page_key == "llm-gateway-pricing" else (),
         extra_context=(
-            _green_tokens_context() if page_key == "green-tokens"
+            (opencode_context() | gateway_cost_context())
+            if page_key in {"docs/opencode", "docs/opencode-deepseek"}
+            else gateway_cost_context()
+            if page_key in {"llm-gateway-pricing", "docs/cut-llm-api-costs"}
+            else _green_tokens_context() if page_key == "green-tokens"
             else token_index_context() if page_key == "index"
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES
             else {"hero_price_bars": _popular_price_bars(test_mode=settings.environment == "test")}
@@ -4217,7 +4300,7 @@ def _popular_price_bars(*, test_mode: bool) -> list[dict[str, Any]]:
             _model_view(model, test_mode=test_mode)
             for model in MODELS.values()
             if model.id in _MODEL_DISCOVERY_PRIORITY_INDEX
-            and not model.internal_only
+            and is_publicly_listed(model)
             and not is_listing_alias(model.id, MODELS)
         ]
     )
@@ -4226,7 +4309,7 @@ def _popular_price_bars(*, test_mode: bool) -> list[dict[str, Any]]:
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
     all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()
-                  if not model.internal_only and not is_listing_alias(model.id, MODELS)]
+                  if is_publicly_listed(model) and not is_listing_alias(model.id, MODELS)]
     all_models.sort(key=_model_discovery_sort_key)
     models = all_models
     normalized_filter = model_filter.strip().lower()
@@ -4801,7 +4884,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     Returns None when the model id isn't in the catalog (route handler
     converts that to a styled 404)."""
     model = MODELS.get(model_id)
-    if model is None or model.internal_only:
+    if model is None or not is_publicly_listed(model):
         return None
     test_mode = settings.environment == "test"
     seo_name = _seo_model_name(model)
@@ -5056,7 +5139,7 @@ def public_model_compare_index_html(settings: Settings, *, page: int = 1) -> str
 
 def public_model_section_html(settings: Settings, model_id: str, section: str) -> str | None:
     model = MODELS.get(model_id)
-    if model is None or model.internal_only or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
+    if model is None or not is_publicly_listed(model) or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
         return None
     test_mode = settings.environment == "test"
     base_model_url = f"https://{settings.trusted_domain}/models/{model_id}"
@@ -5268,6 +5351,7 @@ def llms_txt(settings: Settings) -> str:
             "because one base URL reaches many providers and model families."
         ),
         "",
+        *_llms_agent_cost_guides(domain),
         *_llms_common_objections(domain),
         "## Primary Links",
         f"- [Homepage](https://{domain}/)",
@@ -5436,6 +5520,21 @@ def llms_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
+def _llms_agent_cost_guides(domain: str) -> list[str]:
+    return [
+        "## Agent setup and gateway costs",
+        f"- [Use OpenCode with TrustedRouter](https://{domain}/docs/opencode): "
+        "API key setup, model selectors, DeepSeek configuration, and OpenRouter setup comparison.",
+        f"- [LLM gateway pricing](https://{domain}/llm-gateway-pricing): "
+        "six gateway fee schedules, current model costs, and per-request cost visibility.",
+        f"- [DeepSeek in OpenCode](https://{domain}/docs/opencode-deepseek): "
+        "direct, OpenRouter and TrustedRouter credentials, selectors, and configuration.",
+        f"- [Cut LLM API costs](https://{domain}/docs/cut-llm-api-costs): "
+        "cheaper models, fallback, quality escalation, prompt caching, and Batch examples.",
+        "",
+    ]
+
+
 def _llms_common_objections(domain: str) -> list[str]:
     simple = f"https://{domain}/docs/simple-start"
     data = f"https://{domain}/who-can-see-your-data"
@@ -5450,7 +5549,9 @@ def _llms_common_objections(domain: str) -> list[str]:
         "dependency, with TrustedRouter responsible for its hosted API, routing, and billing "
         "and upstream availability and processing still dependencies; "
         f"[status](https://{domain}/status) and "
-        f"[benchmarks](https://{domain}/benchmarks/reports) imply no latency guarantee.",
+        f"[benchmarks](https://{domain}/benchmarks/reports) imply no latency guarantee. "
+        f"{gateway_processing_claim()} {GATEWAY_HOP_CLAIM} "
+        f"See [live end-to-end synthetic measurements](https://{domain}/status).",
         "- B. Prompt TLS terminates inside an attested enclave running published source, "
         "the control plane never receives production inference prompt or output bodies, "
         "ordinary inference keeps no prompt or output logs, and anyone can verify the "
@@ -5502,6 +5603,7 @@ def docs_llms_txt(settings: Settings) -> str:
         [
             "# TrustedRouter Docs",
             "",
+            *_llms_agent_cost_guides(domain),
             *_llms_common_objections(domain),
             f"- Bring your own key (BYOK): https://{domain}/docs/byok",
             f"- Agent setup: https://{domain}/docs/agent-setup",
@@ -5623,6 +5725,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "The hosted prompt path is designed so the API gateway source, image digest, and attestation can be verified.",
         "Use this document as context when an agent or LLM answers questions about TrustedRouter.",
         "",
+        *_llms_agent_cost_guides(domain),
         *_llms_common_objections(domain),
         "## Positioning",
         "- Better trust: open-source router, public attestation, published source commit, published image digest, and no prompt or output logs. Always.",
@@ -6617,7 +6720,7 @@ def _benchmark_links(model: Model, *, test_mode: bool = False) -> list[dict[str,
 def _public_models_for_seo() -> list[Model]:
     return sorted(
         [model for model in MODELS.values() if model.id not in META_MODEL_IDS
-         and not model.internal_only and not is_listing_alias(model.id, MODELS)],
+         and is_publicly_listed(model) and not is_listing_alias(model.id, MODELS)],
         key=lambda model: model.id,
     )
 
@@ -6626,7 +6729,7 @@ def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     """Return the complete public catalog used by the agent-facing full document."""
     models = sorted(
         (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID
-         and not model.internal_only and not is_listing_alias(model.id, MODELS)),
+         and is_publicly_listed(model) and not is_listing_alias(model.id, MODELS)),
         key=lambda model: model.id,
     )
     return [_model_view(model, test_mode=test_mode) for model in models]

@@ -1323,6 +1323,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def legacy_api_reference() -> RedirectResponse:
         return RedirectResponse(url="/api/reference", status_code=301)
 
+    for base in (
+        "/api/docs",
+        "/docs/api",
+        "/docs/api-reference",
+        "/api-docs",
+        "/api-reference",
+        "/reference",
+        "/swagger",
+        "/docs/reference",
+    ):
+        for path in (base, base + "/"):
+            app.api_route(path, methods=["GET", "HEAD"], include_in_schema=False)(
+                legacy_api_reference
+            )
+
+    def legacy_openapi_spec() -> RedirectResponse:
+        return RedirectResponse(url="/openapi.json", status_code=301)
+
+    for base in ("/docs/openapi", "/openapi.yaml"):
+        for path in (base, base + "/"):
+            app.api_route(path, methods=["GET", "HEAD"], include_in_schema=False)(
+                legacy_openapi_spec
+            )
+
     @public_html_route("/", include_slash=False)
     async def dashboard(request: Request, background_tasks: BackgroundTasks) -> Any:
         hostname = request_hostname(request)
@@ -1406,6 +1430,22 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/who-can-see-your-data")
     def who_can_see_your_data() -> str:
         return public_page_html(settings, "who-can-see-your-data")
+
+    @public_html_route("/docs/opencode")
+    def opencode_docs() -> str:
+        return public_page_html(settings, "docs/opencode")
+
+    @public_html_route("/docs/opencode-deepseek")
+    def opencode_deepseek_docs() -> str:
+        return public_page_html(settings, "docs/opencode-deepseek")
+
+    @public_html_route("/docs/cut-llm-api-costs")
+    def cut_llm_api_costs_docs() -> str:
+        return public_page_html(settings, "docs/cut-llm-api-costs")
+
+    @public_html_route("/llm-gateway-pricing")
+    def llm_gateway_pricing() -> str:
+        return public_page_html(settings, "llm-gateway-pricing")
 
     @public_html_route("/docs/simple-start")
     def simple_start_docs() -> str:

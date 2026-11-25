@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import asdict
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,6 +36,23 @@ def test_comparison_registry_is_complete_and_evidence_backed() -> None:
         assert all(source.url.startswith("https://") for source in comparison.sources)
         assert all(source.label.strip() for source in comparison.sources)
         assert all(all(cell.strip() for cell in row) for row in comparison.rows)
+
+
+def test_portkey_pricing_requires_a_current_quote(client: TestClient) -> None:
+    comparison = next(item for item in COMPETITOR_COMPARISONS if item.slug == "portkey")
+    data = json.dumps(asdict(comparison))
+    response = client.get(comparison.href)
+    assert response.status_code == 200
+    for text in (data, response.text):
+        assert "$49" not in text
+        assert "$9" not in text
+        assert "10k" not in text
+        assert "100k" not in text
+        assert "No public price list as of November 24, 2026; pricing by quote" in text
+        assert "previously published log-volume tiers are no longer on the public site" in text
+        assert "current terms need confirmation" in text
+        assert "redirects to a sales contact page (checked November 24, 2026)" in text
+    assert "inference on your own provider keys" not in data
 
 
 def test_gateway_comparison_directory_links_every_page(client: TestClient) -> None:

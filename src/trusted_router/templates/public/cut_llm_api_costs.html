@@ -1,0 +1,109 @@
+{% extends "public/_base.html" %}
+{% from "public/_agent_guide_macros.html" import route_range %}
+{% block body_attributes %}data-docs-code{% endblock %}
+{% block body %}
+<div class="content-document" data-content-toc>
+<p><a href="/docs/batch">Batch</a> cuts eligible native OpenAI and Parasail item prices by 50% without changing models.{% if cost_guide.halving_percent is defined %} Move about <span data-halving-percent="{{ cost_guide.halving_percent_exact }}">{{ cost_guide.halving_percent }}%</span> of requests from {{ cost_guide.mid.name }} to {{ cost_guide.small.name }} to halve the example inference bill; the code change is the base URL and model name, using your TrustedRouter credential.{% endif %}</p>
+<p>Guide checked <time datetime="2026-11-24">November 24, 2026</time>. The <a href="/llm-gateway-pricing#worked-example">priced workload</a> is {{ "{:,}".format(cost_guide.requests) }} requests with {{ "{:,}".format(cost_guide.input_tokens) }} input and {{ "{:,}".format(cost_guide.output_tokens) }} output tokens each{% if cost_guide.small and cost_guide.mid %}, using {{ cost_guide.small.provider_name }} for the small model and {{ cost_guide.mid.provider_name }} for the premium model{% endif %}. These calculations compare TrustedRouter inference bills.</p>
+<section class="content-section" id="migration"><h2>Change the base URL and model in the OpenAI Python SDK</h2>
+<p>First, keep the same model and OpenAI SDK request shape; configure the TrustedRouter endpoint and key.</p>
+{% if cost_guide.sdk_model %}<div class="content-examples"><div><h3>Before: OpenAI</h3><pre data-python="before"><code>import os
+from openai import OpenAI
+
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+response = client.chat.completions.create(
+    model="gpt-5.4-mini",
+    messages=[{"role": "user", "content": "Summarize this document."}],
+)
+print(response.choices[0].message.content)</code></pre></div>
+<div><h3>After: TrustedRouter, same model</h3><pre data-python="after"><code>import os
+from openai import OpenAI
+
+client = OpenAI(base_url="{{ api_base_url }}",
+                api_key=os.environ["TRUSTEDROUTER_API_KEY"])
+response = client.chat.completions.create(
+    model="gpt-5.4-mini",
+    messages=[{"role": "user", "content": "Summarize this document."}],
+)
+print(response.choices[0].message.content)</code></pre></div></div>{% else %}<p>Choose a current model from the <a href="/models">catalog</a> and set the client base URL to <code>{{ api_base_url }}</code>.</p>{% endif %}
+{% if cost_guide.small %}<p>Second, change <code>model</code> to <code>{{ cost_guide.small.model_id }}</code> for the smaller model. Create a key at <a href="/console/api-keys">Console → API Keys</a>. See <a href="/docs/migrate-from-openai">OpenAI SDK migration</a> for provider-specific compatibility.</p>{% else %}<p>Choose a smaller model from the <a href="/models">model catalog</a>. See <a href="/docs/migrate-from-openai">OpenAI SDK migration</a>.</p>{% endif %}
+{% if cost_guide.small and cost_guide.mid %}<p>This allocation sends {{ cost_guide.cheap_percent }}% of requests to {{ cost_guide.small.name }} and the remaining {{ cost_guide.premium_percent }}% to {{ cost_guide.mid.name }}; repeat the ten-request cycle for the example workload.</p>
+<pre data-python="split"><code>import os
+from openai import OpenAI
+
+client = OpenAI(base_url="{{ api_base_url }}",
+                api_key=os.environ["TRUSTEDROUTER_API_KEY"])
+messages = [{"role": "user", "content": "Summarize this document."}]
+for request_index in range(10):
+    model = ("{{ cost_guide.small.model_id }}" if request_index % 10 &lt; {{ (cost_guide.cheap_percent | int) // 10 }}
+             else "{{ cost_guide.mid.model_id }}")
+    response = client.chat.completions.create(model=model, messages=messages)
+    print(response.choices[0].message.content)</code></pre>{% endif %}
+</section>
+<section class="content-section" id="levers"><h2>Cost levers with numbers</h2>
+{% if cost_guide.mixed_total is defined %}<p>Sending {{ cost_guide.cheap_percent }}% of the example workload to {{ cost_guide.small.name }} and {{ cost_guide.premium_percent }}% to {{ cost_guide.mid.name }} costs <span data-mixed-total>${{ cost_guide.mixed_total }}</span> instead of <span data-baseline>${{ cost_guide.baseline }}</span>.</p>{% endif %}
+<div class="content-reference"><table class="reference-mobile-table reference-column-table" id="cost-levers"><thead><tr><th scope="col">Lever</th><th scope="col">What you change</th><th scope="col">Saving</th><th scope="col">Catch</th></tr></thead><tbody>
+{% if cost_guide.saving_percent is defined %}<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Lever</span>Cheaper model for easy tasks</td><td><span class="reference-cell-label" aria-hidden="true">What you change</span>{{ cost_guide.cheap_percent }}/{{ cost_guide.premium_percent }} small/premium allocation</td><td><span class="reference-cell-label" aria-hidden="true">Saving</span><span data-saving>${{ cost_guide.saving }}</span> (<span data-saving-percent="{{ cost_guide.saving_percent_exact }}">{{ cost_guide.saving_percent }}%</span>)</td><td><span class="reference-cell-label" aria-hidden="true">Catch</span>Validate task quality; these are equal-token assumptions.</td></tr>{% endif %}
+<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Lever</span>Batch</td><td><span class="reference-cell-label" aria-hidden="true">What you change</span>Submit work that can wait to the native Batch path</td><td><span class="reference-cell-label" aria-hidden="true">Saving</span>50% on eligible native OpenAI and Parasail items</td><td><span class="reference-cell-label" aria-hidden="true">Catch</span>Native execution must be enabled; ordinary fallback uses normal prices.</td></tr>
+{% if cost_guide.cache_saving_percent is defined %}<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Lever</span>Prompt caching</td><td><span class="reference-cell-label" aria-hidden="true">What you change</span>Reuse eligible input with {{ cost_guide.small.name }} on {{ cost_guide.small.provider_name }}</td><td><span class="reference-cell-label" aria-hidden="true">Saving</span><span data-cache-saving-percent="{{ cost_guide.cache_saving_percent_exact }}">{{ cost_guide.cache_saving_percent }}%</span> on cached input: <span data-cache-read>${{ cost_guide.cache_read }}</span> versus <span data-cache-input>${{ cost_guide.cache_input }}</span> per million</td><td><span class="reference-cell-label" aria-hidden="true">Catch</span>Only cache hits get the read rate; output cost remains.</td></tr>{% endif %}
+{% if cost_guide.route_saving_percent is defined %}<tr><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Lever</span><code>provider.sort: "price"</code></td><td><span class="reference-cell-label" aria-hidden="true">What you change</span>Prefer lower-priced routes for {{ cost_guide.deepseek.name }}</td><td><span class="reference-cell-label" aria-hidden="true">Saving</span>Up to <span data-route-saving-percent="{{ cost_guide.route_saving_percent_exact }}">{{ cost_guide.route_saving_percent }}%</span> between the highest and lowest priced route for this model today</td><td><span class="reference-cell-label" aria-hidden="true">Catch</span>Your saving is against the route you use now; route availability, privacy and capability filters still apply.</td></tr>{% endif %}
+</tbody></table></div>
+{{ route_range(cost_guide) }}
+{% if cost_guide.route_count %}<pre data-request="price"><code>{"model":"{{ cost_guide.deepseek.model_id }}","messages":[{"role":"user","content":"Summarize this paragraph."}],"provider":{"sort":"price"},"max_tokens":256}</code></pre>{% endif %}
+{% if cost_guide.cheap_alias %}<p>The <code>trustedrouter/cheap</code> alias also offers a paid low-cost pool; the exact saving depends on the selected model and fallback.</p>
+<pre data-request="cheap"><code>{"model":"trustedrouter/cheap","messages":[{"role":"user","content":"Draft a short subject line."}],"max_tokens":64}</code></pre>{% endif %}
+</section>
+{% if cost_guide.escalation_total is defined %}<section class="content-section" id="fallback"><h2>Route to a cheaper model and fall back to a premium one</h2>
+<h3>Gateway fallback on serving failure</h3>
+<p>Put the cheaper model in <code>model</code> and the premium model in <code>models</code>; TrustedRouter tries them in order.</p>
+<pre data-request="fallback"><code>{"model":"{{ cost_guide.small.model_id }}","models":["{{ cost_guide.mid.model_id }}"],"messages":[{"role":"user","content":"Explain this function."}],"max_tokens":256}</code></pre>
+<p>Fallback handles serving failures such as a provider being unavailable, not answer quality. The serving model and route determine the charge; inspect the response's <code>model</code> and <code>trustedrouter.routing</code> metadata and known usage cost. See <a href="/llm-failover">failover</a> and <a href="/docs/provider-routing">routing controls</a>.</p>
+<h3 id="quality">Application escalation on answer quality</h3>
+<p>Validate the small model's answer and call the premium model if it fails your check.</p>
+<pre data-python="quality"><code>import json
+import os
+from openai import OpenAI
+client = OpenAI(base_url="{{ api_base_url }}", api_key=os.environ["TRUSTEDROUTER_API_KEY"])
+messages = [{"role": "user", "content": (
+    'Extract the support ticket as JSON with keys "issue" and "priority": '
+    'Checkout returns a 500 error for every customer; sales are blocked.'
+)}]
+def ask(model):
+    return client.chat.completions.create(model=model, messages=messages)
+def valid_ticket(reply):
+    try:
+        ticket = json.loads(reply or "")
+    except json.JSONDecodeError:
+        return False
+    return (isinstance(ticket, dict)
+            and {"issue", "priority"}.issubset(ticket)
+            and isinstance(ticket["issue"], str) and bool(ticket["issue"].strip())
+            and ticket["priority"] in ("low", "medium", "high", "urgent"))
+response = ask("{{ cost_guide.small.model_id }}")
+if not valid_ticket(response.choices[0].message.content):
+    response = ask("{{ cost_guide.mid.model_id }}")
+print(response.choices[0].message.content)</code></pre>
+<p>The application parses JSON and checks the required ticket fields; a parsing or field check failure triggers the premium call. Expected cost = small-model cost + escalation share times premium-model cost. At a <span data-escalation-percent="{{ cost_guide.escalation_percent_exact }}">{{ cost_guide.escalation_percent }}%</span> escalation share, every request pays for {{ cost_guide.small.name }} and that share also pays for {{ cost_guide.mid.name }}: ${{ cost_guide.small.total }} + {{ cost_guide.escalation_percent }}% × ${{ cost_guide.mid.total }} = <span data-escalation-total>${{ cost_guide.escalation_total }}</span> for the example workload. Unlike allocation, escalation pays for both calls on retried tasks.</p>
+</section>{% endif %}
+{% if cost_guide.cache_saving_percent is defined %}<section class="content-section" id="cache"><h2>Reuse stable prefixes with prompt caching</h2>
+<p>Eligible cache reads for {{ cost_guide.small.name }} on {{ cost_guide.small.provider_name }} cost ${{ cost_guide.cache_read }} per million input tokens versus ${{ cost_guide.cache_input }} for uncached input, a {{ cost_guide.cache_saving_percent }}% input saving.</p>
+<pre data-request="cache"><code>{"model":"{{ cost_guide.small.model_id }}","session_id":"cost-evaluation-session","messages":[{"role":"system","content":"Your stable context goes here."},{"role":"user","content":"Summarize section one."}],"provider":{"only":["{{ cost_guide.small.provider }}"],"allow_fallbacks":false},"max_tokens":256}</code></pre>
+<p>Replace the placeholder: use a repeated prefix long enough for the provider's cache rules. See <a href="/docs/prompt-caching">prompt caching</a>.</p>
+</section>{% endif %}
+<section class="content-section" id="batch"><h2>Use Batch for work that can wait</h2>
+<p>Eligible native OpenAI and Parasail Batch items receive their published 50% discount when native execution is enabled.</p>
+{% if cost_guide.small %}<p>This is a chat item body; supply <code>{{ cost_guide.small.model_id }}</code> as the model in the <a href="/docs/batch">complete Batch submission and polling example</a> at <code>/api/beta/batches</code>.</p>
+<pre data-request="batch-item" data-model="{{ cost_guide.small.model_id }}"><code>{"messages":[{"role":"user","content":"Summarize this document."}],"max_tokens":256}</code></pre>{% else %}<p>Choose a current model from the <a href="/models">catalog</a> and use the <a href="/docs/batch">Batch submission and polling example</a>.</p>{% endif %}
+<p>Unsupported or failed native items can use ordinary fallback at normal prices. See the <a href="/docs/batch">Batch guide for retention</a>.</p>
+</section>
+<section class="content-section" id="cap"><h2>Cap spend</h2>
+<p>Create a dedicated key with a $5.00 daily and $100.00 monthly limit.</p>
+<p>Send this body to <code>POST {{ control_plane_api_base_url }}/keys</code> with a management credential:</p>
+<pre data-request="key"><code>{"name":"Cost evaluation agent","limit_daily":5,"limit_monthly":100,"budget_strict":true,"budget_alert_only":false}</code></pre>
+<p>Strict mode counts outstanding estimated costs and is not an absolute final-charge ceiling. See <a href="/docs/spend-controls">per-key controls</a>.</p>
+<p>For an existing provider account, register its credential through <a href="/docs/byok">BYOK</a>, then select that billing path:</p>
+{% if cost_guide.small %}<pre data-request="byok"><code>{"model":"{{ cost_guide.small.model_id }}","messages":[{"role":"user","content":"Reply with PONG."}],"provider":{"only":["{{ cost_guide.small.provider }}"],"allow_fallbacks":false,"usage":"byok"},"max_tokens":16}</code></pre>{% endif %}
+<p>BYOK re-bills inference to your provider account. Compare <a href="/llm-gateway-pricing">fees and request costs</a> and <a href="/docs/opencode">configure OpenCode</a>.</p>
+</section>
+</div>
+{% endblock %}

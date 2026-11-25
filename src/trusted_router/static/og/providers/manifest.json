@@ -127,11 +127,11 @@
   },
   "byteplus": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 11,
     "name": "BytePlus ModelArk",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 11,
+    "route_mode": "Prepaid",
     "slug": "byteplus"
   },
   "cerebras": {
@@ -226,10 +226,10 @@
   },
   "decisionmodelsio": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 5,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 3,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio"
   },
@@ -298,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 60,
+    "model_count": 57,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 60,
+    "route_count": 57,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -370,10 +370,10 @@
   },
   "grok": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "xAI Grok",
     "privacy": "TR-funded ZDR",
-    "route_count": 14,
+    "route_count": 13,
     "route_mode": "Prepaid + BYOK",
     "slug": "grok"
   },
@@ -649,28 +649,28 @@
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 5,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 5,
+    "route_mode": "Prepaid",
     "slug": "nscale"
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
   "openai": {
     "card_version": 2,
-    "model_count": 40,
+    "model_count": 34,
     "name": "OpenAI",
     "privacy": "TR-funded ZDR",
-    "route_count": 69,
+    "route_count": 63,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -847,10 +847,10 @@
   },
   "siliconflow": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 58,
     "name": "SiliconFlow",
     "privacy": "Policy documented",
-    "route_count": 51,
+    "route_count": 115,
     "route_mode": "Prepaid + BYOK",
     "slug": "siliconflow"
   },
@@ -1009,10 +1009,10 @@
   },
   "zai": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "Z.AI",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 21,
     "route_mode": "Prepaid + BYOK",
     "slug": "zai"
   },

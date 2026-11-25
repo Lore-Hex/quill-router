@@ -140,6 +140,25 @@ rules keep the race winnable without ever pushing an untested tree:
   only if the push run does. The quiet window a refresh needs shrinks from
   about an hour to about the base's own CI time.
 
+* **Accept a data-only snapshot onto the newer main.** Even a 17-minute
+  snapshot CI run loses to merges about 20 minutes apart: on 2026-11-25 run
+  45553277992 restarted CI four times and published nothing from 03:32Z to
+  past 07:00Z. Now a merge during the snapshot's CI run no longer cancels it
+  when the snapshot changes only data (no self-healed parser). The run
+  finishes, and the snapshot commit is carried onto main's head and pushed at
+  once. Its statuses name the run that checked its data. That happens only
+  when the run concluded success, main gained no refresh input, alias vectors
+  move only over an unchanged `fastpath/`, and main's head has no ci.yml run
+  that concluded without success. After the push, the carried SHA gets its
+  own exact-SHA ci.yml run. deploy.yml's `gate-on-ci` deploys nothing without
+  a green run of that exact SHA. The job's "Wait for the accepted snapshot's
+  own CI run" step (`scripts/pricing/accepted_snapshot_ci.py`) waits for it.
+  It reruns failed jobs once, and otherwise fails the refresh with the
+  `git revert` to make. Main's branch protection is not strict, so a pull
+  request gets the weaker form of this guarantee: tested on an earlier main,
+  merged onto a newer one. A snapshot that changes a parser, or whose
+  acceptance is refused, keeps the exact-SHA path above.
+
 Rounds are bounded: at most six exact-SHA CI dispatches, and no new round
 after 150 minutes of publication. A run that runs out of rounds queues a fresh
 recomputation and ends green without validating, which the stale alert counts

@@ -1,14 +1,5 @@
 [
   {
-    "name": "Inkling 2 Small",
-    "url": "https://huggingface.co/thinkingmachines/Inkling-2-Small",
-    "tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144",
-    "context": "1M",
-    "input": "$0.30",
-    "cached_input": "$0.03",
-    "output": "$1.00"
-  },
-  {
     "name": "Inkling-Small",
     "url": "https://huggingface.co/thinkingmachines/Inkling-Small",
     "tinker_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",

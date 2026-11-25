@@ -19,9 +19,11 @@ def test_gateway_5xx_alert_is_immediate_and_debounced() -> None:
     assert "httpRequest.status < 600" in policy
     assert "httpRequest.status != 501" in policy
     assert "/internal/gateway/(authorize|settle|refund)" in policy
-    # Authorize 503s alone are set aside, for the authorize-503 policy
-    # (tests/test_billing_5xx_lease_headroom.py evaluates the split).
-    assert policy.count("AND NOT (") == 1
+    # Authorize and settle 503s alone are set aside, for the authorize-503
+    # and settle-503 policies (tests/test_billing_5xx_lease_headroom.py and
+    # tests/test_billing_settle_503.py evaluate the split).
+    assert policy.count("AND NOT (") == 2
+    assert 'AND NOT (httpRequest.status = 503 AND httpRequest.requestUrl =~ "/internal/gateway/settle([?].*)?$")' in policy
     assert 'AND NOT (httpRequest.status = 503 AND httpRequest.requestUrl =~ "/internal/gateway/authorize([?].*)?$")' in policy
     assert "notificationRateLimit:" in policy
     assert "period: 1800s" in policy

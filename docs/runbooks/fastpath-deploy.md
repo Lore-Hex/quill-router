@@ -981,7 +981,8 @@ the workspace's headroom is at least the floor plus the lease asked, and an
 ask is about a minute of the shard's spend, at least $0.01 and at most $10.
 At $20 no balance under about $20 was ever leased. Since 2026-11-20 the
 floor is $2, 2000000. It needs no release: the pinned release takes
-`-floor` and nodes 15 and 16 run the script that reads `fastpath-floor`.
+`-floor` and nodes 15 and 16 ran the script that reads `fastpath-floor`, as
+every node since does.
 In this order, each step done before the next:
 
 1. **The value.** One change in `infra/fastpath.tf` sets

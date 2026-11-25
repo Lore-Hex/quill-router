@@ -20,7 +20,6 @@ import httpx
 import pytest
 
 from tests.fixture_routes import bypass_catalog_caches, serve_on_fixture_route
-from tests.lifecycle_clock import catalog_predates
 from tests.pinned_manifests import TYPESAFE_JEV
 from trusted_router.catalog import (
     MODELS,
@@ -47,6 +46,7 @@ from trusted_router.catalog_privacy import endpoint_stores_content, endpoint_zer
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import (
+    BASETEN_DECEMBER_2026_RETIREMENT_AT,
     FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
     provider_model_retired,
 )
@@ -92,13 +92,7 @@ def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch, model: Model | None = N
 
 
 def _expected_active_chain(model_id: str) -> tuple[str, ...]:
-    chain = NAMED_DECISION_MODEL_PROVIDERS[model_id]
-    if model_id == ZEV_1_0_MODEL_ID and not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
-        # A reviewed retirement removes one host, not the named checkpoint.
-        # All unannounced missing hosts must still fail the contracts below.
-        assert chain == ("fireworks", "baseten")
-        return ("baseten",)
-    return chain
+    return NAMED_DECISION_MODEL_PROVIDERS[model_id]
 
 
 def _serving_chain(model_id: str) -> tuple[str, ...]:
@@ -269,12 +263,15 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
     # 2026-09-28 DeepInfra, gemmev-1.0's only host, dropped Gemma 4 E4B; Joseph
     # moved the name to Gemma 4 26B A4B rather than ship gemmev-1.1. On
     # 2026-10-27, with Inception (its only host) retiring Mercury 2 on
-    # 2026-11-15, Joseph moved mev-1.0 to Mercury 3 the same way. Otherwise do
+    # 2026-11-15, Joseph moved mev-1.0 to Mercury 3 the same way. On
+    # 2026-11-25, with Baseten (its last host) retiring GLM 5.2 Fast on
+    # 2026-12-24, Joseph moved zev-1.0 to GLM 5.3 Fast, the successor Baseten
+    # names, on the same Fireworks-then-Baseten chain. Otherwise do
     # not do that to a name with traffic: ship a new name or a new version.
     assert [(named.id, named.backing_model_id) for named in NAMED_DECISION_MODELS] == [
         ("trustedrouter/trev-1.0", "openai/gpt-oss-120b"),
         ("trustedrouter/mev-1.0", "inception/mercury-3"),
-        ("trustedrouter/zev-1.0", "z-ai/glm-5.2-fast"),
+        ("trustedrouter/zev-1.0", "z-ai/glm-5.3-fast"),
         ("trustedrouter/lev-1.0", "meta-llama/llama-3.3-70b-instruct"),
         ("trustedrouter/gev-1.0", "google/gemini-3.1-flash-lite"),
         ("trustedrouter/dev-1.0", "deepseek/deepseek-v4.1-flash"),
@@ -704,26 +701,30 @@ async def test_a_named_model_authorizes_on_its_chain_in_order(
     )
 
 
+# GLM 5.3 Fast's real upstream ids, so a provider_lifecycle retirement would
+# match them if one ever named Zev's backing model.
+_ZEV_UPSTREAM_IDS = {
+    "fireworks": "accounts/fireworks/routers/glm-5p3-fast",
+    "baseten": "zai-org/GLM-5.3-Fast",
+}
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", [ZEV_1_0_MODEL_ID, "z-ai/glm-5.2-fast"])
-async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
+@pytest.mark.parametrize("model_id", [ZEV_1_0_MODEL_ID, "z-ai/glm-5.3-fast"])
+async def test_zev_survives_the_baseten_december_cutoff_on_its_whole_chain(
     model_id: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Baseten retires GLM 5.2 Fast at 2026-12-24 01:00 UTC. Zev backs onto
+    GLM 5.3 Fast, which no retirement names, so it keeps Fireworks then
+    Baseten before, at and after the cutoff."""
     from datetime import timedelta
 
     from trusted_router import provider_lifecycle
 
-    # The retirement names Fireworks' upstream id, so the fixture route uses it.
-    backing = _serve_on_fixture_routes(
-        monkeypatch,
-        ZEV_1_0_MODEL_ID,
-        upstream_ids={"fireworks": "accounts/fireworks/routers/glm-5p2-fast"},
-    )
-    cutoff = FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
-    for at, expected in [
-        (cutoff - timedelta(microseconds=1), ["fireworks", "baseten"]),
-        (cutoff, ["baseten"]),
-    ]:
+    backing = _serve_on_fixture_routes(monkeypatch, ZEV_1_0_MODEL_ID, upstream_ids=_ZEV_UPSTREAM_IDS)
+    assert backing == "z-ai/glm-5.3-fast"
+    cutoff = BASETEN_DECEMBER_2026_RETIREMENT_AT
+    for at in (cutoff - timedelta(microseconds=1), cutoff, cutoff + timedelta(days=30)):
         monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda at=at: at)
         response = await _authorize({
             "model": model_id, "route_type": "decide",
@@ -731,11 +732,27 @@ async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
             "provider": {"only": ["fireworks", "baseten"], "order": ["fireworks", "baseten"],
                          "allow_fallbacks": True},
         })
-        assert response.status_code == 200, response.text
+        assert response.status_code == 200, (at, response.text)
         payload = response.json().get("data", response.json())
         assert payload["model"] == backing
-        assert payload["provider"] == expected[0]
-        assert list(dict.fromkeys(c["provider"] for c in payload["route_candidates"])) == expected
+        assert payload["provider"] == "fireworks"
+        assert list(dict.fromkeys(c["provider"] for c in payload["route_candidates"])) == [
+            "fireworks", "baseten",
+        ]
+
+
+def test_zev_no_longer_depends_on_a_retiring_glm_5_2_fast_route() -> None:
+    later = BASETEN_DECEMBER_2026_RETIREMENT_AT
+    assert PRIVATE_PROXY_MODEL_TARGETS[ZEV_1_0_MODEL_ID] == "z-ai/glm-5.3-fast"
+    assert "z-ai/glm-5.2-fast" not in NATIVE_DECISION_MODEL_PROVIDERS
+    for host, upstream_id in _ZEV_UPSTREAM_IDS.items():
+        assert not provider_model_retired(host, "z-ai/glm-5.3-fast", upstream_id, at=later)
+    # The old backing model's routes do retire; they no longer back any name.
+    assert provider_model_retired("baseten", "z-ai/glm-5.2-fast", "zai-org/GLM-5.2-Fast", at=later)
+    assert provider_model_retired(
+        "fireworks", "z-ai/glm-5.2-fast", "accounts/fireworks/routers/glm-5p2-fast",
+        at=FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+    )
 
 
 @pytest.mark.asyncio

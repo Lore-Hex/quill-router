@@ -2666,6 +2666,17 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(txn)
 
+    def set_user_paypal_payer_match(self, user_id: str, matches: bool) -> User | None:
+        def txn(conn: Any) -> User | None:
+            user = self._read_entity_tx(conn, "user", user_id, User, for_update=True)
+            if user is None or user.paypal_payer_email_matches is matches:
+                return user
+            user.paypal_payer_email_matches = matches
+            self._write_entity_tx(conn, "user", user.id, user)
+            return user
+
+        return self._run_transaction(txn)
+
     def clear_user_phone(self, user_id: str) -> User | None:
         self._not_implemented("clear_user_phone")
 

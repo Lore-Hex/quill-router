@@ -24,6 +24,7 @@ from trusted_router.catalog import (
     endpoint_meets_privacy_requirement,
     endpoint_zero_data_retention,
     endpoints_for_model,
+    is_publicly_listed,
     provider_confidential_inference,
 )
 from trusted_router.catalog_aliases import is_listing_alias
@@ -89,7 +90,7 @@ _DEFAULT_PROVIDER_SLUGS: tuple[str, ...] = (
 
 def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str, object]:
     public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS
-                     and not model.internal_only and not is_listing_alias(model.id, MODELS)]
+                     and is_publicly_listed(model) and not is_listing_alias(model.id, MODELS)]
     public_model_ids = {model.id for model in public_models}
     public_endpoints = [
         endpoint

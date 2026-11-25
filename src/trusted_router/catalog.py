@@ -336,6 +336,16 @@ from trusted_router.web_fetch import FETCH_MODEL_ID, fetch_metadata, fetch_prici
 # dispatch.
 
 
+def is_publicly_listed(model: Model, *, include_internal: bool = False) -> bool:
+    """Shared visibility rule for public model listings.
+
+    Callers retain their own meta-model, listing-alias and monitor policies.
+    The regional directory historically includes internal models; its explicit
+    opt-in preserves that output while sharing capability visibility here.
+    """
+    return not model.supports_rerank and (include_internal or not model.internal_only)
+
+
 def orchestration_primitive(model_id: str) -> str | None:
     return ORCHESTRATION_PRIMITIVE_BY_MODEL_ID.get(model_id)
 
@@ -1061,7 +1071,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         **({"aliases": router_model_aliases(model.id)} if router_model_aliases(model.id) else {}),
         "configuration_hidden": model.hidden_public_metadata,
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
-        "internal_only": model.internal_only or model.id == MONITOR_MODEL_ID,
+        # The public projection also hides catalog-only rerank metadata.
+        "internal_only": not is_publicly_listed(model) or model.id == MONITOR_MODEL_ID,
         # Capability flags so OpenRouter-compat clients (and TR's own chat
         # picker) can tell an embedding model from a chat model without
         # parsing `architecture.modality`.

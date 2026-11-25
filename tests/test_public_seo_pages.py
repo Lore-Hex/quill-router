@@ -2094,7 +2094,7 @@ def test_model_comparison_normalizes_alias_case_and_order_in_one_redirect(
     # Both models are carried here on fixture routes, whoever lists them today.
     serve_on_fixture_route(monkeypatch, "z-ai/glm-4.5", "zai", author="zai")
     serve_on_fixture_route(
-        monkeypatch, "nvidia/nemotron-3-ultra-550b-a55b", "baseten", author="baseten"
+        monkeypatch, "nvidia/nemotron-3-ultra-550b-a55b", "fireworks", author="nvidia"
     )
     response = client.get(
         "/compare/models/Zai-Org/GLM-4.5/vs/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",

@@ -122,15 +122,24 @@ def test_the_rule_read_from_the_script_is_the_rule_bash_applies() -> None:
 
 def test_the_node_check_refuses_a_bad_value_an_early_node_and_the_decide_path_off() -> None:
     """The negative controls: each rule, broken in a copy of infra/fastpath.tf,
-    is reported, and with every cache_wait "" there is nothing to report."""
+    is reported, and with every cache_wait "" there is nothing to report. No
+    node from before 17 is left in the fleet, so the copy gains one for the
+    early node's control."""
     tf, script = TF.read_text(encoding="utf-8"), SCRIPT.read_text(encoding="utf-8")
     waits = _node_cache_waits(tf)
     late = next(name for name, wait in waits.items() if wait)
-    early = next(name for name in waits if int(name.rsplit("-", 1)[1]) < FIRST_READING_NODE)
     assert _node_wait_problems(_with_wait(tf, late, "300ms"), script) == [
         f"{late}: '300ms' is not 0 or 1ms to 250ms"]
     assert _node_wait_problems(_with_wait(tf, late, "100"), script) == [f"{late}: '100' is not 0 or 1ms to 250ms"]
-    assert _node_wait_problems(_with_wait(tf, early, "0"), script) == [
+    early = f"tr-fastpath-{FIRST_READING_NODE - 1}"
+    resource = tf[tf.index('resource "google_compute_instance" "fastpath_node"'):]
+    first = re.search(r'^\s*"tr-fastpath-\d+"\s*=\s*\{[^}\n]*\}$', resource, re.M)
+    assert first and early not in waits
+    early_entry = re.sub(r'cache_wait\s*=\s*"[^"]*"', 'cache_wait = "0"',
+                         re.sub(r'"tr-fastpath-\d+"', f'"{early}"', first.group(0), count=1))
+    with_early = tf.replace(first.group(0), f"{early_entry}\n{first.group(0)}", 1)
+    assert early in _node_cache_waits(with_early)
+    assert _node_wait_problems(with_early, script) == [
         f"{early}: created before the script that reads the attribute"]
     decide_off = re.sub(r'(fastpath-edge-decide\s*=\s*)"true"', r'\1"false"', tf)
     assert decide_off != tf
@@ -239,15 +248,15 @@ def test_the_script_that_reads_the_wait_reaches_the_fleet_on_new_nodes() -> None
     """A node keeps the script it was created with, so the script that reads
     fastpath-edge-decide-cache-wait, fastpath-starved-leases and
     fastpath-settle-hedge reaches the fleet only on nodes added under new
-    names; 15 and 16 (from before #2671, #2906 and #2903) stay until 17 and
-    18 serve."""
+    names: every node is 17 or later, 15 and 16 (from before #2671, #2906
+    and #2903) having been removed once 17 and 18 served."""
     script = SCRIPT.read_text(encoding="utf-8")
     for attribute in ("fastpath-edge-decide-cache-wait", "fastpath-starved-leases", "fastpath-settle-hedge"):
         assert f"$(attribute {attribute})" in script, attribute
     tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
     assert "ignore_changes = [metadata_startup_script]" in tf
-    for node in ("tr-fastpath-17", "tr-fastpath-18"):
-        assert re.search(rf'^\s*"{node}"\s*=\s*{{ zone = "us-central1-[ab]"', tf, re.M), node
+    nodes = re.findall(r'^\s*"tr-fastpath-(\d+)"\s*=\s*{ zone = "us-central1-[ab]"', tf, re.M)
+    assert nodes and all(int(node) >= 17 for node in nodes), nodes
 
 
 def test_the_runbook_names_the_switch_and_its_counts() -> None:

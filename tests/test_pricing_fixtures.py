@@ -85,7 +85,15 @@ PARSER_CASES: list[tuple[str, set[str], tuple[float, float]]] = [
     ("phala", {"qwen/qwen3.5-27b"}, (0.0, 5.0)),
     (
         "siliconflow",
-        {"deepseek/deepseek-v4-flash", "qwen/qwen3-vl-32b-instruct"},
+        {
+            "deepseek/deepseek-v4-flash",
+            "qwen/qwen3-vl-32b-instruct",
+            "deepseek/deepseek-r1",
+            "qwen/qwen2.5-7b-instruct",
+            "inclusionai/ling-flash-2.0",
+            "bytedance-seed/seed-oss-36b-instruct",
+            "tencent/hy4-preview",
+        },
         (0.0, 20.0),
     ),
     ("streamlake", {"kwaipilot/kat-coder-pro-v2.5"}, (0.01, 20.0)),

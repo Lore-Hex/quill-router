@@ -41,6 +41,7 @@ from trusted_router.catalog import (
     endpoint_meets_privacy_requirement,
     endpoint_stores_content,
     endpoints_for_model,
+    is_publicly_listed,
     meta_candidate_models,
 )
 from trusted_router.catalog_capabilities import union_supported_parameters
@@ -279,7 +280,7 @@ def chat_route_candidates(
     seen: set[str] = set()
     for model_id in raw_ids:
         model = MODELS.get(model_id)
-        if model is None or not model.supports_chat:
+        if model is None or not model.supports_chat or model.supports_rerank:
             raise api_error(
                 400,
                 f"Model does not support chat completions: {model_id}",
@@ -340,7 +341,7 @@ def chat_route_endpoint_candidates(
     seen: set[str] = set()
     for model_id in raw_ids:
         model = MODELS.get(model_id)
-        if model is None or not model.supports_chat:
+        if model is None or not model.supports_chat or model.supports_rerank:
             raise _unsupported_model_error(model_id, model, decide=decide)
         for endpoint in endpoints_for_model(model.id):
             if endpoint.id in seen:
@@ -410,7 +411,7 @@ def catalog_endpoint_candidates(
     `supports_chat`; the OpenRouter-compatible endpoint catalog should be able
     to describe any served model while still honoring provider filters.
     """
-    if model.internal_only:
+    if not is_publicly_listed(model):
         return []
     candidates = [(model, endpoint) for endpoint in endpoints_for_model(model.id)]
     candidates = _filter_candidates_soft_data_collection(
@@ -717,13 +718,60 @@ def embeddings_route_endpoint_candidates(
     seen: set[str] = set()
     for model_id in raw_ids:
         model = MODELS.get(model_id)
-        if model is None or not model.supports_embeddings:
+        if model is None or not model.supports_embeddings or model.supports_rerank:
             raise api_error(
                 400,
                 f"Model does not support embeddings: {model_id}",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
+    if not candidates:
+        raise api_error(
+            400,
+            "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks and not defer_no_fallback_selection:
+        return candidates[:1]
+    return candidates
+
+
+def rerank_route_endpoint_candidates(
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
+    *,
+    defer_no_fallback_selection: bool = False,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Prepaid input-token routes for enabled rerank providers."""
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or not model.supports_rerank:
+            raise api_error(
+                400,
+                f"Model does not support rerank: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        provider = PROVIDERS.get(model.provider)
+        if provider is None or not provider.supports_rerank:
+            raise api_error(
+                400, f"Model does not support rerank: {model_id}", ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.provider != model.provider or endpoint.usage_type != "Credits":
+                continue
             if endpoint.id in seen:
                 continue
             candidates.append((model, endpoint))

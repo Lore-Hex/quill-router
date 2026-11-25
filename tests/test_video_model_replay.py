@@ -17,7 +17,6 @@ from tests.fixtures.generate_gateway_authorizations import (
 from tests.test_service_surfaces import _app
 from tests.test_video_derived_routing import URL, no_reservation
 from tests.test_video_replay_regressions import LOOKUP
-from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX,
     PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
@@ -102,7 +101,6 @@ def test_catalog_spelling_cannot_replay_historical_creator_hold(client, monkeypa
     assert money_snapshot(store, None, key) == before
 
 
-@pytest.mark.usefixtures("archived_video_routes")
 @pytest.mark.parametrize("backend", ["memory", "typed", "legacy"])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_retired_wrapper_cannot_reuse_catalog_authorization(backend, reverse):

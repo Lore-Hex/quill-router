@@ -690,11 +690,15 @@ def test_the_complete_matrix_is_one_dispatch_or_one_label_away():
             "\\ --jq '.[].name'); then full=\"the pull request's labels could not be read\"") in flat
     assert "elif grep -qxF 'ci:full' <<< \"${labels}\"; then" in script
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
-    assert refresh.count("gh workflow run ci.yml") == 1
-    dispatch = refresh[refresh.index("gh workflow run ci.yml"):]
-    assert dispatch[:dispatch.index("echo")].split() == [
-        "gh", "workflow", "run", "ci.yml", "\\", "--ref", '"${BRANCH}"', "\\",
-        "--repo", '"${GITHUB_REPOSITORY}"', "\\", "-f", "scope=paths"]
+    # The snapshot's round dispatch and an accepted snapshot's own run: both
+    # on the refresh branch, both scope=paths.
+    starts = [i for i in range(len(refresh)) if refresh.startswith("gh workflow run ci.yml", i)]
+    assert len(starts) == 2
+    expected = ["gh", "workflow", "run", "ci.yml", "--ref", '"${BRANCH}"',
+                "--repo", '"${GITHUB_REPOSITORY}"', "-f", "scope=paths"]
+    for start in starts:
+        words = [w for w in refresh[start:].split() if w != "\\"]
+        assert [w.rstrip(";") for w in words[:len(expected)]] == expected
 
 
 def test_scope_classifies_the_commit_against_the_commit_it_supersedes():

@@ -45,6 +45,7 @@ import httpx
 
 from trusted_router.config import Settings
 from trusted_router.storage_models import SyntheticProbeSample, utcnow
+from trusted_router.synthetic.threads import map_concurrently
 
 logger = logging.getLogger(__name__)
 
@@ -318,12 +319,20 @@ def _heartbeat_rows() -> list[dict[str, Any]]:
     with _HEARTBEAT_LOCK:
         targets = BUILTIN_HEARTBEAT_TARGETS | _REGISTERED_HEARTBEAT_TARGETS
         local_marks = dict(_HEARTBEAT_MARKS)
-    for name in sorted(targets):
-        samples = STORE.synthetic_probe_samples(
+    # One small read per target, all at once: a slow analytics answer costs
+    # this table one read, not one read per scheduler.
+    names = sorted(targets)
+    reads = map_concurrently(
+        lambda name: STORE.synthetic_probe_samples(
             target=name,
             probe_type=HEARTBEAT_PROBE,
             limit=1,
-        )
+        ),
+        names,
+        thread_name_prefix="heartbeat-read",
+    )
+    for name, read in zip(names, reads, strict=True):
+        samples = read.result()
         if samples:
             latest[name] = samples[0].created_at
     for name, bucket in local_marks.items():

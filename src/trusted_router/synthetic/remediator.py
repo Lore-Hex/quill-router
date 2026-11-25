@@ -67,6 +67,7 @@ from typing import Any
 from trusted_router.config import Settings
 from trusted_router.storage_models import SyntheticProbeSample
 from trusted_router.synthetic.alerts import ops_alert
+from trusted_router.synthetic.threads import map_concurrently
 
 logger = logging.getLogger(__name__)
 
@@ -233,12 +234,29 @@ def _detect_transaction_probe_stale(settings: Settings) -> list[Decision]:
         "gateway_settle": ("gateway_settle", "gateway_authorize_settle"),
         "provider_fallback": ("provider_fallback",),
     }
+    # One read per distinct probe type (the combined probe serves two
+    # subjects), all at once: the pass costs the slowest read, not the sum.
+    probe_types_needed = sorted({pt for pts in required.values() for pt in pts})
+    newest_by_type = dict(
+        zip(
+            probe_types_needed,
+            (
+                future.result()
+                for future in map_concurrently(
+                    lambda probe_type: STORE.synthetic_probe_samples(
+                        probe_type=probe_type, limit=1
+                    ),
+                    probe_types_needed,
+                    thread_name_prefix="remediator-read",
+                )
+            ),
+            strict=True,
+        )
+    )
     decisions: list[Decision] = []
     for subject, probe_types in required.items():
         candidates = [
-            sample
-            for probe_type in probe_types
-            for sample in STORE.synthetic_probe_samples(probe_type=probe_type, limit=1)
+            sample for probe_type in probe_types for sample in newest_by_type[probe_type]
         ]
         ages: list[tuple[float, str]] = []
         for sample in candidates:
@@ -281,14 +299,35 @@ DETECTORS = (
 
 def run_remediator_pass(settings: Settings) -> list[Decision]:
     """One detect->decide->record pass. Returns the decisions made (for
-    tests and for callers that want to render them immediately)."""
+    tests and for callers that want to render them immediately).
+
+    Every detector is a handful of analytics reads. They run concurrently,
+    and each read is capped at ``synthetic_remediator_read_timeout_seconds``,
+    so a slow analytics answer costs the pass about one or two read caps
+    rather than the sum of ~13 reads at the client's 20 s default (the cause
+    of the QUILL-ROUTER-B7 deadline overruns). Decisions are still recorded
+    in detector order, after every detector has finished.
+    """
+    from trusted_router.operational_analytics import read_timeout_cap
+
+    with read_timeout_cap(settings.synthetic_remediator_read_timeout_seconds):
+        results = map_concurrently(
+            lambda detector: detector(settings),
+            DETECTORS,
+            thread_name_prefix="remediator-detector",
+        )
     all_decisions: list[Decision] = []
-    for detector in DETECTORS:
-        try:
-            decisions = detector(settings)
-        except Exception:  # noqa: BLE001 - one broken detector must not kill the rest
-            logger.exception("remediator detector %s failed", detector.__name__)
+    for detector, result in zip(DETECTORS, results, strict=True):
+        error = result.exception()
+        if error is not None:
+            # One broken detector must not kill the rest.
+            logger.error(
+                "remediator detector %s failed",
+                getattr(detector, "__name__", repr(detector)),
+                exc_info=(type(error), error, error.__traceback__),
+            )
             continue
+        decisions = result.result()
         for decision in decisions:
             _record_decision(decision, settings=settings)
         all_decisions.extend(decisions)

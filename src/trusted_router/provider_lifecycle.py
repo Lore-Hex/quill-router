@@ -102,9 +102,17 @@ DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # DeepInfra deprecates nvidia/Nemotron-Content-Safety-3.5 on 30 Nov 2026 (date
 # only, so 00:00 UTC); its public model metadata says 02:35 UTC that day.
 DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT = datetime(2026, 11, 30, 0, 0, tzinfo=UTC)
-# Boundless's November 24 notice stops serving 18 models on Thursday 26 Nov
-# 2026 at 23:59 UTC; it names eight of them (the rest are not yet known).
+# Boundless's November 24 notices stop serving 18 models on Thursday 26 Nov
+# 2026 at 23:59 UTC (the first named eight; the follow-up lists all 18).
 BOUNDLESS_NOV_26_RETIREMENT_AT = datetime(2026, 11, 26, 23, 59, tzinfo=UTC)
+# Baseten's November 25 notice (changelog dated November 20) deprecates
+# five Model APIs at 5pm PT on
+# December 23, 2026. Daylight saving time ended on November 1, so that is
+# 17:00 PST (UTC-8), i.e. 2026-12-24 01:00 UTC.
+BASETEN_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 24, 1, 0, tzinfo=UTC)
+# Thinking Machines' Tinker newsletter of 25 November retires six models on
+# 14 December 2026 (date only, so 00:00 UTC conservatively).
+THINKINGMACHINES_DECEMBER_14_RETIREMENT_AT = datetime(2026, 12, 14, 0, 0, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -157,13 +165,6 @@ NSCALE_NOVEMBER_2026_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 # https://docs.nscale.com/docs/ai-services/models (read 2026-11-16): "These
 # changes take effect on 11 December 2026", date only, so 00:00 UTC as above.
 NSCALE_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 11, 0, 0, tzinfo=UTC)
-# Mistral Large 3 was due to leave Nscale serverless with the two above, but
-# Nscale began refusing it early: from 2026-11-23 00:39 UTC TR's serverless
-# key got HTTP 401 "Invalid or expired token" for this model alone (three
-# consecutive refusals) while GLM 5.3 and Qwen3.8-27B kept serving on the same
-# key. The public page (read 2026-11-23) still says 11 December, so stop at
-# the first observed refusal rather than wait for it.
-NSCALE_MISTRAL_LARGE_3_RETIREMENT_AT = datetime(2026, 11, 23, 0, 39, tzinfo=UTC)
 # Enforcement starts at the public-doc observation; the exact earlier
 # Scaleway end-of-life dates are not recorded in this repository.
 SCALEWAY_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 7, 0, 0, tzinfo=UTC)
@@ -513,28 +514,20 @@ _RETIREMENTS = (
     # "Retired from serverless" and Mistral-Large-3-675B-Instruct-2512-NVFP4
     # "Moves to dedicated models". Every Nscale route here is serverless, so
     # all three stop. No specific replacement is named, and none is
-    # substituted; GLM 5.3 and Qwen3.8-27B remain. Mistral Large 3 stopped
-    # early and has its own entry below.
+    # substituted; GLM 5.3 and Qwen3.8-27B remain.
     _Retirement(
         provider="nscale",
         model_ids=frozenset({
             "qwen/qwen3.8-flash-next-fp8",
             "qwen/qwen3-embedding-8b",
+            "mistralai/mistral-large-3-675b-instruct-2512-nvfp4",
         }),
         upstream_ids=frozenset({
             "Qwen/Qwen3.8-Flash-Next-FP8",
             "Qwen/Qwen3-Embedding-8B",
+            "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
         }),
         effective_at=NSCALE_DECEMBER_2026_RETIREMENT_AT,
-    ),
-    # Mistral Large 3 "Moves to dedicated models" on the same page, but Nscale
-    # refused it on serverless ahead of 11 December (evidence at the constant).
-    # Only Nscale's route retires; no replacement is named or substituted.
-    _Retirement(
-        provider="nscale",
-        model_ids=frozenset({"mistralai/mistral-large-3-675b-instruct-2512-nvfp4"}),
-        upstream_ids=frozenset({"mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4"}),
-        effective_at=NSCALE_MISTRAL_LARGE_3_RETIREMENT_AT,
     ),
     _Retirement(
         provider="streamlake",
@@ -757,6 +750,65 @@ _RETIREMENTS = (
             "deepseek-ai/DeepSeek-V4-Pro",
         }),
         effective_at=BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
+    ),
+    # Baseten's November 25 notice (and its public changelog entry "Model API
+    # deprecation notice for December 23rd"): DeepSeek V4.1 Flash, DeepSeek
+    # V4.1 Flash Fast, DeepSeek V4 Flash 0731, GLM 5.2 Fast and Nemotron 3
+    # Ultra are deprecated at 5pm PT on December 23 (17:00 PST = 2026-12-24
+    # 01:00 UTC), after which the ids return errors. Each name is the
+    # display_name of exactly one Baseten manifest row; the Fast variants are
+    # separate Model API ids, not service tiers. The dated DeepSeek V4.1 Flash
+    # 1017 (and 1017 Fast) routes are not named and stay. GLM 5.2 Fast and
+    # DeepSeek V4.1 Flash Fast have no other live provider, so they leave the
+    # catalog at the cutoff; the rest stay on other providers.
+    # https://www.baseten.co/resources/changelog/model-api-deprecations-december-23-2026/
+    # Replacements are the changelog's own, quoted only where like-for-like or
+    # newer; never substituted.
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-flash-0731"}),
+        upstream_ids=frozenset({
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            "deepseek-ai/DeepSeek-V4-Flash-0731",
+        }),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"deepseek/deepseek-v4.1-flash-fast"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4.1-Flash-Fast"}),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017-fast",),
+    ),
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"z-ai/glm-5.2-fast"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.2-Fast"}),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3-fast",),
+    ),
+    # The changelog suggests Nemotron 3.5 Super VL (120B) for Nemotron 3 Ultra
+    # (550B). A smaller tier is not a like-for-like swap, so none is quoted.
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({"nvidia/nemotron-3-ultra-550b-a55b"}),
+        upstream_ids=frozenset({"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"}),
+        effective_at=BASETEN_DECEMBER_2026_RETIREMENT_AT,
+    ),
+    # Thinking Machines' Tinker newsletter of 25 November retires Inkling (first
+    # generation), GPT-OSS-20b, Nemotron-3-Ultra-550B-A55B-BF16, Qwen3-8B,
+    # Qwen3.5-35B-A3B-Base and Qwen3.5-9B-Base "on Dec 14" with no time given,
+    # so 00:00 UTC. TrustedRouter routes only Inkling of those through Tinker
+    # (its serverless sampler id); the other five have no Tinker route. Inkling
+    # Small, Inkling 2 Small and GLM 5.3 are not named and stay. No replacement
+    # is quoted: Inkling 2 Small is different weights, not a like-for-like swap.
+    # Tinker is Inkling's last live host, so it leaves the catalog at the cutoff.
+    _Retirement(
+        provider="thinkingmachines",
+        model_ids=frozenset({"thinkingmachines/inkling"}),
+        upstream_ids=frozenset({"thinkingmachines/Inkling:peft:262144:sampling-nvfp4"}),
+        effective_at=THINKINGMACHINES_DECEMBER_14_RETIREMENT_AT,
     ),
     # Venice's September notice replaces deepseek-v4-flash with the separate
     # deepseek-v4-1-flash model on September 15. No time zone was specified;
@@ -1503,14 +1555,12 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"nvidia/Nemotron-Content-Safety-3.5"}),
         effective_at=DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT,
     ),
-    # Boundless's November 24 notice: these models stop serving on Thursday
-    # 26 November 2026 at 23:59 UTC. The notice names eight of the 18 retiring
-    # models by Boundless short name (mapped here through each manifest row's
-    # title to its upstream_id); the other ten are not listed, and Boundless's
-    # public /api/catalog, /models and /openapi.json still show every model as
-    # serving with no Deprecation or Sunset marker (checked 2026-11-24 17:47
-    # UTC), so only the eight named routes are retired. Only Boundless's
-    # routes; every one of these models stays on other providers.
+    # Boundless's November 24 notices: these 18 models stop serving on
+    # Thursday 26 November 2026 at 23:59 UTC. The first notice named eight;
+    # the follow-up (21:10 UTC) lists all 18 (13 open, 5 frontier) by
+    # Boundless name, mapped here through the Boundless adapter's aliases and
+    # each manifest row's title to its upstream_id. Only Boundless's routes;
+    # every one of these models stays on other providers.
     # Replacements are Boundless's suggestions where they are a like-for-like
     # or newer model; replacements are quoted, never substituted.
     _Retirement(
@@ -1553,6 +1603,58 @@ _RETIREMENTS = (
             "z-ai/glm-5.2",
             "z-ai/glm-5.3",
             "minimax/minimax-m3",
+        }),
+        effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
+    ),
+    # The follow-up notice's remaining open models. Boundless's lineup after
+    # the cutoff has no NVIDIA, Gemma, MiniMax or gpt-oss model, and its only
+    # DeepSeek survivor is a Flash model, which is not a like-for-like swap
+    # for V4 Pro, so no replacement is quoted. nemotron3-super is the legacy
+    # upstream id of the 120B card; it also retires the delisted
+    # nvidia/nemotron-3-super manifest row by upstream id alone (naming that
+    # legacy model id here would add it to the public catalog). gemma4-31b is
+    # the short id of google/gemma-4-31b-it.
+    # openai/gpt-oss-120b also stays under its operator hold in the Boundless
+    # pricing adapter until the cutoff (the provider already rejects it).
+    _Retirement(
+        provider="boundless",
+        model_ids=frozenset({
+            "deepseek/deepseek-v4-pro-0813",
+            "google/gemma-4-31b-it",
+            "minimax/minimax-m3.1-flash",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "openai/gpt-oss-120b",
+        }),
+        upstream_ids=frozenset({
+            "deepseek/deepseek-v4-pro-0813",
+            "gemma4-31b",
+            "google/gemma-4-31b-it",
+            "minimax/minimax-m3.1-flash",
+            "nemotron3-super",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "openai/gpt-oss-120b",
+        }),
+        effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
+    ),
+    # The follow-up notice's frontier models. TrustedRouter does not route
+    # them through Boundless (closed weights are maker-only), but Boundless
+    # still lists them, so the cutoff keeps a later refresh or rule change
+    # from admitting them. No replacement is quoted for an unserved route.
+    _Retirement(
+        provider="boundless",
+        model_ids=frozenset({
+            "anthropic/claude-fable-5.1",
+            "anthropic/claude-opus-5",
+            "openai/gpt-5.6-luna",
+            "openai/gpt-5.6-sol",
+            "openai/gpt-6-sol",
+        }),
+        upstream_ids=frozenset({
+            "anthropic/claude-fable-5.1",
+            "anthropic/claude-opus-5",
+            "openai/gpt-5.6-luna",
+            "openai/gpt-5.6-sol",
+            "openai/gpt-6-sol",
         }),
         effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
     ),

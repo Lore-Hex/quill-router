@@ -3,9 +3,9 @@
   "provider": "voyage",
   "source": "https://docs.voyageai.com/docs/embeddings",
   "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
-  "generated_at": "2026-11-24T19:28:16Z",
+  "generated_at": "2026-11-25T12:10:01Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 1,
+  "model_count": 9,
   "models": [
     {
       "id": "voyage/voyage-3-large",
@@ -19,6 +19,158 @@
       "input_token_price_per_m": 180000,
       "output_token_price_per_m": 0,
       "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+    },
+    {
+      "id": "voyage/rerank-1",
+      "upstream_id": "rerank-1",
+      "display_name": "rerank-1",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 8000
+    },
+    {
+      "id": "voyage/rerank-2",
+      "upstream_id": "rerank-2",
+      "display_name": "rerank-2",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 16000
+    },
+    {
+      "id": "voyage/rerank-2-lite",
+      "upstream_id": "rerank-2-lite",
+      "display_name": "rerank-2-lite",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 8000
+    },
+    {
+      "id": "voyage/rerank-2.5",
+      "upstream_id": "rerank-2.5",
+      "display_name": "rerank-2.5",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
+    },
+    {
+      "id": "voyage/rerank-2.5-lite",
+      "upstream_id": "rerank-2.5-lite",
+      "display_name": "rerank-2.5-lite",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
+    },
+    {
+      "id": "voyage/rerank-3",
+      "upstream_id": "rerank-3",
+      "display_name": "rerank-3",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
+    },
+    {
+      "id": "voyage/rerank-3-lite",
+      "upstream_id": "rerank-3-lite",
+      "display_name": "rerank-3-lite",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 32000
+    },
+    {
+      "id": "voyage/rerank-lite-1",
+      "upstream_id": "rerank-lite-1",
+      "display_name": "rerank-lite-1",
+      "model_type": "rerank",
+      "endpoints": [
+        "rerank"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "scores"
+      ],
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+      "context_length": 4000
     }
   ]
 }

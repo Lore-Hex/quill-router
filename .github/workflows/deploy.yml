@@ -42,6 +42,10 @@ on:
       - ".github/workflows/deploy-public-docs.yml"
   workflow_dispatch:
     inputs:
+      website_only:
+        description: "Publish an eligible main website edit; refuse instead of rolling the API"
+        type: boolean
+        default: false
       track_main:
         description: "Follow main: allow a newer prepared green release to supersede this snapshot"
         type: boolean
@@ -68,15 +72,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
-      - name: Classify only the docs page and non-image test/documentation changes
+      - name: Check eligibility for website-only publication
         id: scope
         env:
           AUTOMATIC: ${{ github.event_name == 'push' && inputs.hotfix != true }}
+          WEBSITE_ONLY: ${{ inputs.website_only == true }}
+          VALID_WEBSITE_MODE: ${{ github.ref == 'refs/heads/main' && inputs.hotfix != true && inputs.track_main != true }}
         run: |
           set -euo pipefail
           public_docs=false
-          if [ "$AUTOMATIC" = true ]; then
+          if [ "$AUTOMATIC" = true ] || [ "$WEBSITE_ONLY" = true ]; then
             public_docs="$(python3 -m scripts.deploy.public_docs scope)"
+          fi
+          if [ "$WEBSITE_ONLY" = true ] && { [ "$VALID_WEBSITE_MODE" != true ] || [ "$public_docs" != true ]; }; then
+            echo "::error::Website-only requires an eligible website edit on main without hotfix or track_main."
+            exit 1
           fi
           echo "public_docs=${public_docs}" >> "$GITHUB_OUTPUT"
 
@@ -161,7 +171,9 @@ jobs:
           fi
 
   build-image:
-    if: github.repository == 'Lore-Hex/quill-router'
+    if: >-
+      github.repository == 'Lore-Hex/quill-router' && (inputs.website_only != true ||
+      (github.ref == 'refs/heads/main' && inputs.hotfix != true && inputs.track_main != true))
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.set-vars.outputs.sha }}
@@ -290,7 +302,7 @@ jobs:
   rollout:
     needs: [gate-on-ci, build-image, scope, public-docs]
     if: >-
-      ${{ always() && !cancelled() && needs.gate-on-ci.result == 'success' &&
+      ${{ always() && !cancelled() && inputs.website_only != true && needs.gate-on-ci.result == 'success' &&
           needs.build-image.result == 'success' && needs.scope.result == 'success' &&
           ((needs.scope.outputs.public_docs == 'false' && needs.public-docs.result == 'skipped') ||
            (needs.public-docs.result == 'success' && needs.public-docs.outputs.full_rollout == 'true')) }}

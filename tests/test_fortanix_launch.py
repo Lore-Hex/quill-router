@@ -15,6 +15,7 @@ from trusted_router.catalog import (
     endpoint_e2ee,
     endpoint_zero_data_retention,
     endpoints_for_model,
+    is_publicly_listed,
 )
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
@@ -269,7 +270,7 @@ def _other_credit_routes():
         route
         for model in MODELS.values()
         if model.id != MODEL_ID
-        and not model.internal_only
+        and is_publicly_listed(model)
         and model.id.casefold().endswith("/glm-5.3-flash")
         for route in endpoints_for_model(model.id)
         if route.usage_type == "Credits"

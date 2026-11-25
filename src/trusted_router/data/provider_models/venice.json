@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
   "provider": "venice",
   "source": "https://api.venice.ai/api/v1/models?type=text",
-  "generated_at": "2026-11-24T19:28:16Z",
+  "generated_at": "2026-11-25T12:10:01Z",
   "model_count": 53,
   "models": [
     {
@@ -1421,8 +1421,8 @@
         "function-calling",
         "reasoning"
       ],
-      "context_length": 1000000,
-      "max_output_tokens": 393216,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
       "input_token_price_per_m": 1875000,
       "output_token_price_per_m": 5625000,
       "cached_input_token_price_per_m": 93750

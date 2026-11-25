@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 from scripts.pricing.base import (
@@ -14,10 +15,20 @@ from scripts.pricing.base import (
     normalize_parser_input,
 )
 from scripts.pricing.manifest import write_embedding_provider_manifest
+from scripts.pricing.parsers import cohere as parser
 
 SLUG = "cohere"
 URL = "https://cohere.com/pricing"
 EXPECTED_MODELS = ["cohere/embed-v4.0"]
+# Pricing labels are not API identifiers. Add entries only with API evidence.
+RERANK_API_IDS = {
+    "Rerank 5 Fast": "rerank-v5.0-fast",
+    "Rerank 5 Pro": "rerank-v5.0-pro",
+}
+RERANK_UPSTREAM_IDS = {
+    "cohere/" + label.lower().replace(" ", "-"): api_id
+    for label, api_id in RERANK_API_IDS.items()
+}
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -55,26 +66,51 @@ def embed4_rate_unpublished(html: str) -> bool:
 def fetch() -> ProviderPricingResult:
     html = normalize_parser_input(fetch_html(URL))
     if embed4_rate_unpublished(html):
-        return ProviderPricingResult(
+        result = ProviderPricingResult(
             slug=SLUG,
-            prices={EMBED_V4_MODEL_ID: ModelPrice(EMBED_V4_PINNED_MICRO_PER_M, 0)},
+            prices={
+                EMBED_V4_MODEL_ID: ModelPrice(EMBED_V4_PINNED_MICRO_PER_M, 0),
+                **{key: ModelPrice(value["prompt_micro_per_m"], 0)
+                   for key, value in parser.parse_rerank(html).items()},
+            },
             source=PINNED_SOURCE,
             fetched_url=URL,
             notes=["embed-v4.0 pinned at its last published rate; cohere.com/pricing publishes no Embed 4 rate"],
         )
-    return fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS)
+    else:
+        result = fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS)
+    for model_id in list(result.prices):
+        if model_id.startswith("cohere/rerank-") and model_id not in RERANK_UPSTREAM_IDS:
+            del result.prices[model_id]
+            result.notes.append(f"skipped {model_id}: no documented API id for pricing label")
+    for name, unit in re.findall(r'"modelName":"(Rerank [^"]+)","per":"([^"]+)"', html.replace(r'\"', '"')):
+        model_id = "cohere/" + name.lower().replace(" ", "-")
+        if model_id not in result.prices:
+            result.notes.append(f"skipped {name}: no positive per-token price (source unit: {unit})")
+    result.price_index_model_ids = frozenset(key for key in result.prices
+                                             if not key.startswith("cohere/rerank-"))
+    return result
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    unknown = {key for key in result.prices
+               if key.startswith("cohere/rerank-") and key not in RERANK_UPSTREAM_IDS}
+    result = replace(result, prices={key: price for key, price in result.prices.items()
+                                    if key not in unknown})
     notes = write_embedding_provider_manifest(
         result,
         manifest_path=MANIFEST_PATH,
         required_model_ids=frozenset(EXPECTED_MODELS),
+        rerank_model_ids=frozenset(key for key in result.prices if key.startswith("cohere/rerank-")),
     )
-    if result.source == PINNED_SOURCE:
-        raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        for row in raw["models"]:
-            if isinstance(row, dict) and row.get("id") == EMBED_V4_MODEL_ID:
-                row["pricing_source"] = PINNED_PRICING_SOURCE
-        MANIFEST_PATH.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    notes.extend(f"skipped {key}: no documented API id for pricing label" for key in sorted(unknown))
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    for row in raw["models"]:
+        if not isinstance(row, dict):
+            continue
+        if row.get("model_type") == "rerank" and row.get("id") in RERANK_UPSTREAM_IDS:
+            row["upstream_id"] = RERANK_UPSTREAM_IDS[row["id"]]
+        if result.source == PINNED_SOURCE and row.get("id") == EMBED_V4_MODEL_ID:
+            row["pricing_source"] = PINNED_PRICING_SOURCE
+    MANIFEST_PATH.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return notes

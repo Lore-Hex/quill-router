@@ -10,6 +10,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult, ast_whitelis
 from scripts.pricing.parsers import cohere as cohere_parser
 from scripts.pricing.parsers import voyage as voyage_parser
 from scripts.pricing.providers import cohere, voyage
+from tests.rerank_manifest_fixtures import MANIFEST_STATES, provider_manifest
 from trusted_router import catalog_ingest
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
@@ -35,41 +36,57 @@ def _no_self_heal(**_kwargs):  # noqa: ANN003, ANN202
     raise AssertionError("self-heal must not run for an unpublished rate")
 
 
-def test_cohere_parser_reports_the_unpublished_embed4_rate() -> None:
-    # Refresh run 42359425520: "cohere: self-heal fixture regression:
-    # removed=['cohere/embed-v4.0']". cohere.com/pricing now prices Embed 5
-    # Fast/Pro only; Embed 4 keeps a card without a rate, while the docs still
-    # list embed-v4.0 as served. The parser alone cannot price it.
+def test_cohere_parser_reads_rerank_without_an_embed4_rate() -> None:
     assert "web3Model.embed-4" in COHERE_2026_11_07
-    with pytest.raises(ValueError, match=r"no longer publishes an Embed 4 rate .*'Embed 5 Fast', 'Embed 5 Pro'"):
+    with pytest.raises(ValueError, match="no longer publishes an Embed 4 rate"):
         cohere_parser.parse(COHERE_2026_11_07)
+    assert cohere_parser.parse_rerank(COHERE_2026_11_07) == {
+        "cohere/rerank-5-fast": {"prompt_micro_per_m": 20_000, "completion_micro_per_m": 0},
+        "cohere/rerank-5-pro": {"prompt_micro_per_m": 50_000, "completion_micro_per_m": 0},
+    }
 
 
-def test_cohere_refresh_renews_embed4_at_its_pinned_rate(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+@pytest.mark.parametrize("fixture", ["cohere_pricing_2026-11-07.html", "cohere_pricing_2026-11-24.html"])
+@pytest.mark.parametrize("manifest_state", MANIFEST_STATES)
+def test_cohere_refresh_renews_embed4_at_its_pinned_rate(
+    monkeypatch, tmp_path, fixture, manifest_state,
+) -> None:  # noqa: ANN001
     # Like the Embed v3 rows, embed-v4.0 stays at its last published rate
     # while Cohere serves it without publishing one, and the refresh renews
     # the manifest instead of failing or spending a self-heal call.
     import scripts.pricing.base as base
 
-    monkeypatch.setattr(cohere, "fetch_html", lambda *_a, **_kw: COHERE_2026_11_07)
+    page = (FIXTURE_DIR / fixture).read_text(encoding="utf-8")
+    monkeypatch.setattr(cohere, "fetch_html", lambda *_a, **_kw: page)
     monkeypatch.setattr(base, "self_heal_parser", _no_self_heal)
     result = cohere.fetch()
     assert result.source == "legacy_pinned"
-    assert result.prices == {"cohere/embed-v4.0": ModelPrice(120_000, 0)}
+    assert result.prices == {
+        "cohere/embed-v4.0": ModelPrice(120_000, 0),
+        "cohere/rerank-5-fast": ModelPrice(20_000, 0),
+        "cohere/rerank-5-pro": ModelPrice(50_000, 0),
+    }
 
-    committed = json.loads(cohere.MANIFEST_PATH.read_text(encoding="utf-8"))
+    initial = provider_manifest("cohere", manifest_state)
+    legacy_row = {
+        "id": "cohere/embed-english-v3.0",
+        "model_type": "embedding",
+        "endpoints": ["embeddings"],
+        "input_token_price_per_m": 100_000,
+        "output_token_price_per_m": 0,
+        "pricing_source": "legacy-pinned",
+    }
+    initial["models"].append(legacy_row)
     manifest_path = tmp_path / "cohere.json"
-    manifest_path.write_text(json.dumps(committed), encoding="utf-8")
+    manifest_path.write_text(json.dumps(initial), encoding="utf-8")
     monkeypatch.setattr(cohere, "MANIFEST_PATH", manifest_path)
     cohere.write_provider_manifest(result)
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows = {row["id"]: row for row in raw["models"]}
     assert rows["cohere/embed-v4.0"]["input_token_price_per_m"] == 120_000
     assert rows["cohere/embed-v4.0"]["pricing_source"] == "legacy-pinned"
-    assert rows["cohere/embed-english-v3.0"] == {
-        row["id"]: row for row in committed["models"]
-    }["cohere/embed-english-v3.0"]
-    assert raw["generated_at"] != committed["generated_at"]
+    assert rows["cohere/embed-english-v3.0"] == legacy_row
+    assert raw["generated_at"] != initial["generated_at"]
 
 
 def test_cohere_pin_matches_the_committed_rate() -> None:
@@ -113,7 +130,9 @@ def test_voyage_parser_reads_current_and_older_text_embedding_tables() -> None:
         "completion_micro_per_m": 0,
     }
     assert "voyage/voyage-multimodal-3.5" not in prices
-    assert "voyage/rerank-2" not in prices
+    assert prices["voyage/rerank-2"] == {
+        "prompt_micro_per_m": 50_000, "completion_micro_per_m": 0,
+    }
 
 
 @pytest.mark.parametrize("slug", ["cohere", "voyage"])
@@ -214,3 +233,31 @@ def test_checked_in_voyage_fallback_matches_first_party_rate(
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     model = catalog_ingest._embedding_models()["voyage/voyage-3-large"]
     assert model.prompt_price_microdollars_per_million_tokens == 189_900
+
+
+@pytest.mark.parametrize("source_cost", [1, 200_000])
+def test_complete_embedding_manifest_applies_customer_fee(tmp_path, monkeypatch, source_cost):
+    from trusted_router.pricing import (
+        _PRICE_FLOOR_MICRODOLLARS_PER_M,
+        STANDARD_PRICE_MARKUP_BASIS_POINTS,
+    )
+
+    model_id = "voyage/fee-fixture"
+    (tmp_path / "voyage.json").write_text(json.dumps({
+        "provider": "voyage", "price_scale": "microdollars_per_million", "models": [{
+            "id": model_id, "upstream_id": "fee-fixture", "model_type": "embedding",
+            "endpoints": ["embeddings"], "input_token_price_per_m": source_cost,
+            "output_token_price_per_m": 0,
+        }],
+    }))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    model = catalog_ingest._embedding_models()[model_id]
+    expected = max(_PRICE_FLOOR_MICRODOLLARS_PER_M,
+                   (source_cost * (10_000 + STANDARD_PRICE_MARKUP_BASIS_POINTS) + 5_000) // 10_000)
+    assert expected != source_cost
+    assert model.prompt_price_microdollars_per_million_tokens == expected
+    assert model.published_prompt_price_microdollars_per_million_tokens == expected
+    assert model.price_tiers[0].prompt_price_microdollars_per_million_tokens == expected
+    endpoint = next(iter(catalog_ingest._build_endpoints({model.id: model}).values()))
+    assert endpoint.prompt_price_microdollars_per_million_tokens == expected
+    assert endpoint.completion_price_microdollars_per_million_tokens == 0

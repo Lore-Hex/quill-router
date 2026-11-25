@@ -61,6 +61,7 @@ from trusted_router.authorize_candidates import (
     NamedChainRefusal,
     finish_candidates,
     plan_route,
+    require_rerank_route,
     resolve_candidates,
 )
 from trusted_router.authorize_candidates import (
@@ -1276,6 +1277,7 @@ def _authorize_gateway_sync_impl(
     if not catalog_video_request:
         prepare_live_routing()
     region = choose_region(settings, body.region or None)
+    require_rerank_route(body.route_type, (route_model_id, *(body.models or [])))
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
     is_speech_request = body.route_type == "audio.speech"

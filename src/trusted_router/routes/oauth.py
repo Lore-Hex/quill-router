@@ -47,10 +47,12 @@ from trusted_router.oauth_provider import (
     exchange_code,
     fetch_user,
 )
+from trusted_router.services.abuse_tripwires import alert_new_github_signup
 from trusted_router.signup_gate import (
     github_account_old_enough,
     google_starter_credit_domain_limit,
     require_new_account_creation,
+    require_non_disposable_email,
     starter_credit_for_email,
 )
 from trusted_router.social_rewards import SIGNUP_MICRODOLLARS, campaign_enabled
@@ -200,6 +202,9 @@ def _persist_login(
         # Creation-only global brake: provider login/state/profile validation
         # still runs, and returning users never enter this branch.
         require_new_account_creation(settings)
+        # Matched on the provider's verified primary address, the one the
+        # account is created with, for Google and GitHub alike.
+        require_non_disposable_email(info.email)
         # The provider has already asserted the address is verified (the
         # caller rejects anything else), so the account is CREATED verified.
         # That replaces the separate mark_user_email_verified commit that
@@ -271,6 +276,11 @@ def _persist_login(
         STORE.set_user_github_identity(
             user_id, info.provider_login, info.provider_account_created_at
         )
+        if attribution is not None:
+            alert_new_github_signup(
+                workspace_id=attribution[0],
+                github_created_at=info.provider_account_created_at,
+            )
 
     raw_token, _ = STORE.create_auth_session(
         user_id=user_id,

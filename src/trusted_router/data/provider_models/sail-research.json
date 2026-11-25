@@ -21,7 +21,9 @@
       "routable": true,
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 180000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576
     },
     {
       "display_name": "google/gemma-4-31B-it",
@@ -44,7 +46,9 @@
       "routable": true,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "context_length": 256000,
+      "max_output_tokens": 16384
     },
     {
       "display_name": "nvidia/Gemma-4-31B-IT-NVFP4",
@@ -67,7 +71,9 @@
       "routable": true,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 70000
+      "cached_input_token_price_per_m": 70000,
+      "context_length": 262144,
+      "max_output_tokens": 16384
     },
     {
       "display_name": "moonshotai/Kimi-K2.6",
@@ -162,7 +168,9 @@
       "routable": true,
       "input_token_price_per_m": 920000,
       "output_token_price_per_m": 2770000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "context_length": 1048576,
+      "max_output_tokens": 384000
     },
     {
       "display_name": "google/gemma-4-12B-it",
@@ -184,7 +192,9 @@
       "routable": true,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2000000,
-      "cached_input_token_price_per_m": 150000
+      "cached_input_token_price_per_m": 150000,
+      "context_length": 16384,
+      "max_output_tokens": 16384
     },
     {
       "display_name": "moonshotai/Kimi-K3",
@@ -232,7 +242,9 @@
       "routable": true,
       "input_token_price_per_m": 980000,
       "output_token_price_per_m": 3080000,
-      "cached_input_token_price_per_m": 180000
+      "cached_input_token_price_per_m": 180000,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576
     },
     {
       "display_name": "zai-org/GLM-5.3-Flash",
@@ -255,7 +267,9 @@
       "routable": true,
       "input_token_price_per_m": 110000,
       "output_token_price_per_m": 350000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "context_length": 1048576,
+      "max_output_tokens": 131072
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -302,7 +316,9 @@
       "routable": true,
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 300000,
-      "cached_input_token_price_per_m": 6000
+      "cached_input_token_price_per_m": 6000,
+      "context_length": 1048576,
+      "max_output_tokens": 384000
     },
     {
       "display_name": "moonshotai/Kimi-K3.1-Pro",
@@ -325,12 +341,14 @@
       "routable": true,
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576
     }
   ],
   "source": "https://api.sailresearch.com/v1/models",
   "pricing_source": "https://docs.sailresearch.com/pricing",
-  "generated_at": "2026-11-24T19:28:16Z",
+  "generated_at": "2026-11-25T12:10:01Z",
   "price_scale": "microdollars_per_million",
   "model_count": 14
 }

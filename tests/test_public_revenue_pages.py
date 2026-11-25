@@ -757,9 +757,10 @@ def test_phala_pages_do_not_claim_verified_provider_e2ee(
 def test_public_meta_model_detail_renders_orchestration_components(
     client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
-    # GLM 5.2 Fast, a component Baseten alone serves, is carried here on a
-    # fixture route.
-    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2-fast", "baseten", author="zai")
+    # GLM 5.3 Fast is carried here on a fixture route (on Z.ai, which no
+    # retirement names), so the page renders the published graph whatever its
+    # live hosts list today.
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.3-fast", "zai", author="zai")
     response = client.get("/models/trustedrouter/socrates-1.1")
 
     assert response.status_code == 200
@@ -772,7 +773,7 @@ def test_public_meta_model_detail_renders_orchestration_components(
     else:
         assert "xiaomi/mimo-v2.5-pro-ultraspeed" not in response.text
     assert "minimax/minimax-m3" in response.text
-    assert "z-ai/glm-5.2-fast" in response.text
+    assert "z-ai/glm-5.3-fast" in response.text
     assert "deepseek/deepseek-v4-flash" in response.text
     assert "trustedrouter/zeus-1.0" in response.text
     assert "Model not found" not in response.text
@@ -831,7 +832,7 @@ def test_public_athena_model_detail_hides_orchestration_components(client: TestC
     assert response.status_code == 200
     assert "TrustedRouter Athena" in response.text
     assert "Models used by this orchestration" not in response.text
-    assert "z-ai/glm-5.2-fast" not in response.text
+    assert "z-ai/glm-5.3-fast" not in response.text
     assert "moonshotai/kimi-k2.7-code" not in response.text
     assert "trustedrouter/prometheus-1.0-1m" not in response.text
     assert "Model not found" not in response.text

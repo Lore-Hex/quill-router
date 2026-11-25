@@ -116,7 +116,10 @@ def test_whole_catalog_capabilities_agree_with_legacy_declarations(client):
     assert response.status_code == 200
     rows = response.json()["data"]
     concrete = [row for row in rows if "capabilities" in row["trustedrouter"]]
-    assert len(concrete) > 500
+    # Non-vacuity floor, not a catalog size target. The list leaves out models
+    # no route can serve (about 100 reseller and route-less ids, 2026-11-24),
+    # leaving ~490 concrete rows with every scheduled cutover past.
+    assert len(concrete) > 450
     # Each listed route is looked up among the effective endpoints, which is
     # what the listing is built from.
     effective = {

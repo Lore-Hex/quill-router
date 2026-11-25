@@ -14,6 +14,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json
 from scripts.pricing.manifest import set_manifest_model_canary_states
 from scripts.pricing.openai_catalog import probe_openai_chat
 from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "thinkingmachines"
 URL = "https://tinker-docs.thinkingmachines.ai/tinker/models/"
@@ -21,6 +22,7 @@ SERVERLESS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/serverless.json
 SAMPLER_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
 EXPECTED_MODELS = [
     "thinkingmachines/inkling",
+    "thinkingmachines/inkling-2-mini",
     "thinkingmachines/inkling-2-small",
     "thinkingmachines/inkling-small",
     "z-ai/glm-5.3",
@@ -41,8 +43,16 @@ API_KEY_ENVS = ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY")
 # The 2026-11-08 rejections were for the earlier serverless ID
 # (":sampling-nvfp4" suffix); the canary probes the row's current upstream_id,
 # which follows the exact ID serverless.json lists.
+#
+# Inkling 2 Mini (added 2026-11-25) starts under the same hold. Tinker lists
+# its paid 256K sampler row, but TR's key has never been shown to serve it
+# (Inkling 2 Small's listing did not imply access), so it is not routed until
+# the access canary gets a 200 from its exact upstream ID.
 ACCESS_HOLD_REASON = "provider-access-unavailable"
-OPERATOR_HOLDS = {"thinkingmachines/inkling-2-small": ACCESS_HOLD_REASON}
+OPERATOR_HOLDS = {
+    "thinkingmachines/inkling-2-mini": ACCESS_HOLD_REASON,
+    "thinkingmachines/inkling-2-small": ACCESS_HOLD_REASON,
+}
 _ACCESS_CANARY_CHECKED: set[str] = set()
 _ACCESS_CANARY_HEALTHY: set[str] = set()
 MANIFEST_PATH = (
@@ -185,11 +195,16 @@ def _json_prices(
 def fetch() -> ProviderPricingResult:
     # These are the provider's documented stable interfaces. HTML columns can
     # move when presentation-only fields such as active parameters are added.
+    # A scheduled retirement (provider_lifecycle) drops its exact ID from the
+    # required set, so the feed may delist it at the cutoff without failing
+    # the refresh, and a stale feed cannot re-price it afterwards.
     prices = _json_prices(
-        fetch_json(SERVERLESS_URL), _SERVERLESS_IDS, ("input", "cached_input", "output")
+        fetch_json(SERVERLESS_URL), _live_ids(_SERVERLESS_IDS), ("input", "cached_input", "output")
     )
     prices.update(
-        _json_prices(fetch_json(SAMPLER_URL), _SAMPLER_IDS, ("prefill", "cached_prefill", "sample"))
+        _json_prices(
+            fetch_json(SAMPLER_URL), _live_ids(_SAMPLER_IDS), ("prefill", "cached_prefill", "sample")
+        )
     )
     notes = ["verified exact deployed IDs against official serverless.json and models.json"]
     notes.extend(_run_access_canary())
@@ -200,6 +215,22 @@ def fetch() -> ProviderPricingResult:
         fetched_url=URL,
         notes=notes,
     )
+
+
+def _live_ids(model_ids: dict[str, str]) -> dict[str, str]:
+    return {
+        native_id: model_id
+        for native_id, model_id in model_ids.items()
+        if not provider_model_retired(SLUG, model_id, native_id)
+    }
+
+
+def _expected_live_models() -> set[str]:
+    upstream = {model_id: native_id for native_id, model_id in (_SERVERLESS_IDS | _SAMPLER_IDS).items()}
+    return {
+        model_id for model_id in EXPECTED_MODELS
+        if not provider_model_retired(SLUG, model_id, upstream.get(model_id))
+    }
 
 
 def _api_key() -> str | None:
@@ -275,7 +306,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             row.pop("cached_input_token_price_per_m", None)
         updated.append(model_id)
 
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
+    missing = sorted(_expected_live_models() - set(updated))
     if missing:
         raise RuntimeError(f"thinkingmachines manifest did not update expected model(s): {missing}")
 

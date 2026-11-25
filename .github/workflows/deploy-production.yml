@@ -336,6 +336,28 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_clickhouse_node_role.sh
+
+  sync-public-snapshots:
+    # The snapshot worker needs the migrated schema, not the API rollout.
+    # Start beside the primary after admission; finalize joins both branches.
+    needs: [admit-cloud, select-release, confirm-regions-ready, confirm-still-on-main]
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.select-release.outputs.proceed == 'true' && needs.confirm-still-on-main.outputs.on_main == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+      TR_DEPLOY_MUTEX_CLOUD: gcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select-release.outputs.commit }}
+      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
+      - name: Verify production cloud reservation before snapshot publication
+        run: bash scripts/deploy/deploy_mutex.sh assert
       - name: Sync shared public analytics snapshots
         id: snapshot-sync
         # Publishing the public snapshot builder MUST NOT gate the control
@@ -1370,6 +1392,12 @@ jobs:
             echo "public backend is not live; deploying smokeable companion only"
           fi
 
+      # Observations have no deploy outputs and cannot gate or suppress a mutation.
+      - name: Observe public fleet before deployment
+        if: steps.public_stage.outputs.stage == 'routed'
+        continue-on-error: true
+        run: python3 -m scripts.deploy.public_rollout_report before
+
       - name: Deploy isolated T1 public service
         run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"
 
@@ -1393,6 +1421,14 @@ jobs:
               curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
             done
           done
+
+      - name: Report whether the public deployment changed the fleet
+        if: success() && steps.public_stage.outputs.stage == 'routed'
+        continue-on-error: true
+        env:
+          EXPECTED_IMAGE: ${{ needs.select-release.outputs.image }}
+          EXPECTED_COMMIT: ${{ needs.select-release.outputs.commit }}
+        run: python3 -m scripts.deploy.public_rollout_report after
 
   settle-drain-worker:
     # Follow every successful router rollout with the same serving image/SA.
@@ -1495,7 +1531,7 @@ jobs:
         run: bash scripts/deploy/verify_gcp_complete.sh
 
   finalize-cloud:
-    needs: [admit-cloud, confirm-regions-ready, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, settle-drain-worker, verify-cloud-complete, select-release]
+    needs: [admit-cloud, confirm-regions-ready, migrate-schema, sync-runtime-secrets, sync-public-snapshots, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, settle-drain-worker, verify-cloud-complete, select-release]
     if: ${{ always() && github.repository == 'Lore-Hex/quill-router' && needs.admit-cloud.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1518,13 +1554,13 @@ jobs:
             TR_DEPLOY_OUTCOME=success
           elif jq -e '."select-release".result == "success" and
             ."select-release".outputs.proceed == "false" and
-            ([."migrate-schema", ."sync-runtime-secrets", .deploy, ."rollout-secondaries",
+            ([."migrate-schema", ."sync-runtime-secrets", ."sync-public-snapshots", .deploy, ."rollout-secondaries",
               ."public-surface-companion", ."settle-drain-worker", ."verify-cloud-complete"] |
               all(.result == "skipped"))' <<< "$RESULTS" >/dev/null; then
             # An earlier train already delivered this batch. Nothing mutated.
             TR_DEPLOY_OUTCOME=success
           elif jq -e '(."select-release".result == "failure" or ."select-release".result == "cancelled") and
-            ([."confirm-regions-ready", ."migrate-schema", ."sync-runtime-secrets", ."confirm-still-on-main",
+            ([."confirm-regions-ready", ."migrate-schema", ."sync-runtime-secrets", ."sync-public-snapshots", ."confirm-still-on-main",
               .deploy, ."rollout-secondaries", ."public-surface-companion", ."settle-drain-worker",
               ."verify-cloud-complete"] | all(.result == "skipped"))' <<< "$RESULTS" >/dev/null; then
             # Selection only reads GitHub. Its failure stays red, but must not
@@ -1533,7 +1569,7 @@ jobs:
           elif jq -e '."confirm-still-on-main".result == "success" and
             ."confirm-still-on-main".outputs.on_main == "false" and
             ."migrate-schema".result == "success" and ."sync-runtime-secrets".result == "success" and
-            .deploy.result == "skipped"' <<< "$RESULTS" >/dev/null; then
+            ."sync-public-snapshots".result == "skipped" and .deploy.result == "skipped"' <<< "$RESULTS" >/dev/null; then
             # The commit left main during the lease wait and nothing shipped: a
             # clean skip, so the reservation is released rather than blocked.
             # (A superseded run never holds the lease: confirm-current-main runs
@@ -1541,7 +1577,7 @@ jobs:
             TR_DEPLOY_OUTCOME=success
           elif jq -e '."confirm-regions-ready".result == "failure" and
             ."migrate-schema".result == "success" and ."sync-runtime-secrets".result == "success" and
-            ([.deploy, ."rollout-secondaries", ."public-surface-companion", ."settle-drain-worker",
+            ([."sync-public-snapshots", .deploy, ."rollout-secondaries", ."public-surface-companion", ."settle-drain-worker",
               ."verify-cloud-complete"] | all(.result == "skipped"))' <<< "$RESULTS" >/dev/null; then
             # The read-only region check failed (a region was refused, or could
             # not be read) before the first revision rolled out: every job that

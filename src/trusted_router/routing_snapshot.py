@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self, cast
@@ -502,10 +502,11 @@ class CatalogInputs:
         evidence_path = Path(provider_ranking.__file__).with_name("data") / (
             "provider_routing_evidence.json"
         )
+        rerank_ids = {model.id for model in MODELS.values() if model.supports_rerank}
         return cls(
             providers=dict(catalog_data.PROVIDERS),
-            models=tuple(MODELS.values()),
-            endpoints=tuple(MODEL_ENDPOINTS.values()),
+            models=tuple(model for model in MODELS.values() if model.id not in rerank_ids),
+            endpoints=tuple(endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.model_id not in rerank_ids),
             requested_models=requested,
             catalog_resolved_at=_floor_seconds(CATALOG_RESOLVED_AT),
             expansions_clock=(before, after),
@@ -965,6 +966,11 @@ def compile_routing_snapshot(
         raise SnapshotRefused("at and horizon must be integer seconds")
     if not 0 < horizon <= MAX_HORIZON_SECONDS:
         raise SnapshotRefused("horizon is out of range")
+    rerank_ids = {model.id for model in inputs.models if model.supports_rerank}
+    if rerank_ids:
+        inputs = replace(inputs, endpoints=tuple(
+            endpoint for endpoint in inputs.endpoints if endpoint.model_id not in rerank_ids
+        ))
     _require_global_providers(inputs)
     not_after = _not_after(at, horizon, inputs)
     starts = _epoch_starts(at, not_after)
@@ -993,7 +999,7 @@ def compile_routing_snapshot(
                 supports_embeddings=model.supports_embeddings,
                 supports_decide=model.supports_decide, context_length=model.context_length,
             )
-            for model in inputs.models
+            for model in inputs.models if not model.supports_rerank
         ),
         endpoints=tuple(_endpoint_entry(endpoint, starts) for endpoint in inputs.endpoints),
         aliases=inputs.aliases,

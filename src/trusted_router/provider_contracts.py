@@ -52,6 +52,8 @@ PEARL_GEMMA_4_31B_MODEL_ID = "google/gemma-4-31b-it"
 PEARL_GEMMA_4_31B_HOLD_REASON = "provider-model-not-found"
 MAKORA_MUSE_SPARK_OPEN_816B_MODEL_ID = "meta-models/muse-spark-open-816b-a42b-nvfp4"
 MAKORA_MUSE_SPARK_OPEN_816B_HOLD_REASON = "provider-model-not-found"
+GROK_IMAGINE_VIDEO_MODEL_ID = "x-ai/grok-imagine-video"
+GROK_IMAGINE_VIDEO_HOLD_REASON = "provider-access-unavailable"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
@@ -81,24 +83,6 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # Adapter, manifest and secrets are kept; delete this line to re-enable
     # after funding and a successful paid-path recovery canary.
     "zro": "operator-credit-exhausted",
-    # November 23: Nscale refused TR's operator token on every probed chat
-    # route with HTTP 401/403 "Invalid or expired token" (Mistral Large 3
-    # from 00:39Z, Sentry QUILL-ROUTER-J2; GLM 5.3 by 11:37Z, QUILL-ROUTER-J4;
-    # the provider performance page shows Qwen3.8 27B and Qwen3.8 Flash Next
-    # refused as provider_auth_config with no successful sample). One token
-    # refused across models is the account or key, not per-model removals.
-    # This holds every Nscale prepaid route and its probes; customer keys are
-    # unaffected. Delete this line only after the key or account is fixed and
-    # a paid-path recovery canary succeeds.
-    "nscale": "provider-access-unavailable",
-    # November 24: BytePlus shut the account for an overdue bill on
-    # 2026-11-24 ("service in BytePlus ModelArk_open_source_llm has been shut
-    # down due to the overdue payment"); every probe was refused with HTTP
-    # 401/403 (Sentry QUILL-ROUTER-J5). BytePlus is prepaid-only and the sole
-    # authorized source for closed-weight ByteDance/Seed models, so those
-    # models leave the catalog until this clears. Adapter, manifest and
-    # secrets are kept; lift after the bill is paid and a paid canary passes.
-    "byteplus": "operator-credit-exhausted",
     # Sonar is now reformulated as Agent API calls. Its reported input/search
     # costs no longer reconcile with the old fixed-fee catalog contract.
     # Keep managed billing dark until a reviewed adapter accounts for them.
@@ -173,6 +157,24 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # hung for the full 90 s with no response, while its other routes
         # serve. Require a reviewed live recovery before re-enabling.
         ("sail-research", "google/gemma-4-12b-it"),
+        # November 25, 2026: held as GROK_IMAGINE_VIDEO_HOLD_REASON
+        # (provider-access-unavailable). TR's xAI team turned on zero data
+        # retention on November 2 (#2264). Under ZDR xAI stores no outputs, so
+        # a video generation must name a caller-owned output.upload_url for
+        # xAI to PUT the result to (https://docs.x.ai/developers/faq/security).
+        # The gateway's xAI video adapter (quill-cloud-proxy
+        # enclave-go/internal/video/xai.go) sends no output object and reads
+        # xAI's hosted video.url, so every prepaid request is refused with
+        # HTTP 400 naming output.upload_url. The daily video canary failed on
+        # every grok day since ZDR (November 7, 15 and 25, Sentry
+        # QUILL-ROUTER-F9) after passing on October 30. The request is
+        # otherwise valid, and the model is neither renamed nor retired. This
+        # is the model's only route, so it leaves the catalog. To lift: ship
+        # TR-owned upload storage (a short-lived signed PUT URL per job, sent
+        # as output.upload_url, with /content served from it) on every gateway
+        # fleet, or move video to an xAI team without ZDR and narrow the grok
+        # ZDR claim. Then delete this entry after a paid-path canary passes.
+        ("grok", GROK_IMAGINE_VIDEO_MODEL_ID),
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(

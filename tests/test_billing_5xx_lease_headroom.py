@@ -66,6 +66,11 @@ HEADROOM_COUNTER = "trustedrouter_gateway_lease_headroom_503"
 BUSY_COUNTER = "trustedrouter_gateway_rebalance_busy_503"
 STRICT_COUNTER = "trustedrouter_gateway_strict_budget_busy_503"
 RACED_COUNTER = "trustedrouter_gateway_headroom_raced_503"
+# The settle pair (tests/test_billing_settle_503.py evaluates it): every
+# settle and refund 503, and the snapshot settle's async_settle.unavailable
+# line.
+SETTLE_503_COUNTER = "trustedrouter_gateway_settle_503"
+SETTLE_UNAVAILABLE_COUNTER = "trustedrouter_gateway_settle_unavailable_503"
 # The two WARNINGs every storage 503 of authorize leaves, here for a
 # headroom-raced one, as Cloud Run keeps them. They name the type, not the
 # mark, and must never count as it.
@@ -276,6 +281,8 @@ def _metric_filters() -> dict[str, str]:
         BUSY_COUNTER,
         STRICT_COUNTER,
         RACED_COUNTER,
+        SETTLE_503_COUNTER,
+        SETTLE_UNAVAILABLE_COUNTER,
     }, filters
     return filters
 
@@ -617,26 +624,42 @@ def _authorize_503_counter() -> str:
     return _metric_filters()["trustedrouter_gateway_authorize_503"]
 
 
+def _settle_503_counter() -> str:
+    return _metric_filters()[SETTLE_503_COUNTER]
+
+
 def test_the_5xx_alert_and_the_authorize_503_counter_split_the_original_exactly() -> None:
     narrowed = _alert_5xx_filter()
     counter = _authorize_503_counter()
+    settle = _settle_503_counter()
     for entry in CORPUS:
         original = matches(ORIGINAL_5XX_FILTER, entry)
         immediate = matches(narrowed, entry)
         counted = matches(counter, entry)
-        # Everything the original paged on still pages, by exactly one policy.
-        assert original == (immediate or counted), entry
+        settle_counted = matches(settle, entry)
+        # Everything the original paged on still pages, by the immediate
+        # policy or a counted one.
+        assert original == (immediate or counted or settle_counted), entry
+        # An authorize 503 is set aside for its counted policy alone.
         assert not (immediate and counted), entry
-    # The corpus reaches both sides.
+        assert not (counted and settle_counted), entry
+        # A settle 503 likewise; a refund 503 is counted by the settle pair
+        # (its line is the same) and still pages at once.
+        if settle_counted:
+            assert immediate == ("/refund" in entry["httpRequest"]["requestUrl"]), entry
+    # The corpus reaches every side.
     assert any(matches(counter, entry) for entry in CORPUS)
+    assert any(matches(settle, entry) and not matches(narrowed, entry) for entry in CORPUS)
     assert any(matches(narrowed, entry) for entry in CORPUS)
 
 
 @pytest.mark.parametrize(
     ("status", "path"),
     [
-        (503, "/internal/gateway/settle"),
+        (502, "/internal/gateway/settle"),
+        (504, "/internal/gateway/settle"),
         (503, "/internal/gateway/refund"),
+        (500, "/internal/gateway/refund"),
         (500, "/internal/gateway/authorize"),
         (502, "/internal/gateway/authorize"),
         (504, "/internal/gateway/authorize"),
@@ -670,12 +693,25 @@ def test_the_partition_check_kills_a_wider_exclusion(mutant: str) -> None:
     assert narrowed.endswith(f" AND {exclusion}")
     mutated = narrowed.replace(exclusion, f"NOT ({mutant})")
     counter = _authorize_503_counter()
-    lost = [
-        entry for entry in CORPUS
-        if matches(ORIGINAL_5XX_FILTER, entry)
-        and not (matches(mutated, entry) or matches(counter, entry))
-    ]
-    assert lost, mutant
+    settle = _settle_503_counter()
+
+    def counted_elsewhere(entry: dict[str, Any]) -> bool:
+        # The settle pair takes over settle 503s only: it counts refund 503s
+        # too, but balances a marked one against its line, so a refund 503
+        # must still page at once.
+        return matches(counter, entry) or (
+            matches(settle, entry) and "/refund" not in entry["httpRequest"]["requestUrl"]
+        )
+
+    # The narrowed filter as it is loses nothing; each mutant loses entries
+    # that no counted policy takes over.
+    for candidate, expect_lost in ((narrowed, False), (mutated, True)):
+        lost = [
+            entry for entry in CORPUS
+            if matches(ORIGINAL_5XX_FILTER, entry)
+            and not (matches(candidate, entry) or counted_elsewhere(entry))
+        ]
+        assert bool(lost) == expect_lost, (mutant, lost[:1])
 
 
 # The PromQL conditions, EVALUATED from the policies' own query text with
@@ -1174,7 +1210,7 @@ def test_a_promql_condition_is_the_only_condition_of_its_policy() -> None:
             assert kinds == ["conditionPrometheusQueryLanguage"], path.name
     assert with_promql == [
         "billing-authorize-503.yaml", "billing-headroom-raced.yaml", "billing-rebalance-busy.yaml",
-        "billing-strict-budget-busy.yaml",
+        "billing-settle-503.yaml", "billing-settle-unavailable.yaml", "billing-strict-budget-busy.yaml",
     ]
     contention = yaml.safe_load((DEPLOY / "spanner-alerts" / "contention.yaml").read_text(encoding="utf-8"))
     assert len(contention["conditions"]) > 1
@@ -2128,6 +2164,8 @@ def test_reliability_applies_counters_then_the_policies_that_take_over_first(tmp
         BUSY_COUNTER,
         STRICT_COUNTER,
         RACED_COUNTER,
+        SETTLE_503_COUNTER,
+        SETTLE_UNAVAILABLE_COUNTER,
         "trustedrouter_gateway_billing_slow",
     ]
     # The policies that bound rebalance-busy, strict-budget-busy and
@@ -2393,7 +2431,11 @@ def test_reliability_does_not_narrow_the_authorize_503_policy_without_the_rebala
 
 
 @pytest.mark.parametrize(
-    "metric", ["trustedrouter_gateway_authorize_503", HEADROOM_COUNTER, BUSY_COUNTER, STRICT_COUNTER, RACED_COUNTER]
+    "metric",
+    [
+        "trustedrouter_gateway_authorize_503", HEADROOM_COUNTER, BUSY_COUNTER, STRICT_COUNTER, RACED_COUNTER,
+        SETTLE_503_COUNTER, SETTLE_UNAVAILABLE_COUNTER,
+    ],
 )
 def test_reliability_stops_before_any_policy_without_a_counter(tmp_path: Path, metric: str) -> None:
     status, calls = _run_reliability(tmp_path, fail_metric=metric)

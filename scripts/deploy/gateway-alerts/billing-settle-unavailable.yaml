@@ -1,0 +1,44 @@
+displayName: "TR Gateway: settle unavailable surge"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    The snapshot settle answered more than two designed, retryable 503s in
+    ten minutes, or more than five in an hour. Each is the 503 with
+    Retry-After that services/async_settle_handler.py (unavailable) gives
+    for a reason such as finish_unconfirmed or transient_store_error; the
+    app writes async_settle.unavailable reason=... for each one
+    (trustedrouter_gateway_settle_unavailable_503), the gateway retries the
+    same settlement identity, and the charge is recovered: no customer
+    impact. One now and then is expected, about one a week. "TR Gateway:
+    settle 503 not marked retryable" and "TR Gateway: billing path 5xx" set
+    these 503s aside, so this is the only page for them, and a surge means
+    the settle path cannot confirm its writes: Spanner latency or aborts on
+    the settle outbox, a hot workspace's settles convoying, or a deploy.
+    When the hourly bound is what was crossed, the incident stays open
+    until the hour's count is back to five or fewer, which can be up to an
+    hour after the last line. Read the lines' reason= for the window: one
+    reason points at its call site in async_settle_handler.py; many at once
+    point at storage. Then read the settle outbox's backlog and drain
+    health. Runbook: docs/spanner-reliability.md.
+conditions:
+  # The shape of gateway-alerts/billing-rebalance-busy.yaml: one PromQL
+  # condition with a fast and a slow bound. Each side returns its sample
+  # only when its count is over its bound, and "or" returns the first
+  # side's sample, else the second's: one series at most, so one incident.
+  # No "or vector(0)": with no lines neither side has a series and there is
+  # nothing to page.
+  - displayName: "More than two settle-unavailable 503s in ten minutes, or more than five in an hour"
+    conditionPrometheusQueryLanguage:
+      query: |
+        (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_settle_unavailable_503{monitored_resource="cloud_run_revision"}[10m])) > 2.5)
+        or
+        (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_settle_unavailable_503{monitored_resource="cloud_run_revision"}[1h])) > 5.5)
+      duration: 0s
+      evaluationInterval: 60s
+alertStrategy:
+  autoClose: 1800s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

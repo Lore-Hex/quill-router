@@ -56,7 +56,9 @@ from trusted_router.openai_service_tiers import (
 from trusted_router.provider_lifecycle import (
     _utc_now,
     provider_catalog_revision,
+    provider_model_retired,
     provider_pricing_schedule,
+    provider_retirements,
 )
 from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
@@ -172,12 +174,26 @@ def _picker_model_shape(shape: dict[str, Any]) -> dict[str, Any]:
 def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
     shapes: list[dict[str, Any]] = []
     last_changes = last_route_changes(timestamp(_utc_now()))
+    retired = _models_with_a_retired_route()
     for model in MODELS.values():
         if is_listing_alias(model.id, MODELS):
             continue
         shape = model_to_openrouter_shape(model)
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
+            continue
+        if (
+            isinstance(trustedrouter, dict)
+            and not (trustedrouter.get("prepaid_available") or trustedrouter.get("byok_available"))
+            and model.id not in retired
+        ):
+            # No route can serve it (no prepaid and no BYOK route; pools and
+            # named decision models answer these flags from what authorize can
+            # serve), so every request for it is a 400, and listing it made
+            # catalog readers offer a model that cannot run: reseller ids that
+            # closed-weight admission refuses, ids whose last route was
+            # removed. A retired model stays listed: retirement disables its
+            # routes but keeps its public metadata.
             continue
         if isinstance(trustedrouter, dict):
             trustedrouter["last_route_change_at"] = last_changes.get(model.id)
@@ -203,6 +219,18 @@ def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
         picker_etag=_content_etag(picker_body),
         picker_gzip_body=picker_gzip_body,
         picker_gzip_etag=_content_etag(picker_gzip_body),
+    )
+
+
+def _models_with_a_retired_route() -> frozenset[str]:
+    # A retirement in effect at the lifecycle clock names the model; the
+    # catalog drops the retired endpoint itself, so the endpoint table cannot
+    # answer this.
+    return frozenset(
+        model_id
+        for retirement in provider_retirements()
+        for model_id in retirement.model_ids
+        if provider_model_retired(retirement.provider, model_id)
     )
 
 

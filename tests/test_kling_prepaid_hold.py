@@ -50,7 +50,8 @@ def test_daily_video_canary_skips_held_provider_without_adding_generations() -> 
 
     assert daily_video_profile(date(2026, 8, 6)).provider == "ltx"
     assert daily_video_profile(date(2026, 8, 7)).provider == "ltx"
-    assert daily_video_profile(date(2026, 8, 3)).provider == "grok"
+    # Grok's own day advances too: its only route is held (xAI ZDR).
+    assert daily_video_profile(date(2026, 8, 3)).provider == "runway"
 
 
 def test_daily_video_canary_fails_explicitly_when_all_providers_are_held(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,5 +62,6 @@ def test_daily_video_canary_fails_explicitly_when_all_providers_are_held(monkeyp
     monkeypatch.setattr(video_generation, "PREPAID_PROVIDER_HOLD_REASONS", {
         profile.provider: "operator-credit-exhausted" for profile in video_generation.DAILY_VIDEO_PROFILES
     })
+    monkeypatch.setattr(video_generation, "provider_model_operator_held", lambda *_args: False)
     with pytest.raises(RuntimeError, match="No unheld prepaid video provider"):
         video_generation.daily_video_profile(date(2026, 8, 3))

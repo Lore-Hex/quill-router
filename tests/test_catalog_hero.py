@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from trusted_router import dashboard
-from trusted_router.catalog import MODELS, PROVIDERS, endpoints_for_model
+from trusted_router.catalog import MODELS, PROVIDERS, endpoints_for_model, is_publicly_listed
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 
@@ -47,7 +47,7 @@ def _credits_route_count(model_id: str) -> int:
 
 def _first_model(*, funded: bool) -> str:
     for model in MODELS.values():
-        if model.internal_only or model.id in dashboard.META_MODEL_IDS:
+        if not is_publicly_listed(model) or model.id in dashboard.META_MODEL_IDS:
             continue
         if (_credits_route_count(model.id) > 0) is funded:
             return model.id
@@ -104,7 +104,7 @@ def test_model_section_pages_share_the_model_hero(client: TestClient) -> None:
 def test_model_page_heading_drops_the_publisher_prefix(client: TestClient) -> None:
     model = next(
         m for m in MODELS.values()
-        if not m.internal_only and ": " in m.name and _credits_route_count(m.id) > 0
+        if is_publicly_listed(m) and ": " in m.name and _credits_route_count(m.id) > 0
     )
     response = client.get(f"/models/{model.id}")
     short = model.name.split(": ", 1)[1]
@@ -144,7 +144,7 @@ def test_comparison_page_label_follows_both_models(client: TestClient) -> None:
     byok = _first_model(funded=False)
     second = next(
         m.id for m in MODELS.values()
-        if not m.internal_only
+        if is_publicly_listed(m)
         and m.id not in dashboard.META_MODEL_IDS
         and m.id != funded
         and _credits_route_count(m.id) > 0
