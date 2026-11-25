@@ -35,6 +35,7 @@ from trusted_router.errors import api_error
 from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
 from trusted_router.services.auto_refill import AUTO_REFILL_PAYMENT_METHOD_TYPES
+from trusted_router.services.paused_topup import alert_held_topup
 from trusted_router.services.reserved_tokens import KIND, handle_reservation_event
 from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
@@ -222,6 +223,13 @@ def _handle_stripe_event(
                         "stripe_ach" if payment_method == "ach" else "stripe"
                     ),
                 )
+                alert_held_topup(
+                    STORE,
+                    workspace_id=workspace_id,
+                    provider="stripe",
+                    payment_ref=str(obj.get("payment_intent") or credit_event_id),
+                    amount_microdollars=amount_microdollars,
+                )
             # Capture the Stripe customer the first time they pay so
             # auto-refill can use it later. The default payment method
             # arrives separately in `setup_intent.succeeded` (or via the
@@ -334,6 +342,13 @@ def _handle_stripe_event(
                     workspace_id,
                     amount_microdollars=amount_microdollars,
                     payment_method="stripe_auto_refill",
+                )
+                alert_held_topup(
+                    STORE,
+                    workspace_id=workspace_id,
+                    provider="stripe",
+                    payment_ref=str(obj.get("id") or event_id),
+                    amount_microdollars=amount_microdollars,
                 )
             STORE.record_auto_refill_outcome(
                 workspace_id, status="succeeded", attempt_key=metadata.get("refill_attempt_key"),

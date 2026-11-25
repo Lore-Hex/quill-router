@@ -55,9 +55,22 @@ from trusted_router.services.checkout_fees import (
     rail_processing_fee,
     stripe_max_credit_cents,
 )
+from trusted_router.services.paused_topup import (
+    BILLING_PAUSED_MESSAGE,
+    CHECKOUT_GUARD_BILLING_PAUSED,
+)
 from trusted_router.services.paypal_billing import (
     capture_paypal_order_for_workspace,
     create_paypal_checkout_session,
+)
+from trusted_router.services.paypal_topup_guard import (
+    GUARD_CODE_AMOUNT_CAP,
+    GUARD_CODE_DAILY_LIMIT,
+    GUARD_CODE_UNAVAILABLE,
+    PAYPAL_DAILY_LIMIT_MESSAGE,
+    PAYPAL_UNAVAILABLE_MESSAGE,
+    checkout_guard_code,
+    paypal_amount_cap_message,
 )
 from trusted_router.services.stripe_billing import (
     create_billing_portal_session,
@@ -109,6 +122,11 @@ _CHECKOUT_ERROR_COPY: dict[str, str] = {
     "paypal_missing_order": "PayPal sent you back without an order to confirm.",
     "paypal_capture_failed": "The PayPal payment failed to complete.",
     "checkout_unavailable": "Checkout is temporarily unavailable.",
+    # The amount depends on settings, so the line is filled in at render time.
+    GUARD_CODE_AMOUNT_CAP: "",
+    GUARD_CODE_DAILY_LIMIT: PAYPAL_DAILY_LIMIT_MESSAGE,
+    GUARD_CODE_UNAVAILABLE: PAYPAL_UNAVAILABLE_MESSAGE,
+    CHECKOUT_GUARD_BILLING_PAUSED: BILLING_PAUSED_MESSAGE,
 }
 
 # One line per redirect code the auto-refill handler sends back to the page.
@@ -246,7 +264,11 @@ def register(app: FastAPI) -> None:
                     "fee": money(default_fee_microdollars),
                     "total": money(selected_microdollars + default_fee_microdollars),
                 },
-                checkout_error_message=_CHECKOUT_ERROR_COPY.get(error),
+                checkout_error_message=(
+                    paypal_amount_cap_message(settings.paypal_new_workspace_max_topup_cents)
+                    if error == GUARD_CODE_AMOUNT_CAP
+                    else _CHECKOUT_ERROR_COPY.get(error)
+                ),
                 verification_topup_line=(
                     purpose == "identity_verification" and verification_remaining > 0
                 ),
@@ -428,6 +450,9 @@ def register(app: FastAPI) -> None:
                 )
             )
         except HTTPException as exc:
+            guard_code = checkout_guard_code(exc)
+            if guard_code is not None:
+                return RedirectResponse(url=f"/console/credits?error={guard_code}", status_code=303)
             if exc.status_code == 400:
                 raise
             return RedirectResponse(url="/console/credits?error=checkout_unavailable", status_code=303)
@@ -497,10 +522,17 @@ def register(app: FastAPI) -> None:
                 workspace_id=ctx.workspace.id,
                 settings=settings,
             )
-        except HTTPException:
+        except HTTPException as exc:
+            guard_code = checkout_guard_code(exc)
+            if guard_code is not None:
+                return RedirectResponse(url=f"/console/credits?error={guard_code}", status_code=303)
             return RedirectResponse(url="/console/credits?error=paypal_capture_failed", status_code=303)
         if result.status == "PENDING":
             return RedirectResponse(url="/console/credits?checkout=paypal_pending", status_code=303)
+        if result.held:
+            return RedirectResponse(
+                url=f"/console/credits?error={CHECKOUT_GUARD_BILLING_PAUSED}", status_code=303
+            )
         suffix = "paypal=credited" if result.credited else "paypal=duplicate"
         return RedirectResponse(url=f"/console/credits?checkout=success&{suffix}", status_code=303)
 
