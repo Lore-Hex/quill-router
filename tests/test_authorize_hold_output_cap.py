@@ -18,7 +18,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
-from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, effective_endpoint
 from trusted_router.pricing import _flat_tier
@@ -69,10 +68,8 @@ def test_a_max_tokens_of_131072_reserves_the_16384_figure_and_estimates_the_whol
 
 
 @pytest.fixture
-def token_video_endpoint(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
-    # The accounting contract, isolated from the provider's catalog state
-    # (including an operator hold that leaves the route settlement-only).
-    request.getfixturevalue("archived_video_routes")
+def token_video_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The accounting contract, isolated from the provider's catalog state.
     tiers = _flat_tier(0, 10_700_000)
     monkeypatch.setitem(MODEL_ENDPOINTS, VIDEO_ENDPOINT, replace(
         MODEL_ENDPOINTS[VIDEO_ENDPOINT], completion_price_microdollars_per_million_tokens=10_700_000,

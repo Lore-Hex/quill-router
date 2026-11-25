@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router import authorize_candidates
 from trusted_router.authorize_candidates import (
     HOLD_OUTPUT_TOKENS,
@@ -202,7 +201,6 @@ def test_a_user_provided_model_reserves_its_whole_budget() -> None:
     assert whole > _figures(request, plan, resolved, HOLD_OUTPUT_TOKENS, user_model_prices=prices)[1]
 
 
-@pytest.mark.usefixtures("archived_video_routes")
 def test_a_token_billed_video_reserves_its_whole_budget() -> None:
     """A video's settle is held to the estimate, so its reservation is the
     estimate: 80,000 video tokens, not 16,384."""
