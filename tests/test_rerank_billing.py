@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import runpy
+import sys
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -9,7 +11,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from trusted_router import billing_snapshot, catalog_ingest, gateway_timing, routing
+from tests.fixture_routes import clear_catalog_caches
+from trusted_router import (
+    billing_snapshot,
+    catalog_ingest,
+    catalog_registry,
+    gateway_timing,
+    routing,
+)
 from trusted_router.async_settle_ticket import TicketClaims
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.catalog_data import PROVIDERS, Model
@@ -28,6 +37,27 @@ CHAT = "voyage/fixture-chat"
 @pytest.fixture(autouse=True)
 def fixed_timings(monkeypatch):
     monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 0.0)
+
+
+@pytest.fixture
+def all_rerank_disabled(monkeypatch):
+    with monkeypatch.context() as patch:
+        for slug, provider in PROVIDERS.items():
+            patch.setitem(PROVIDERS, slug, replace(provider, supports_rerank=False))
+        registry = runpy.run_path(catalog_registry.__file__)
+        assert not any(model.supports_rerank for model in registry["MODELS"].values())
+        assert all(endpoint.model_id in registry["MODELS"] for endpoint in registry["MODEL_ENDPOINTS"].values())
+        for module_name, module in list(sys.modules.items()):
+            if module is not None and module_name.startswith("trusted_router"):
+                for name in ("MODELS", "MODEL_ENDPOINTS"):
+                    if name in vars(module):
+                        patch.setattr(module, name, registry[name])
+        clear_catalog_caches()
+        try:
+            yield
+        finally:
+            clear_catalog_caches()
+    clear_catalog_caches()
 
 
 def request() -> Request:
@@ -179,7 +209,7 @@ def test_provider_flag_checked_again_at_authorize(monkeypatch):
 
 
 @pytest.mark.parametrize("model", ["voyage/rerank-2", "cohere/rerank-5-fast", "cohere/rerank-5-pro", "absent/model"])
-def test_disabled_rerank_retains_baseline_refusal(model):
+def test_disabled_rerank_retains_baseline_refusal(model, all_rerank_disabled):
     assert all(not p.supports_rerank for p in PROVIDERS.values())
     _, _, key = seed()
     with pytest.raises(HTTPException) as caught:
@@ -190,7 +220,7 @@ def test_disabled_rerank_retains_baseline_refusal(model):
 
 @pytest.mark.parametrize("model,route", [("anthropic/claude-haiku-4.5", "rerank"),
     ("anthropic/claude-haiku-4.5", "embeddings"), ("openai/text-embedding-3-large", "chat.completions")])
-def test_legacy_cross_route_acceptance_is_unchanged(model, route):
+def test_legacy_cross_route_acceptance_is_unchanged(model, route, all_rerank_disabled):
     _, _, key = seed()
     assert authorize(key, model, route)["model"] == model
 
@@ -265,7 +295,7 @@ def test_rerank_embedding_lease_differential(monkeypatch, price, tokens, tier, a
 
 
 @pytest.mark.parametrize("backend", ["memory", "typed"])
-def test_disabled_rerank_matches_frozen_authorize_bytes(monkeypatch, caplog, backend):
+def test_disabled_rerank_matches_frozen_authorize_bytes(monkeypatch, caplog, backend, all_rerank_disabled):
     from tests.test_authorize_candidates_differential import _compare, _model_spellings
 
     assert all(not provider.supports_rerank for provider in PROVIDERS.values())

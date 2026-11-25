@@ -247,6 +247,7 @@ def _directory_models() -> list[Model]:
         for model in MODELS.values()
         if model.id not in META_MODEL_IDS
         and not model.hidden_public_metadata
+        and not model.supports_rerank
         and not is_listing_alias(model.id, MODELS)
         and endpoints_for_model(model.id)
     ]

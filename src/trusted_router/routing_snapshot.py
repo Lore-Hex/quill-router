@@ -502,10 +502,11 @@ class CatalogInputs:
         evidence_path = Path(provider_ranking.__file__).with_name("data") / (
             "provider_routing_evidence.json"
         )
+        rerank_ids = {model.id for model in MODELS.values() if model.supports_rerank}
         return cls(
             providers=dict(catalog_data.PROVIDERS),
-            models=tuple(MODELS.values()),
-            endpoints=tuple(MODEL_ENDPOINTS.values()),
+            models=tuple(model for model in MODELS.values() if model.id not in rerank_ids),
+            endpoints=tuple(endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.model_id not in rerank_ids),
             requested_models=requested,
             catalog_resolved_at=_floor_seconds(CATALOG_RESOLVED_AT),
             expansions_clock=(before, after),
