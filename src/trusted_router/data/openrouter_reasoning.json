@@ -2881,6 +2881,12 @@
       ],
       "default_effort": "high"
     },
+    "tngtech/deepseek-r1t2-chimera": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "upstage/solar-mini-4-5": {
       "mandatory": false,
       "default_enabled": false,
