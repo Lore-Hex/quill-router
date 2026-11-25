@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 from typing import Any
 
 from trusted_router.money import dollars_to_microdollars
@@ -20,8 +22,101 @@ TYPED_LIMIT_PATCH_FIELDS = frozenset(
     }
 )
 
+#: A key's spend limits: the lifetime limit and the three UTC windows. They
+#: are mirrored into tr_key_limit as limit_micro and <w>_limit_micro.
+KEY_LIMIT_FIELDS = (
+    "limit_microdollars",
+    "limit_daily_microdollars",
+    "limit_weekly_microdollars",
+    "limit_monthly_microdollars",
+)
+
+STRICT_FIRST_LIMIT_MESSAGE = (
+    "A strict-budget key with no spend limit cannot gain one. Create a new strict key "
+    "with the limits instead. A strict key's existing limits can be changed or removed, "
+    "but once its last limit is removed it can never have a limit again."
+)
+
+
+class StrictKeyFirstLimit(ValueError):
+    """A patch would give a limitless budget_strict key its first spend limit.
+
+    So a strict key's limit fields go from some set to some set, or to none
+    set, and never from none set to some set (docs/routing-controls-20260927.md,
+    "Strict spending"). A strict key with no limit is one Python can never
+    refuse for its budget; one that could gain a limit later would need every
+    hold admitted before the limit counted against it, which a hold admitted
+    without a key counter (a lease's) is not.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(STRICT_FIRST_LIMIT_MESSAGE)
+
+
+def has_spend_limit(key: ApiKey) -> bool:
+    """Whether the key has a lifetime or a window limit (KEY_LIMIT_FIELDS),
+    read by name: the request path counts dynamic attribute reads."""
+    return (
+        key.limit_microdollars is not None
+        or key.limit_daily_microdollars is not None
+        or key.limit_weekly_microdollars is not None
+        or key.limit_monthly_microdollars is not None
+    )
+
+
+def key_enforcement_fields() -> tuple[str, ...]:
+    """The ApiKey fields that decide which spend limits a key enforces, as
+    the code that enforces them reads them, not listed by hand.
+
+    A key that records every field read is run through each reader, in limit
+    mode and in alert mode: the windows that block
+    (spend_windows.enforced_window_limits), the mirror the strict reserve and
+    the fast path edge read (storage_gcp_counters.key_limit_mirror_rows: the
+    limits, BYOK inclusion and shard count, which budget_strict constrains),
+    and has_spend_limit. The gateway's strict path takes budget_strict and
+    budget_alert_only from the key; a test holds every key field its typed
+    authorize reads for a limit to this set.
+    """
+    from trusted_router.spend_windows import enforced_window_limits
+    from trusted_router.storage_gcp_counters import key_limit_mirror_rows
+
+    fields = {field.name for field in dataclasses.fields(ApiKey)}
+    seen: set[str] = set()
+
+    class _Recording(ApiKey):
+        def __getattribute__(self, name: str) -> Any:
+            if name in fields:
+                seen.add(name)
+            return object.__getattribute__(self, name)
+
+    for alert_only in (False, True):
+        key = _Recording(
+            hash="k", salt="", secret_hash="", lookup_hash="", name="", label="", workspace_id="",
+            creator_user_id=None, limit_microdollars=1, limit_daily_microdollars=1,
+            limit_weekly_microdollars=1, limit_monthly_microdollars=1, budget_alert_only=alert_only,
+        )
+        enforced_window_limits(key)
+        key_limit_mirror_rows("k", key, None)
+        has_spend_limit(key)
+    return tuple(sorted(seen))
+
 
 def apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:
+    """Apply ``patch`` to ``key`` in place, or raise and leave it untouched.
+
+    Every backend calls this on the key it read inside its write transaction
+    (Spanner, Postgres) or under its lock (memory), so the strict-key rule
+    below is checked against the stored key, never a stale copy.
+    """
+    if key.budget_strict and not has_spend_limit(key):
+        trial = copy.deepcopy(key)
+        _apply(trial, patch)
+        if has_spend_limit(trial):
+            raise StrictKeyFirstLimit()
+    _apply(key, patch)
+
+
+def _apply(key: ApiKey, patch: dict[str, Any]) -> None:
     if "name" in patch and patch["name"]:
         key.name = str(patch["name"])
     if "disabled" in patch:

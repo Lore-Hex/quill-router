@@ -19,12 +19,23 @@ from trusted_router.schemas import (
 from trusted_router.scopes import SCOPE_PROFILE, validate_api_key_scopes
 from trusted_router.serialization import key_shape
 from trusted_router.storage import STORE, ApiKey
+from trusted_router.storage_key_patch import StrictKeyFirstLimit
 from trusted_router.types import ErrorType
 
 # The application validation handler returns 400, not FastAPI's default 422.
 # A 4XX response also suppresses that automatic 422 OpenAPI declaration.
 _KEY_VALIDATION_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"description": "Invalid parameters; standard error envelope with type bad_request."},
+    "4XX": {"description": "Client error; authentication or request rejected."},
+}
+_KEY_PATCH_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {
+        "description": (
+            "Invalid parameters, or a limit for a strict-budget key that has none "
+            "(a strict key cannot gain a first limit); standard error envelope with "
+            "type bad_request."
+        ),
+    },
     "4XX": {"description": "Client error; authentication or request rejected."},
 }
 
@@ -213,12 +224,22 @@ def register_key_routes(router: APIRouter) -> None:
     def get_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         return {"data": _enriched_key_shape(_require_key_in_workspace(hash, principal))}
 
-    @router.patch("/keys/{hash}")
+    @router.patch("/keys/{hash}", responses=_KEY_PATCH_RESPONSES)
     def patch_key(
         hash: str,  # noqa: A002
         body: PatchKeyRequest,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
+        """Update a key's name, limits, tags and flags.
+
+        `budget_strict` is fixed at creation. A strict key that has no limit
+        (no `limit`, `limit_daily`, `limit_weekly` or `limit_monthly`) cannot
+        gain one: the request is refused with 400 and the key is unchanged.
+        Create a new strict key with the limits instead. A strict key's
+        existing limits can still be changed here (and removed in the
+        console); once its last limit is removed it can never have a limit
+        again.
+        """
         _require_key_in_workspace(hash, principal)
         if "scopes" in (body.model_extra or {}):
             raise api_error(
@@ -245,6 +266,10 @@ def register_key_routes(router: APIRouter) -> None:
                 patch[f"limit_{window}_microdollars"] = micro
         try:
             updated = STORE.update_key(hash, patch)
+        except StrictKeyFirstLimit as exc:
+            # Refused like a change to budget_strict itself (schemas.py's
+            # PatchKeyRequest, answered 400 by the validation handler).
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
         except ValueError as exc:
             raise api_error(409, str(exc), ErrorType.CONFLICT) from exc
         if updated is None:

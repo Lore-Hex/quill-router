@@ -12,7 +12,7 @@
   "limit_daily": 5,
   "limit_monthly": 100,
   "budget_strict": true
-}</code></pre><p>Create this key with a management key. Strict mode is off by default and fixed when the key is created.</p></div>
+}</code></pre><p>Create this key with a management key. Strict mode is off by default and fixed when the key is created. Set a strict key's limits at creation: a strict key with no limit cannot gain one later.</p></div>
 </section>
 <section class="routing-feature-section routing-feature-columns">
   <div><h2>Account for work already in flight.</h2><p>Strict admission counts reserved estimates alongside settled spend in enforced windows. Settlement and refunds release the corresponding holds. A window reset keeps outstanding holds counted until the request finishes.</p><p>This controls estimated-cost admission. Final provider usage can exceed an estimate, so an absolute final-charge ceiling would be the wrong promise.</p></div>

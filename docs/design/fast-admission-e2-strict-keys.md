@@ -74,6 +74,15 @@ same commit), never go from all unset to any set. No limit can appear that
 would need the edge's holds counted, and the edge takes none. The fence is
 still needed for a key that gains a limit; this cohort cannot.
 
+The edge reads the mirror (§4.2), and the mirror holds the rule by itself: every
+write of its limit columns goes through one guarded function per backend
+(`storage_gcp_key_limit_mirror.write_key_limit_rows` on Spanner,
+`PostgresStore._write_key_limit_caps_tx` on Postgres) that refuses, in the
+writing transaction, a strict key's rows going from every limit unset to any
+set, whatever wrote the entity. `tests/test_key_limit_writer_inventory.py`
+holds every other writer of the table to a reviewed list
+(`docs/routing-controls-20260927.md`, "Strict spending").
+
 ## 4. The rule
 
 ### 4.1 Facts

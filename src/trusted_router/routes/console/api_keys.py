@@ -22,6 +22,11 @@ from trusted_router.routes.console._shared import ConsoleContext, ConsoleDep, mo
 from trusted_router.routes.console.social_rewards import _same_origin
 from trusted_router.spend_windows import WINDOWS, suggested_window_limits
 from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot
+from trusted_router.storage_key_patch import (
+    STRICT_FIRST_LIMIT_MESSAGE,
+    StrictKeyFirstLimit,
+    has_spend_limit,
+)
 
 _FLASH = {
     "saved:limit": ("success", "Budgets saved."),
@@ -30,6 +35,7 @@ _FLASH = {
     "saved:deleted": ("success", "Key deleted."),
     "error:limit": ("error", "Budgets must be non-negative dollar amounts."),
     "error:delete-active": ("error", "Disable the key first, then delete it."),
+    "error:strict-first-limit": ("error", STRICT_FIRST_LIMIT_MESSAGE),
     "error:management-confirmation": (
         "error", "Confirm the management-key permissions before creating a key.",
     ),
@@ -202,6 +208,8 @@ def register(app: FastAPI) -> None:
             return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
         try:
             STORE.update_key(key_hash, patch)
+        except StrictKeyFirstLimit:
+            return RedirectResponse(url="/console/api-keys?error=strict-first-limit", status_code=303)
         except ValueError:
             return RedirectResponse(
                 url="/console/api-keys?error=consolidate_key_usage",
@@ -304,5 +312,8 @@ def _key_view(snapshot: ApiKeyUsageSnapshot) -> dict[str, Any]:
         "windows": window_views,
         "budget_alert_only": key.budget_alert_only,
         "budget_strict": key.budget_strict,
+        # A strict key with no limit can never gain one (StrictKeyFirstLimit):
+        # the budget form is replaced by a note saying so.
+        "strict_limitless": key.budget_strict and not has_spend_limit(key),
         "disabled": key.disabled,
     }

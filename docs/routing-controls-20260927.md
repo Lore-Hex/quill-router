@@ -73,6 +73,93 @@ budget busy").
 There is no schema migration. Never reshard a strict key: validation rejects it.
 Keep the flag immutable so in-flight requests cannot cross accounting modes.
 
+A strict key with no limit cannot gain one (since 2026-11-24). A patch that
+would set the lifetime limit or any window limit on a strict key whose four
+limit fields (`limit_microdollars`, `limit_daily_microdollars`,
+`limit_weekly_microdollars`, `limit_monthly_microdollars`) are all unset raises
+`StrictKeyFirstLimit` (`storage_key_patch.apply_key_patch`, the one patch
+semantics every backend applies inside its write transaction or under its lock),
+answered 400 `bad_request` by `PATCH /v1/keys/{hash}`, as a change to
+`budget_strict` itself is, and a console error. Creating a strict key with
+limits, and changing or removing a strict key's existing limits, stay allowed;
+removing the last one makes the key limitless for good. So a strict key's limit
+fields, and their `tr_key_limit` mirrors (`limit_micro`, `<w>_limit_micro`,
+written from the entity in the same transaction), never go from all unset to any
+set. A limitless strict key is one Python's strict reserve can never refuse for
+its budget; this rule is what lets the Go fast path edge decide such a key
+without a key hold, since no limit can later appear that would need the holds
+it admitted counted (fast-admission-and-batched-settlement.md §4.6 otherwise
+needs the key-status fence for a limit added under a lease).
+
+The mirror holds the rule on its own, whatever writes the entity. Every write
+of `tr_key_limit`'s limit columns goes through one guarded function per backend
+(`storage_gcp_key_limit_mirror.write_key_limit_rows` on Spanner,
+`PostgresStore._write_key_limit_caps_tx` on Postgres), which in the writing
+transaction reads the key's rows and refuses (`StrictKeyFirstLimit`) to take a
+strict key's rows from every limit unset to any set, or to put a limit on rows
+a deleted key left behind (Spanner keeps them). Key creation writes new rows
+only (an insert on Spanner, a row created with its limits on Postgres). Two
+operator tools hold to it as well: the key reshard
+(`storage_gcp_key_shard_admin`) refuses a strict key before writing anything,
+and the orphan-write replay (`scripts/deploy/replay_orphan_writes.py`) writes a
+key's records only into a target that holds no trace of the key (no api_key
+entity, no `tr_key_limit` row, no lookup or workspace-index record), so it can
+never bring back a deleted key or its credential. The writer inventory
+`tests/test_key_limit_writer_inventory.py` looks for the places that name
+`tr_key_limit` (in any case, quoting or string construction, or through a
+constant or variable) or write a table it cannot resolve, in Python, shell,
+SQL, Terraform, YAML and the fast path's Go. It fails on any one not reviewed
+and listed, and holds the writers of the limit columns to the two guarded
+functions and the documented exceptions, each pinned by a test and by a
+fingerprint of its reviewed source.
+
+What the scan covers is an enumerated list. Each form is pinned by tests in
+that file; the scanner's docstring names the cases, and a test checks that
+each named case exists:
+
+1. direct SQL in a scope, its columns read by a small grammar;
+2. SQL built from literal parts, in a small plain subset rendered exactly:
+   str literals and names bound to them, conditional expressions of them,
+   `+`, f-string and `format`/`%` fields that are exactly `{}`, `{name}`,
+   `{0}`, `%s` or `%(name)s` (no spec, no conversion), and `join`,
+   `replace`, the strip family, `removeprefix`/`removesuffix` and
+   `upper`/`lower` with arguments known in full. Everything else is a part
+   not known holding the known text it may contain (a value, an element, a
+   receiver, a separator), the known text around it kept; a str method
+   never removes or changes a part not known; past the bound on renderings
+   one rendering keeps every known segment and every word that runs across
+   the pieces; and a statement run with a part not known whose known text
+   has a write verb is dynamic SQL in any scope;
+3. names, and containers made in the same function, holding the SQL;
+4. augmented assignment, the pieces in source order (a piece in a branch,
+   loop or try may be absent, one in a loop may repeat);
+5. helpers of the same module, when the callee is the helper by every
+   binding;
+6. executors by name and through settled aliases, and `getattr` with a
+   literal name;
+7. Spanner mutation calls and mutation objects;
+8. batch DML;
+9. shell, SQL, YAML and Go text;
+10. the backstop: a scope holding the table, a limit column and a write;
+11. a value naming the table leaving its scope by another route (returned,
+    stored, raised, given to a callee not known to be builtin, read through
+    a namespace or frame);
+12. builtin names, `getattr`, plain decorators and namespace readers, read
+    from their bindings;
+13. reviewed exceptions, pinned by behaviour and fingerprint;
+14. this repository as it is.
+
+The scan is a regression guard for these forms and for code shaped like
+this repository's. It fails closed where it sees a value meet something it
+cannot resolve, but it makes no promise about other Python constructs:
+those are code review's job. What it does not model is listed in the
+scanner's docstring and left to code review: user-defined special-method
+adapters it does not see meet the text, namespaces and frames reached from
+another module, callees taken for executors by their names, code outside
+the scan, SQL whose table or limit column arrives from another module
+or from data at run time, and a statement whose known text has no write
+verb made into a write by a part not known.
+
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the
 production schema. Each test creates and drops its own database. They test each

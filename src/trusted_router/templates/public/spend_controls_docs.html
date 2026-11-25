@@ -26,6 +26,7 @@ response = httpx.post(
 response.raise_for_status()
 # Store the returned key securely. Keep it out of logs.</code></pre>
   <p>Use the new key for inference at <code>{{ api_base_url }}</code>. Read its settings with <code>GET /v1/key</code> on either host. Create a separate key to change admission mode; changing <code>budget_strict</code> on an existing key is rejected.</p>
+  <p>Give a strict key its limits at creation. A strict key with no limit cannot gain one later: <code>PATCH /v1/keys/{hash}</code> with <code>limit</code>, <code>limit_daily</code>, <code>limit_weekly</code> or <code>limit_monthly</code> on such a key answers <code>400</code> (type <code>bad_request</code>) and leaves it unchanged. Create a new strict key with the limits instead. Limits a strict key already has can still be changed, and removed in the console; removing the last one is permanent, and the key can never have a limit again.</p>
 </section>
 <section class="routing-feature-section">
   <h2>Manage end-user keys in bulk</h2>

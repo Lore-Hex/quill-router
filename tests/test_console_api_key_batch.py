@@ -378,6 +378,7 @@ def test_console_key_projection_keeps_the_existing_template_shape() -> None:
         ],
         "budget_alert_only": True,
         "budget_strict": False,
+        "strict_limitless": False,
         "disabled": True,
     }
 
@@ -493,20 +494,22 @@ def test_postgres_bulk_key_projection_uses_one_portable_statement(
 def test_postgres_key_limit_seed_binds_small_limits_as_int8(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PGAdapter must not receive Psycopg's two-byte encoding for small ints."""
+    """PGAdapter must not receive Psycopg's two-byte encoding for small ints,
+    in the row a new key is created with or in a later update of it."""
 
     class Result:
         rowcount = 1
 
-        def __init__(self, rows: list[tuple[str, int]] | None = None) -> None:
+        def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
             self._rows = rows or []
 
-        def fetchall(self) -> list[tuple[str, int]]:
+        def fetchall(self) -> list[tuple[Any, ...]]:
             return self._rows
 
     class Connection:
         def __init__(self) -> None:
             self.calls: list[tuple[str, tuple[Any, ...]]] = []
+            self.rows: list[tuple[Any, ...]] = []
 
         def execute(
             self,
@@ -517,8 +520,8 @@ def test_postgres_key_limit_seed_binds_small_limits_as_int8(
         ) -> Result:
             del prepare
             self.calls.append((sql, params))
-            if sql.startswith("SELECT workspace_id, shard FROM tr_key_limit"):
-                return Result([("ws-int8", 0)])
+            if sql.startswith("SELECT workspace_id, shard, limit_micro"):
+                return Result(self.rows)
             return Result()
 
     connection = Connection()
@@ -529,7 +532,7 @@ def test_postgres_key_limit_seed_binds_small_limits_as_int8(
     )
     store = PostgresStore.__new__(PostgresStore)
 
-    store.create_api_key(
+    _raw, key = store.create_api_key(
         workspace_id="ws-int8",
         name="small limits",
         creator_user_id="user-int8",
@@ -539,6 +542,21 @@ def test_postgres_key_limit_seed_binds_small_limits_as_int8(
         limit_monthly_microdollars=3_000,
     )
 
+    # Creation inserts the new key's row with its limits.
+    sql, params = next(
+        (sql, params) for sql, params in connection.calls if sql.startswith("INSERT INTO tr_key_limit")
+    )
+    assert "limit_micro" in sql
+    assert [type(value) for value in (params[2], params[4], params[5], params[6])] == [
+        Int8,
+        Int8,
+        Int8,
+        Int8,
+    ]
+
+    # A later write updates the row it locked.
+    connection.rows = [("ws-int8", 0, 1, 1_000, 2_000, 3_000)]
+    store._write_key_limit_caps_tx(connection, key)
     sql, params = next(
         (sql, params)
         for sql, params in connection.calls

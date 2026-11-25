@@ -2042,7 +2042,7 @@
       ]
     },
     "storage_gcp_key_shard_admin:txn:1": {
-      "fingerprint": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
+      "fingerprint": "ae7a52bd3053060c904bc49032201621fd136eae129010b862293579495a781b",
       "scenarios": [
         {
           "bindings": {},
@@ -2054,7 +2054,7 @@
       ]
     },
     "storage_gcp_key_shard_admin:txn:2": {
-      "fingerprint": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
+      "fingerprint": "ae7a52bd3053060c904bc49032201621fd136eae129010b862293579495a781b",
       "scenarios": [
         {
           "bindings": {},
@@ -2266,7 +2266,7 @@
       ]
     },
     "storage_gcp_keys:txn:1": {
-      "fingerprint": "e3935ca0b6225f64c76744e2715fc15b080501f8f3bae8db81e107a3b07cc5b8",
+      "fingerprint": "85564205c41a1883f732d5de1e9b9f9d6a94d31aac441242eab97e9339223fc5",
       "scenarios": [
         {
           "bindings": {},
@@ -5081,6 +5081,30 @@
           }
         }
       ]
+    },
+    "storage_gcp_key_limit_mirror:constants:1": {
+      "fingerprint": "7c98f37a04650e02bbdcedd105a076e26b98668c160970006caeff5606c7680a",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kh": "STRING",
+            "shard_count": "INT64"
+          }
+        }
+      ]
+    },
+    "storage_gcp_key_limit_mirror:constants:2": {
+      "fingerprint": "d4f982f9a0c2f02ae9e963ca25d5cca7bb4b3db2aa1da2a344283214ad2cbc08",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -5201,10 +5225,10 @@
     "storage_gcp_google_ads:SpannerGoogleAdsDeliveryStore._list_entities": "fd1dd78c71ba2d47ad201bf583a268188f245afb11f791d9a6cc314e63d7e7ef",
     "storage_gcp_key_escrow:rebalance_key_limit_headroom.read_counters": "97c18154956915443e297e62ef40c5767eac208107bedd2a0fcf0127a39cd49c",
     "storage_gcp_key_shard_admin:_typed_key_state": "73a4a569ff114b9a2347b324dccc1c4756c9e380b1cd87971af930e2677001f5",
-    "storage_gcp_key_shard_admin:reshard_key_usage.txn": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
+    "storage_gcp_key_shard_admin:reshard_key_usage.txn": "ae7a52bd3053060c904bc49032201621fd136eae129010b862293579495a781b",
     "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "0d1807404835e427a88c46085cefbbbfc33365a4bc42bf07d4710cb0768fd5ce",
     "storage_gcp_keys:SpannerApiKeys._delete_batch.delete_batch_txn": "f186ed3fbbe47f2878dee911eebadd6eb29a70a908f63e8a8c35ebc8d068b8c2",
-    "storage_gcp_keys:SpannerApiKeys.update.txn": "e3935ca0b6225f64c76744e2715fc15b080501f8f3bae8db81e107a3b07cc5b8",
+    "storage_gcp_keys:SpannerApiKeys.update.txn": "85564205c41a1883f732d5de1e9b9f9d6a94d31aac441242eab97e9339223fc5",
     "storage_gcp_legacy_reservations:legacy_reservation_snapshot": "c5b3818e113170d5fda5422e9c83441ee7119014e4a74afd80330cf735b965d7",
     "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox._enqueue_tx": "99d2a2f669e53e54014e83d8f1ed598c6003b63d010c06adcaf2250e497dd92f",
     "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox.oldest_enqueued_at": "178dbad6786105bf7dd13e736189503a4df7c3df9cde6f7d136c6896bc3baafc",
@@ -5279,7 +5303,8 @@
     "fastpath_enabler:read_snapshot": "044725b4c1f059c1ffd0d705b32dd2bfb4697a818341c153744be5e963df0d73",
     "fastpath_enabler:_entities": "eabe79b5070d172ccb827d7dd175367cdf0674b4c8c20dd6d0e2fc6f9656f3f7",
     "fastpath_enabler:write_enable.tx": "dfda1b596529a3777460234fe7f023e57c4be4149853f2f989fd950c7584dac0",
-    "storage_gcp_counter_dml:key_limit_any_shard_exists": "ababcecd96f7c70c001098060fffbe290f8ea89ded6b5968121f027e310d133c"
+    "storage_gcp_counter_dml:key_limit_any_shard_exists": "ababcecd96f7c70c001098060fffbe290f8ea89ded6b5968121f027e310d133c",
+    "storage_gcp_key_limit_mirror:_limits_may_not_appear": "d2bbe61232c3ed11c05d35ae33f513b4efdb56484b590a831f7e380872bf4952"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

@@ -5,11 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from trusted_router.storage_gcp_counters import (
-    KEY_LIMIT_TABLE,
-    distribute_credit_amount,
-)
+from trusted_router.storage_gcp_counters import distribute_credit_amount
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
+from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
 
 log = logging.getLogger(__name__)
 
@@ -109,10 +107,13 @@ def rebalance_key_limit_headroom(
             # Every row was proved present in this transaction. UPDATE limits
             # the mutation to allowance; the incident's INSERT_OR_UPDATE lock
             # samples also included omitted, hot settlement counter columns.
-            transaction.update(
-                table=KEY_LIMIT_TABLE,
+            write_key_limit_rows(
+                transaction,
+                pt,
+                key_hash=key_hash,
                 columns=("key_hash", "shard", "limit_micro"),
                 values=changed,
+                mutation="update",
             )
         return True
 

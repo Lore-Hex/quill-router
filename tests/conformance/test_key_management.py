@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+from trusted_router.storage_key_patch import KEY_LIMIT_FIELDS, StrictKeyFirstLimit
+
 
 def test_key_pages_and_bulk_delete(store, unique, user_id, workspace_id):
     # The shared fixtures create the user and workspace through calls every
@@ -201,3 +205,228 @@ def test_a_limit_edit_keeps_the_keys_holds(store, unique, user_id, workspace_id)
     assert store.update_key(key.hash, {"limit_microdollars": 4_000_000}) is not None
     assert _hold(store, key.hash, 3_000_000)
     assert not _hold(store, key.hash, 1), "the edit forgot the $1 hold"
+
+
+def _limits(store, key_hash: str) -> tuple[int | None, ...]:
+    """The key's four limits as committed: the entity's, and on a backend with
+    a typed counter row its tr_key_limit shard 0 mirror too, which must say
+    the same (a single-shard key's lifetime limit is the whole limit)."""
+    stored = store.get_key_by_hash(key_hash)
+    assert stored is not None
+    entity = tuple(getattr(stored, field) for field in KEY_LIMIT_FIELDS)
+    mirror = _mirror(store, key_hash)
+    if mirror is not None:
+        assert mirror == entity, f"the tr_key_limit mirror {mirror} is not the entity's {entity}"
+    return entity
+
+
+_MIRROR_SQL = ("SELECT limit_micro, day_limit_micro, week_limit_micro, month_limit_micro FROM tr_key_limit "
+               "WHERE key_hash = {} AND shard = 0")
+
+
+def _mirror(store, key_hash: str) -> tuple[int | None, ...] | None:
+    """tr_key_limit shard 0's mirrored limits as committed, read the backend's
+    own way; None on a backend with no typed counter rows (memory)."""
+    if hasattr(store, "_database") and hasattr(store, "_param_types"):
+        typed = getattr(store._database, "typed", None)
+        if typed is not None:
+            row = typed.get("tr_key_limit", {}).get((key_hash, 0))
+            assert row is not None, "no tr_key_limit row"
+            return tuple(row.get(c) for c in ("limit_micro", "day_limit_micro", "week_limit_micro",
+                                              "month_limit_micro"))
+        with store._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(_MIRROR_SQL.format("@kh"), params={"kh": key_hash},
+                                             param_types={"kh": store._param_types.STRING}))
+        assert len(rows) == 1, "no tr_key_limit row"
+        return tuple(None if v is None else int(v) for v in rows[0])
+    pool = getattr(store, "_pool", None)
+    if pool is None:
+        return None
+    with pool.connection() as conn:
+        row = conn.execute(_MIRROR_SQL.format("%s"), (key_hash,), prepare=False).fetchone()
+    assert row is not None, "no tr_key_limit row"
+    return tuple(None if v is None else int(v) for v in row)
+
+
+def test_a_limitless_strict_key_never_gains_a_limit(store, unique, user_id, workspace_id):
+    """Every backend refuses, inside its write transaction or under its lock,
+    a patch that would give a limitless budget_strict key its first limit,
+    and writes nothing: neither the entity nor its typed limit row. Limits a
+    strict key already has can change and be removed, and once removed the
+    key stays limitless (storage_key_patch.StrictKeyFirstLimit)."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="strict-limitless", creator_user_id=user_id, budget_strict=True,
+    )
+    for patch in (
+        {"limit_microdollars": 5_000_000},
+        {"limit_microdollars_at_most": 5_000_000},
+        {"limit_daily_microdollars": 1_000_000},
+        {"limit_weekly_microdollars": 2_000_000},
+        {"limit_monthly_microdollars": 3_000_000},
+        {"name": "renamed", "limit_daily_microdollars": 1_000_000},
+    ):
+        with pytest.raises(StrictKeyFirstLimit):
+            store.update_key(key.hash, patch)
+        assert _limits(store, key.hash) == (None, None, None, None), patch
+        assert store.get_key_by_hash(key.hash).name == "strict-limitless"
+    renamed = store.update_key(key.hash, {"name": "renamed", "limit_daily_microdollars": None})
+    assert renamed is not None and renamed.name == "renamed"
+    assert _limits(store, key.hash) == (None, None, None, None)
+
+    _raw, limited = store.create_api_key(
+        workspace_id=workspace_id, name="strict-limited", creator_user_id=user_id, budget_strict=True,
+        limit_daily_microdollars=5_000_000,
+    )
+    assert store.update_key(limited.hash, {"limit_daily_microdollars": 6_000_000}) is not None
+    assert store.update_key(limited.hash, {"limit_monthly_microdollars": 9_000_000}) is not None
+    assert _limits(store, limited.hash) == (None, 6_000_000, None, 9_000_000)
+    assert store.update_key(limited.hash, {"limit_daily_microdollars": None}) is not None
+    assert store.update_key(limited.hash, {"limit_monthly_microdollars": None}) is not None
+    assert _limits(store, limited.hash) == (None, None, None, None)
+    with pytest.raises(StrictKeyFirstLimit):
+        store.update_key(limited.hash, {"limit_monthly_microdollars": 9_000_000})
+    assert _limits(store, limited.hash) == (None, None, None, None)
+
+    # A key that is not strict gains a first limit as before.
+    _raw, plain = store.create_api_key(
+        workspace_id=workspace_id, name="plain", creator_user_id=user_id,
+    )
+    assert store.update_key(plain.hash, {"limit_daily_microdollars": 1_000_000}) is not None
+    assert _limits(store, plain.hash) == (None, 1_000_000, None, None)
+
+
+def _force_entity(store, key) -> None:
+    """Write an api_key entity raw, bypassing apply_key_patch and the mirror,
+    the way an unguarded writer (a replay, a script) would."""
+    if hasattr(store, "_database") and hasattr(store, "_param_types"):
+        store._write_entity("api_key", key.hash, key)
+    else:
+        store._run_transaction(lambda conn: store._write_entity_tx(conn, "api_key", key.hash, key))
+
+
+def test_a_strict_keys_mirror_never_gains_a_limit_whatever_writes_the_entity(
+        store, unique, user_id, workspace_id):
+    """The runtime chokepoint (storage_gcp_key_limit_mirror.write_key_limit_rows
+    on Spanner, PostgresStore._write_key_limit_caps_tx on Postgres), in the
+    writing transaction: a strict key whose tr_key_limit row has no limit
+    never gains one, even when its entity was given one behind
+    apply_key_patch's back; a key that is not strict still does."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="strict-mirror", creator_user_id=user_id, budget_strict=True,
+    )
+    if _mirror(store, key.hash) is None:
+        pytest.skip("no typed counter rows on this backend; apply_key_patch is the rule")
+    forced = store.get_key_by_hash(key.hash)
+    forced.limit_daily_microdollars = 5_000_000
+    _force_entity(store, forced)
+    with pytest.raises(StrictKeyFirstLimit):
+        store.update_key(key.hash, {"include_byok_in_limit": False})
+    assert _mirror(store, key.hash) == (None, None, None, None)
+    assert store.get_key_by_hash(key.hash).include_byok_in_limit is True
+
+    _raw, plain = store.create_api_key(workspace_id=workspace_id, name="plain-mirror", creator_user_id=user_id)
+    forced = store.get_key_by_hash(plain.hash)
+    forced.limit_daily_microdollars = 5_000_000
+    _force_entity(store, forced)
+    assert store.update_key(plain.hash, {"include_byok_in_limit": False}) is not None
+    assert _mirror(store, plain.hash) == (None, 5_000_000, None, None)
+
+
+def test_a_new_key_mirrors_its_creation_limits(store, unique, user_id, workspace_id):
+    """Creation writes the mirror through the same chokepoint, as an insert
+    of a new row (Spanner) or a row created with its limits (Postgres)."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="strict-created", creator_user_id=user_id, budget_strict=True,
+        limit_microdollars=7_000_000, limit_weekly_microdollars=3_000_000,
+    )
+    assert _limits(store, key.hash) == (7_000_000, None, 3_000_000, None)
+
+
+def test_a_federated_strict_key_never_gains_a_limit_on_the_peer(store, unique, user_id, workspace_id):
+    """A peer plane copies the home plane's key record; its first copy
+    creates the row with the record's limits, and a later record that would
+    give a limitless strict key a limit is refused there too."""
+    record = {
+        "lookup_hash": f"lh-strict-{unique}", "key_hash": f"kh-strict-{unique}",
+        "workspace_id": f"ws-strict-{unique}", "name": "federated-strict", "disabled": False,
+        "budget_strict": True, "include_byok_in_limit": True, "revision": "2026-11-23T00:00:00Z",
+    }
+    try:
+        key = store.upsert_federated_api_key(record)
+    except NotImplementedError:
+        pytest.skip("backend is a federation HOME plane; it does not import keys")
+    if _mirror(store, key.hash) is None:
+        pytest.skip("no typed counter rows on this backend")
+    assert _mirror(store, key.hash) == (None, None, None, None)
+    with pytest.raises(StrictKeyFirstLimit):
+        store.upsert_federated_api_key({**record, "limit_daily_microdollars": 1_000_000})
+    assert _mirror(store, key.hash) == (None, None, None, None)
+
+    limited = {**record, "key_hash": f"kh-strict2-{unique}", "lookup_hash": f"lh-strict2-{unique}",
+               "limit_monthly_microdollars": 9_000_000}
+    key = store.upsert_federated_api_key(limited)
+    assert _limits(store, key.hash) == (None, None, None, 9_000_000)
+    store.upsert_federated_api_key({**limited, "limit_monthly_microdollars": 8_000_000})
+    assert _limits(store, key.hash) == (None, None, None, 8_000_000)
+
+
+def test_a_postgres_create_replayed_after_it_committed_returns_the_key(
+        store, unique, user_id, workspace_id, monkeypatch):
+    """Postgres replays only a transaction that rolled back (a serialization
+    failure, a deadlock, PGAdapter's analyzer error); a commit whose result
+    is lost surfaces as an error and is not replayed. Even so, creation is
+    safe to replay after it committed: the chokepoint finds the row it made
+    (INSERT ... ON CONFLICT DO NOTHING) and writes the same limits again,
+    and the entity writes are upserts."""
+    if getattr(store, "_pool", None) is None:
+        pytest.skip("a Postgres store only; Spanner commits a named transaction once")
+    run_once = store._run_transaction
+
+    def replayed(operation):
+        run_once(operation)
+        return run_once(operation)
+
+    monkeypatch.setattr(store, "_run_transaction", replayed)
+    raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="replayed", creator_user_id=user_id, budget_strict=True,
+        limit_daily_microdollars=5_000_000,
+    )
+    monkeypatch.undo()
+    assert store.get_key_by_raw(raw).hash == key.hash
+    assert _limits(store, key.hash) == (None, 5_000_000, None, None)
+
+
+def test_a_postgres_first_write_that_loses_a_race_is_held_to_the_rule(
+        store, unique, user_id, workspace_id, monkeypatch):
+    """A first write (creation, a federated key's first copy) that read no
+    row while a concurrent one committed it: its insert does nothing (ON
+    CONFLICT DO NOTHING), and it is held to the rule against the row the
+    other wrote, as any later write is."""
+    if getattr(store, "_pool", None) is None:
+        pytest.skip("a Postgres store only")
+    import dataclasses
+
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="raced", creator_user_id=user_id, budget_strict=True,
+    )
+    store_type = type(store)
+    real = store_type._key_limit_caps_rows_tx
+    reads: list[str] = []
+
+    def read_before_the_race(conn, key_hash):
+        reads.append(key_hash)
+        return [] if len(reads) == 1 else real(conn, key_hash)
+
+    monkeypatch.setattr(store_type, "_key_limit_caps_rows_tx", staticmethod(read_before_the_race))
+    limited = dataclasses.replace(store.get_key_by_hash(key.hash), limit_daily_microdollars=5_000_000)
+    with pytest.raises(StrictKeyFirstLimit):
+        store._run_transaction(lambda conn: store._write_key_limit_caps_tx(conn, limited, create_if_missing=True))
+    assert len(reads) == 2
+    assert _mirror(store, key.hash) == (None, None, None, None)
+
+    reads.clear()
+    unchanged = store.get_key_by_hash(key.hash)
+    store._run_transaction(lambda conn: store._write_key_limit_caps_tx(conn, unchanged, create_if_missing=True))
+    assert len(reads) == 2
+    monkeypatch.undo()
+    assert _limits(store, key.hash) == (None, None, None, None)
