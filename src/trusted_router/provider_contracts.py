@@ -52,6 +52,8 @@ PEARL_GEMMA_4_31B_MODEL_ID = "google/gemma-4-31b-it"
 PEARL_GEMMA_4_31B_HOLD_REASON = "provider-model-not-found"
 MAKORA_MUSE_SPARK_OPEN_816B_MODEL_ID = "meta-models/muse-spark-open-816b-a42b-nvfp4"
 MAKORA_MUSE_SPARK_OPEN_816B_HOLD_REASON = "provider-model-not-found"
+GROK_IMAGINE_VIDEO_MODEL_ID = "x-ai/grok-imagine-video"
+GROK_IMAGINE_VIDEO_HOLD_REASON = "provider-access-unavailable"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
@@ -155,6 +157,24 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # hung for the full 90 s with no response, while its other routes
         # serve. Require a reviewed live recovery before re-enabling.
         ("sail-research", "google/gemma-4-12b-it"),
+        # November 25, 2026: held as GROK_IMAGINE_VIDEO_HOLD_REASON
+        # (provider-access-unavailable). TR's xAI team turned on zero data
+        # retention on November 2 (#2264). Under ZDR xAI stores no outputs, so
+        # a video generation must name a caller-owned output.upload_url for
+        # xAI to PUT the result to (https://docs.x.ai/developers/faq/security).
+        # The gateway's xAI video adapter (quill-cloud-proxy
+        # enclave-go/internal/video/xai.go) sends no output object and reads
+        # xAI's hosted video.url, so every prepaid request is refused with
+        # HTTP 400 naming output.upload_url. The daily video canary failed on
+        # every grok day since ZDR (November 7, 15 and 25, Sentry
+        # QUILL-ROUTER-F9) after passing on October 30. The request is
+        # otherwise valid, and the model is neither renamed nor retired. This
+        # is the model's only route, so it leaves the catalog. To lift: ship
+        # TR-owned upload storage (a short-lived signed PUT URL per job, sent
+        # as output.upload_url, with /content served from it) on every gateway
+        # fleet, or move video to an xAI team without ZDR and narrow the grok
+        # ZDR claim. Then delete this entry after a paid-path canary passes.
+        ("grok", GROK_IMAGINE_VIDEO_MODEL_ID),
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(

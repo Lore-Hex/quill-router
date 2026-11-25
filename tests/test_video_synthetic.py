@@ -32,6 +32,10 @@ def _mp4() -> bytes:
 
 def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("trusted_router.synthetic.video_generation.PREPAID_PROVIDER_HOLD_REASONS", {})
+    monkeypatch.setattr(
+        "trusted_router.synthetic.video_generation.provider_model_operator_held",
+        lambda *_args: False,
+    )
     # MiniMax Hailuo 3 / H3 Max routed only through resellers (atlas-cloud,
     # fal) and has no route under the closed-weight rule, so it is not probed.
     assert len(DAILY_VIDEO_PROFILES) == 6
@@ -56,12 +60,16 @@ def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost(monkey
         if provider != "google-vertex"
     )
     from trusted_router.catalog import endpoint_for_id
-    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+    from trusted_router.provider_contracts import (
+        PREPAID_PROVIDER_HOLD_REASONS,
+        provider_model_operator_held,
+    )
 
     assert all(
         endpoint_for_id(f"{profile.model}@{profile.provider}/prepaid") is not None
         for profile in DAILY_VIDEO_PROFILES
         if profile.provider not in PREPAID_PROVIDER_HOLD_REASONS
+        and not provider_model_operator_held(profile.provider, profile.model)
     )
 
 
