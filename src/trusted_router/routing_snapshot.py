@@ -993,7 +993,7 @@ def compile_routing_snapshot(
                 supports_embeddings=model.supports_embeddings,
                 supports_decide=model.supports_decide, context_length=model.context_length,
             )
-            for model in inputs.models
+            for model in inputs.models if not model.supports_rerank
         ),
         endpoints=tuple(_endpoint_entry(endpoint, starts) for endpoint in inputs.endpoints),
         aliases=inputs.aliases,

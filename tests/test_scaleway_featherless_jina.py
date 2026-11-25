@@ -298,7 +298,7 @@ def test_featherless_discovers_only_first_party_models(
     assert f"per_page={featherless.DISCOVERY_PAGE_SIZE}" in requested_urls[0]
 
 
-def test_jina_discovers_only_priced_embedding_models(
+def test_jina_discovers_priced_embedding_and_rerank_models(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -342,11 +342,16 @@ def test_jina_discovers_only_priced_embedding_models(
     assert result.prices == {
         "jina-ai/jina-embeddings-v5-text-nano": ModelPrice(20_000, 0),
         "jina-ai/jina-embeddings-v5-text-small": ModelPrice(50_000, 0),
+        "jina-ai/jina-reranker-v3": ModelPrice(20_000, 0),
     }
     jina.write_provider_manifest(result)
     manifest = json.loads(jina.MANIFEST_PATH.read_text(encoding="utf-8"))
-    assert {row["model_type"] for row in manifest["models"]} == {"embedding"}
-    assert {tuple(row["endpoints"]) for row in manifest["models"]} == {("embeddings",)}
+    assert {row["model_type"] for row in manifest["models"]} == {"embedding", "rerank"}
+    assert {tuple(row["endpoints"]) for row in manifest["models"]} == {("embeddings",), ("rerank",)}
+    rerank = next(row for row in manifest["models"] if row["model_type"] == "rerank")
+    assert rerank["input_token_price_per_m"] == 20_000
+    assert rerank["output_token_price_per_m"] == 0
+    assert rerank["upstream_id"] == "jina-reranker-v3"
 
 
 def test_blocked_providers_remain_public_but_have_no_routes(client: TestClient) -> None:
