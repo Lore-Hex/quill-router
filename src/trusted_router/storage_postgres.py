@@ -594,6 +594,10 @@ def _video_due_id(job: VideoJob) -> str:
     return f"{job.next_poll_at}#{job.id}"
 
 
+#: Statement bound for the best-effort starter-session gate (services/starter_session_gate.py).
+STARTER_SESSION_STATEMENT_MS = 500
+
+
 class PostgresStore(OperationalAnalyticsReads):
     """Psycopg-backed Store implementation for the first portability increment."""
 
@@ -3220,6 +3224,10 @@ class PostgresStore(OperationalAnalyticsReads):
         self, session_key: str, workspace_id: str, *, now: int, window_seconds: int, record: bool = True,
     ) -> str | None:
         def peek(conn: Any) -> str | None:
+            # Best-effort gate read on the authorize path: never wait long.
+            if self._supports_statement_timeout:
+                # Integer milliseconds: pgadapter rejects the quoted unit forms.
+                conn.execute(f"SET LOCAL statement_timeout = {STARTER_SESSION_STATEMENT_MS}")
             current = self._read_entity_tx(conn, STARTER_SESSION_KIND, session_key, dict)
             return starter_session_holder(current, workspace_id, now=now, window_seconds=window_seconds)
 
@@ -3227,6 +3235,9 @@ class PostgresStore(OperationalAnalyticsReads):
             return self._run_transaction(peek)
 
         def txn(conn: Any) -> str | None:
+            if self._supports_statement_timeout:
+                # Integer milliseconds: pgadapter rejects the quoted unit forms.
+                conn.execute(f"SET LOCAL statement_timeout = {STARTER_SESSION_STATEMENT_MS}")
             # Seed the row before locking it: FOR UPDATE cannot lock an absent
             # row under READ COMMITTED, so two first claimers would both win.
             self._insert_entity_once_tx(

@@ -29,7 +29,14 @@ errors fail open in both: the gate must never take authorize down. Each step's
 store calls run under their own ``GATE_RPC_SECONDS`` Spanner deadline, nested in
 the request's shared one, so a slow gate read can never spend the time the
 billing reservation needs; the gate is skipped when less than
-``GATE_MIN_REMAINING_SECONDS`` of the shared budget is left.
+``GATE_MIN_REMAINING_SECONDS`` of the shared budget is left. On Postgres the
+claim's statements carry their own ``statement_timeout``.
+
+Claims are small entities written only for distinctive sessions of
+never-funded workspaces under 14 days old, so they grow with new free signups
+(tens a day), not with traffic. They carry no TTL yet: ``tr_entities``' row
+deletion policy covers ``rate_limit`` only, and extending it is a schema
+migration (scripts/deploy/migrate_entity_ttl.sh).
 
 Known limits, each costing a farmer at most a request or two:
 
@@ -127,6 +134,12 @@ def _gate_deadline() -> Iterator[None]:
         raise _BudgetTooLow
     with spanner_rpc_deadline(time.monotonic() + GATE_RPC_SECONDS):
         yield
+
+
+def bounded(fn: Any) -> Any:
+    """Run one optional gate read under the gate's own deadline; raises on failure."""
+    with _gate_deadline():
+        return fn()
 
 
 def session_key(session_id: str) -> str:

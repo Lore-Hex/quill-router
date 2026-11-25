@@ -365,3 +365,31 @@ def test_the_gate_steps_aside_when_the_budget_is_nearly_spent() -> None:
         )
     assert decision == starter_session_gate.EXEMPT
     assert store.seen == []
+
+
+def test_the_replay_lookup_runs_under_the_gate_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+    from types import SimpleNamespace
+
+    from trusted_router.routes.internal import gateway
+    from trusted_router.storage_gcp_io import shared_rpc_budget_remaining, spanner_rpc_deadline
+
+    monkeypatch.setattr(
+        starter_session_gate, "check",
+        lambda *args, **kwargs: starter_session_gate.GateDecision(holder="ws-holder"),
+    )
+    seen: list[float | None] = []
+
+    def lookup() -> bool:
+        seen.append(shared_rpc_budget_remaining())
+        return True
+
+    with spanner_rpc_deadline(time.monotonic() + 20):
+        decision = gateway._starter_session_gate(
+            SimpleNamespace(state=SimpleNamespace(request_id="r")), SimpleNamespace(id="ws-new"),  # type: ignore[arg-type]
+            SESSION, Settings(environment="test"), has_existing_authorization=lookup,
+        )
+        after = shared_rpc_budget_remaining()
+    assert decision == starter_session_gate.EXEMPT
+    assert seen[0] is not None and seen[0] <= starter_session_gate.GATE_RPC_SECONDS
+    assert after is not None and after > 19

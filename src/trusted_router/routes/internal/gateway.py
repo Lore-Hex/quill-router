@@ -1075,7 +1075,8 @@ def _starter_session_gate(
     if decision.holder is None:
         return decision
     try:
-        if has_existing_authorization():
+        # Under the gate's own short deadline: billing keeps its budget.
+        if starter_session_gate.bounded(has_existing_authorization):
             return starter_session_gate.EXEMPT
     except Exception:  # noqa: BLE001 - fail open: this may be a retry of an admitted request
         logger.warning("billing.starter_session_replay_check_failed workspace_id=%s", _log_value(workspace.id))
