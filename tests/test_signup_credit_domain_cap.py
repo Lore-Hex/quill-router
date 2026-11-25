@@ -89,6 +89,17 @@ def _credit_for(store: Any, email: str, *, limit: int | None, credit: int = CRED
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
+def test_new_default_does_not_replace_or_repeat_a_historical_grant(backend: str) -> None:
+    store = BACKENDS[backend]()
+    current = Settings(environment="test").signup_trial_credit_microdollars
+    old_email, new_email = "old@gmail.com", "new@gmail.com"
+    assert _credit_for(store, old_email, limit=None, credit=300_000) == 300_000
+    assert _credit_for(store, new_email, limit=None, credit=current) == 30_000
+    assert _credit_for(store, old_email, limit=None, credit=current) == 300_000
+    assert _credit_for(store, new_email, limit=None, credit=current) == 30_000
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_only_first_accounts_on_a_domain_get_credit(backend: str) -> None:
     store = BACKENDS[backend]()
     credits = [_credit_for(store, f"u{i}@Corp.Example", limit=3) for i in range(5)]
