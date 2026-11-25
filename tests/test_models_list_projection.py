@@ -40,6 +40,7 @@ def _rebuilt_pre_projection_body() -> bytes:
     last_changes = catalog_routes.last_route_changes(
         catalog_routes.timestamp(catalog_routes._utc_now())
     )
+    retired = catalog_routes._models_with_a_retired_route()
     for model in catalog_routes.MODELS.values():
         if MODEL_LISTING_ALIASES.get(model.id) in catalog_routes.MODELS:
             continue
@@ -47,8 +48,10 @@ def _rebuilt_pre_projection_body() -> bytes:
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
             continue
-        if isinstance(trustedrouter, dict) and not (
-            trustedrouter.get("prepaid_available") or trustedrouter.get("byok_available")
+        if (
+            isinstance(trustedrouter, dict)
+            and not (trustedrouter.get("prepaid_available") or trustedrouter.get("byok_available"))
+            and model.id not in retired
         ):
             continue
         if isinstance(trustedrouter, dict):
