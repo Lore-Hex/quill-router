@@ -1481,6 +1481,14 @@ class InMemoryStore:
             user.github_account_created_at = account_created_at
             return user
 
+    def set_user_paypal_payer_match(self, user_id: str, matches: bool) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            user.paypal_payer_email_matches = matches
+            return user
+
     def clear_user_phone(self, user_id: str) -> User | None:
         with self._lock:
             user = self.users.get(user_id)

@@ -568,6 +568,79 @@ FORMAT JSON
         )
         return [str(row["workspace_id"]) for row in rows]
 
+    def shared_client_sessions(
+        self, *, start_at: str, min_workspaces: int, limit: int,
+    ) -> list[dict[str, Any]]:
+        """Client session ids seen in at least ``min_workspaces`` workspaces.
+
+        Abuse tripwire input: one conversation carried across accounts is an
+        operator hopping workspaces. Only workspace ids, the session id, the
+        most common app name and first/last times leave ClickHouse.
+        """
+        return self._query(
+            """
+SELECT
+  session_id,
+  arraySort(groupUniqArray(64)(workspace_id)) AS workspace_ids,
+  uniqExact(workspace_id) AS workspaces,
+  topK(1)(app)[1] AS app,
+  min(created_at) AS first_seen,
+  max(created_at) AS last_seen
+FROM activity_generations
+WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  AND session_id IS NOT NULL AND session_id != ''
+  AND workspace_id != ''
+GROUP BY session_id
+HAVING workspaces >= {min_workspaces:UInt32}
+ORDER BY last_seen DESC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+            params={"start_at": start_at, "min_workspaces": max(2, min_workspaces), "limit": max(1, limit)},
+        )
+
+    def concentrated_model_spend(
+        self, *, start_at: str, min_total_microdollars: int, min_share_basis_points: int, limit: int,
+    ) -> list[dict[str, Any]]:
+        """Workspaces whose Credits spend since ``start_at`` is concentrated on one model.
+
+        Abuse tripwire input (the generalised ``models_used = 1`` check): at
+        least ``min_total_microdollars`` spent, with at least
+        ``min_share_basis_points`` of it on the single most-used model.
+        """
+        return self._query(
+            """
+SELECT
+  workspace_id,
+  sum(cost) AS total_microdollars,
+  argMax(model, cost) AS top_model,
+  max(cost) AS top_model_microdollars,
+  count() AS models,
+  topK(1)(top_app)[1] AS app
+FROM
+(
+  SELECT workspace_id, model, sum(total_cost_microdollars) AS cost, topK(1)(app)[1] AS top_app
+  FROM activity_generations FINAL
+  WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+    AND workspace_id != ''
+    AND usage_type = 'Credits'
+  GROUP BY workspace_id, model
+)
+GROUP BY workspace_id
+HAVING total_microdollars >= {min_total:Int64}
+  AND top_model_microdollars * 10000 >= total_microdollars * {min_share_bp:UInt32}
+ORDER BY total_microdollars DESC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+            params={
+                "start_at": start_at,
+                "min_total": max(1, min_total_microdollars),
+                "min_share_bp": min(10_000, max(1, min_share_basis_points)),
+                "limit": max(1, limit),
+            },
+        )
+
     def activity_generations(
         self,
         *,
