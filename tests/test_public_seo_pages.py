@@ -2421,13 +2421,13 @@ def test_free_llm_api_price_claims_follow_the_live_table(
     ]
     monkeypatch.setattr(dashboard, "free_llm_api_models", lambda: rows)
     body = client.get("/free-llm-api").text
+    # The phone header line never quotes a price, whatever the table says.
+    assert "Up to 1 million free tokens. No card required." in body
+    assert "then models from" not in body
     assert "1¢ per million tokens through" not in body
-    assert "then models from 1¢" not in body
     if expected is None:
         assert "models start at" not in body
-        assert "then models from" not in body
         assert "Cheapest models today" not in body
     else:
         assert f"models start at {expected} per million tokens" in body
-        assert f"then models from {expected} per million" in body
         assert f"cheapest models cost {expected} per million tokens" in body

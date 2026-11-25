@@ -3,7 +3,6 @@
 {% block body_attributes %}class="router-guide-page free-llm-api-page"{% endblock %}
 {# The page sentence already names the free tokens and no card. #}
 {% block hero_free_note %}{% endblock %}
-{% block header_short %}{% if free_api_floor %}Up to 1 million free tokens, then models from {{ free_api_floor }} per million.{% else %}{{ super() }}{% endif %}{% endblock %}
 {% block body %}
 <section class="guide-section" id="start" aria-labelledby="free-start">
   <h2 id="free-start">Get a free API key</h2>
