@@ -16,6 +16,9 @@ on:
       track_main:
         type: boolean
         default: false
+      emergency_incident:
+        type: string
+        default: ""
 
 # Active production work is never interrupted. Retain prepared runs even when
 # preparation finishes out of commit order; admission selects a green successor.
@@ -70,6 +73,7 @@ jobs:
     outputs:
       sha: ${{ steps.verify.outputs.sha }}
       image: ${{ steps.verify.outputs.image }}
+      source: ${{ steps.verify.outputs.source }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify prepared immutable release identity
@@ -77,8 +81,14 @@ jobs:
         env:
           PREPARED_SHA: ${{ inputs.sha }}
           PREPARED_IMAGE: ${{ inputs.image }}
+          EMERGENCY_INCIDENT: ${{ inputs.emergency_incident }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ -n "${EMERGENCY_INCIDENT:-}" ]; then
+            python3 -m scripts.deploy.release_train incident-preflight
+            exit 0
+          fi
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || exit 1
           [[ "$(git rev-parse --short HEAD)" == "$PREPARED_SHA" ]] || exit 1
           [[ "$PREPARED_IMAGE" =~ ^us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/trusted-router@sha256:[a-f0-9]{64}$ ]] || exit 1
@@ -106,7 +116,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: scripts/deploy/superseded_deploy.py
+          sparse-checkout: |
+            scripts/deploy/superseded_deploy.py
+            scripts/deploy/release_train.py
           sparse-checkout-cone-mode: false
       - name: Confirm this release is still eligible on main
         id: current
@@ -118,6 +130,11 @@ jobs:
             exit 0
           fi
           latest_sha="$(python3 scripts/deploy/superseded_deploy.py --mode main-head --repo "${GITHUB_REPOSITORY}")"
+          if python3 -m scripts.deploy.release_train yield-to-incident --head "$latest_sha"; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Yielding before cloud admission to a verified, queued incident promotion."
+            exit 0
+          fi
           if [ "${latest_sha}" = "${GITHUB_SHA}" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "${GITHUB_SHA} is still current main"
@@ -180,8 +197,10 @@ jobs:
       proceed: ${{ steps.train.outputs.proceed }}
     env:
       GH_TOKEN: ${{ github.token }}
-      PREPARED_TAG: ${{ inputs.sha }}
-      PREPARED_IMAGE: ${{ inputs.image }}
+      PREPARED_TAG: ${{ needs.build-image.outputs.sha }}
+      PREPARED_IMAGE: ${{ needs.build-image.outputs.image }}
+      EMERGENCY_INCIDENT: ${{ inputs.emergency_incident }}
+      INCIDENT_SOURCE: ${{ needs.build-image.outputs.source }}
       TR_TRAIN_HOTFIX: ${{ inputs.hotfix == true }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -444,6 +463,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_COMMIT: ${{ needs.select-release.outputs.commit }}
+      EMERGENCY_INCIDENT: ${{ inputs.emergency_incident }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -454,7 +474,7 @@ jobs:
         id: ancestry
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "push" ] && [ "${{ inputs.track_main }}" != "true" ]; then
+          if [ -z "${EMERGENCY_INCIDENT:-}" ] && [ "${{ github.event_name }}" != "push" ] && [ "${{ inputs.track_main }}" != "true" ]; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
             echo "manual dispatch: deploying requested revision ${RELEASE_COMMIT}"
             exit 0

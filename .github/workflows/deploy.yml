@@ -23,7 +23,7 @@
 # gate (same rationale as skipping the synthetic watchdog).
 
 name: Deploy TR control plane
-run-name: ${{ inputs.track_main == true && format('Deploy latest main {0}', github.sha) || format('Deploy revision {0}', github.sha) }}
+run-name: ${{ inputs.emergency_incident != '' && format('Emergency main {0}', github.sha) || inputs.track_main == true && format('Deploy latest main {0}', github.sha) || format('Deploy revision {0}', github.sha) }}
 
 on:
   push:
@@ -54,6 +54,10 @@ on:
         description: "Skip synthetic-watchdog + CI-green gating (ship aggressively when prod is sick)"
         type: boolean
         default: false
+      emergency_incident:
+        description: "Prioritize green main; reuse its push build when available (incident ID, e.g. INC-123)"
+        type: string
+        default: ""
 
 # Build and validate outside the serialized production workflow.
 
@@ -69,11 +73,25 @@ jobs:
     outputs:
       public_docs: ${{ steps.scope.outputs.public_docs }}
     steps:
+      - name: Validate incident promotion
+        if: inputs.emergency_incident != ''
+        env:
+          INCIDENT: ${{ inputs.emergency_incident }}
+          ALLOWED: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !inputs.hotfix && !inputs.track_main && !inputs.website_only }}
+        run: |
+          set -eu
+          if [[ "$ALLOWED" != true || ! "$INCIDENT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo "::error::Emergency promotion requires main, a short incident ID and no other mode flags."
+            exit 1
+          fi
+          printf 'Emergency promotion: %s, requested by %s for %s\n' "$INCIDENT" "$GITHUB_ACTOR" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: inputs.emergency_incident == ''
         with:
           fetch-depth: 2
       - name: Check eligibility for website-only publication
         id: scope
+        if: inputs.emergency_incident == ''
         env:
           AUTOMATIC: ${{ github.event_name == 'push' && inputs.hotfix != true }}
           WEBSITE_ONLY: ${{ inputs.website_only == true }}
@@ -172,7 +190,9 @@ jobs:
 
   build-image:
     if: >-
-      github.repository == 'Lore-Hex/quill-router' && (inputs.website_only != true ||
+      github.repository == 'Lore-Hex/quill-router' && (inputs.emergency_incident == '' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !inputs.hotfix && !inputs.track_main && !inputs.website_only)) &&
+      (inputs.website_only != true ||
       (github.ref == 'refs/heads/main' && inputs.hotfix != true && inputs.track_main != true))
     runs-on: ubuntu-latest
     outputs:
@@ -184,9 +204,23 @@ jobs:
       REPO: trusted-router
       SERVICE: trusted-router
     steps:
+      - name: Is a normal build already preparing this incident revision?
+        id: reuse
+        if: inputs.emergency_incident != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=main&event=push&head_sha=$GITHUB_SHA&per_page=2" --jq .total_count)
+          case "$count" in
+            0) echo "No normal push build; building the exact dispatch commit." ;;
+            1) echo "reuse=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Ambiguous push build evidence"; exit 1 ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
+        if: steps.reuse.outputs.reuse != 'true'
       - name: Set image ref from commit SHA
+        if: steps.reuse.outputs.reuse != 'true'
         id: set-vars
         run: |
           SHA="$(git rev-parse --short HEAD)"
@@ -197,15 +231,18 @@ jobs:
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
       - name: Authenticate to GCP via WIF
+        if: steps.reuse.outputs.reuse != 'true'
         uses: Lore-Hex/quill-router/.github/actions/gcp-auth@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
+        if: steps.reuse.outputs.reuse != 'true'
         uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
 
       - name: Build image via Cloud Build
+        if: steps.reuse.outputs.reuse != 'true'
         id: build
         # Use an explicit build config instead of `gcloud builds submit
         # --tag`: the shorthand forces Docker `--no-cache`, which made
@@ -278,12 +315,14 @@ jobs:
           echo "image=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}@${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Record immutable prepared release
+        if: steps.reuse.outputs.reuse != 'true'
         env:
           PREPARED_TAG: ${{ steps.set-vars.outputs.sha }}
           PREPARED_IMAGE: ${{ steps.build.outputs.image }}
         run: python3 -m scripts.deploy.release_train prepare
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.reuse.outputs.reuse != 'true'
         with:
           name: prepared-release-${{ github.run_attempt }}
           path: release.json
@@ -302,9 +341,9 @@ jobs:
   rollout:
     needs: [gate-on-ci, build-image, scope, public-docs]
     if: >-
-      ${{ always() && !cancelled() && inputs.website_only != true && needs.gate-on-ci.result == 'success' &&
-          needs.build-image.result == 'success' && needs.scope.result == 'success' &&
-          ((needs.scope.outputs.public_docs == 'false' && needs.public-docs.result == 'skipped') ||
+      ${{ always() && !cancelled() && inputs.website_only != true && needs.scope.result == 'success' &&
+          needs.gate-on-ci.result == 'success' && needs.build-image.result == 'success' &&
+          (((inputs.emergency_incident != '' || needs.scope.outputs.public_docs == 'false') && needs.public-docs.result == 'skipped') ||
            (needs.public-docs.result == 'success' && needs.public-docs.outputs.full_rollout == 'true')) }}
     uses: ./.github/workflows/deploy-production.yml
     with:
@@ -312,4 +351,5 @@ jobs:
       image: ${{ needs.build-image.outputs.image }}
       hotfix: ${{ inputs.hotfix == true }}
       track_main: ${{ inputs.track_main == true }}
+      emergency_incident: ${{ inputs.emergency_incident || '' }}
     secrets: inherit

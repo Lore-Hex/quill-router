@@ -504,6 +504,7 @@ def test_an_unreadable_main_head_fails_the_step_without_writing_a_decision(
 
     def step(stub: str) -> tuple[int, str]:
         script = (run.replace(lookup, stub)
+                  .replace('python3 -m scripts.deploy.release_train yield-to-incident --head "$latest_sha"', "false")
                   .replace("${{ github.event_name }}", "push").replace("${{ inputs.track_main }}", "true"))
         assert "${{" not in script
         output = tmp_path / "github_output"
@@ -717,12 +718,14 @@ def test_the_workflow_asks_the_script_before_skipping() -> None:
     job = _workflow()["jobs"]["confirm-current-main"]
     checkout = job["steps"][0]
     assert checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-    assert checkout["with"]["sparse-checkout"] == "scripts/deploy/superseded_deploy.py"
+    assert set(checkout["with"]["sparse-checkout"].splitlines()) == {
+        "scripts/deploy/superseded_deploy.py", "scripts/deploy/release_train.py"}
     run = job["steps"][1]["run"]
     head = run.index("python3 scripts/deploy/superseded_deploy.py --mode main-head")
     current = run.index('if [ "${latest_sha}" = "${GITHUB_SHA}" ]')
     script = run.index("python3 scripts/deploy/superseded_deploy.py", current)
-    skip = run.index('echo "proceed=false" >> "$GITHUB_OUTPUT"')
+    skip = run.index('echo "proceed=false" >> "$GITHUB_OUTPUT"', script)
+    assert head < run.index("yield-to-incident") < current
     assert head < current < script < skip
     assert '--base "${GITHUB_SHA}" --head "${latest_sha}"' in run
 
@@ -920,7 +923,8 @@ def test_follow_main_dispatch_is_explicit_and_defaults_to_pinned_manual():
         assert setting["type"] == "boolean" and setting["default"] is False
     assert entry["jobs"]["rollout"]["with"]["track_main"] == "${{ inputs.track_main == true }}"
     assert entry["run-name"] == (
-        "${{ inputs.track_main == true && format('Deploy latest main {0}', github.sha) "
+        "${{ inputs.emergency_incident != '' && format('Emergency main {0}', github.sha) "
+        "|| inputs.track_main == true && format('Deploy latest main {0}', github.sha) "
         "|| format('Deploy revision {0}', github.sha) }}"
     )
 

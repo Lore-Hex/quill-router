@@ -1,5 +1,37 @@
 # CI and production rollout latency
 
+## Emergency GCP control-plane release
+
+Merge the fix to `main`. From this repository:
+
+```sh
+python3 -m scripts.deploy.release_train incident-plan   # optional, read-only
+gh workflow run deploy.yml --ref main -f emergency_incident=INC-123
+```
+
+Use the actual incident ID. In Actions, choose **Deploy TR control plane → Run workflow**,
+select **main**, fill in **emergency_incident**, and leave the other options off.
+Follow the **Emergency main** run. Do not include customer information in the ID.
+
+This is a forward release of the exact main revision captured at dispatch, not a restart
+or a downgrade. It reuses the normal push's immutable image. When that commit never
+triggered a push build, the incident run builds it using the same Cloud Build job.
+Missing evidence from an existing build, a failed source release, or non-green CI
+does not authorize using a different image. If main advances before selection, inspect
+the new head and dispatch again. Selection rechecks the digest, source run/attempt
+and CI under the production reservation. The selected-release receipt records the
+incident, controller, source build, digest and CI run.
+
+Once the incident is ready and queued, **waiting automatic releases yield before taking
+the cloud reservation**. Active rollouts, pinned manual releases, website publications,
+and other clouds' reservations are not interrupted. Expect queue time if one is active;
+there is no guaranteed incident-to-serving time. Normal canaries, rollback protection,
+billing checks, migrations, drains and regional verification all still run. Look for
+the primary traffic ramp to see **first traffic**; all-region completion is later.
+
+This is not the legacy `hotfix=true` override, an enclave release, or an AWS/Azure deploy.
+Don't use it to test an outage on production: the plan command never dispatches or writes.
+
 ## November 25: publish analytics snapshots alongside primary rollout
 
 The last step of the schema job was an analytics worker upload, not a schema
