@@ -316,6 +316,7 @@
       "status": 1,
       "id": "openai/gpt-oss-120b",
       "upstream_id": "openai/gpt-oss-120b",
+      "retirement_at": "2026-12-09T00:00:00Z",
       "features": [
         "serverless"
       ],
