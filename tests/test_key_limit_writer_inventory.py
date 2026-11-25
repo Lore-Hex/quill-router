@@ -356,6 +356,16 @@ KEY_LIMIT_WRITERS: dict[tuple[str, str, str], str] = {
     ("sql.dynamic", "clickhouse/ingest_operational_outbox.py", "ClickHouseOperationalWriter.insert"): (
         "ClickHouse tables"
     ),
+    # Round 17: a write with a part not known is dynamic SQL in any scope.
+    # Both name their table, never tr_key_limit; only a column or parameter
+    # list is built at run time (a method's result, a generator).
+    ("sql.dynamic", "src/trusted_router/storage_postgres.py", "PostgresStore.record_workspace_abuse_and_demote.txn"): (
+        "an INSERT into tr_trust_event, its column list from _trust_event_select()"
+    ),
+    ("sql.dynamic", "src/trusted_router/storage_trust_reconciliation.py",
+     "SpannerTrustReconciliationRepository.save_marker.txn"): (
+        "an INSERT into tr_trust_backfill, its parameter list a generator over MARKER_COLUMNS"
+    ),
     ("sql.dynamic", "clickhouse/ingest_outbox.py", "ClickHouseWriter.insert"): "ClickHouse tables",
     ("sql.dynamic", "clickhouse/refresh_workspace_directory.py", "ClickHouseDirectoryWriter._insert"): (
         "ClickHouse tables"
@@ -501,9 +511,11 @@ KEY_LIMIT_FORMS = [
     # Review round 7: SQL the scanner cannot resolve to literals.
     ("augmented SQL", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'\n    sql += ', day_limit_micro=1'\n"
      "    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
+    # (Round 17: a loop's target is not rendered, so the predicate is a part
+    # not known and the statement, naming the table, fails closed.)
     ("augmented SQL, predicates only", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0 WHERE key_hash=%s'\n"
      "    for p in ('day', 'week'):\n        sql += f' AND {p}_usage >= 0'\n    c.execute(sql)\n",
-     {("key_limit.sql", "f"): False}),
+     {("key_limit.sql", "f"): True}),
     ("augmented SQL from an argument", "def f(c, sql):\n    sql += ' WHERE key_hash = %s'\n"
      "    c.execute('UPDATE tr_key_limit SET reserved = 0')\n    c.execute(sql)\n", {("key_limit.sql", "f"): True}),
     ("str.replace SQL", "def f(c):\n    sql = 'UPDATE tr_key_limit SET reserved=0'.replace('reserved=0', "
@@ -884,10 +896,12 @@ KEY_LIMIT_FORMS = [
     ("given to a followed helper that changes it", "def run_all(c, statements):\n    for q in statements:\n"
      "        c.execute(q + ', day_limit_micro=1')\ndef f(c):\n"
      "    run_all(c, (s for s in ['UPDATE tr_key_limit SET reserved=0']))\n", {("key_limit.sql", "f"): True}),
+    # (Round 17: a name bound to a list is not rendered: in a scope that
+    # names the table the batch fails closed. So is a loop's target, below.)
     ("a list literal batched", "def f(c):\n    statements = ['UPDATE tr_key_limit SET reserved=0']\n"
-     "    c.batch_update(statements)\n", {("key_limit.sql", "f"): False}),
+     "    c.batch_update(statements)\n", {("key_limit.sql", "f"): True}),
     ("statements looped over", "def f(c):\n    for q in ['UPDATE tr_key_limit SET reserved=0', "
-     "'DELETE FROM tr_key_limit WHERE key_hash=%s']:\n        c.execute(q)\n", {("key_limit.sql", "f"): False}),
+     "'DELETE FROM tr_key_limit WHERE key_hash=%s']:\n        c.execute(q)\n", {("key_limit.sql", "f"): True}),
     ("compared with a parameter, printed, looked up in a parameter", "KEY_LIMIT_TABLE = 'tr_key_limit'\n"
      "def f(table, rows):\n    if table == KEY_LIMIT_TABLE and len(KEY_LIMIT_TABLE):\n"
      "        print(KEY_LIMIT_TABLE)\n    return rows[KEY_LIMIT_TABLE]\n",
@@ -1023,9 +1037,10 @@ KEY_LIMIT_FORMS = [
     ('a comprehension over builtin text as an operand is allowed',
      "def f(c):\n    c.execute(' '.join(['UPDATE tr_key_limit SET reserved=0' + s for s in ('', ' WHERE a = 1')]))\n",
      {('key_limit.sql', 'f'): True}),
-    ('a loop over builtin text as an operand is allowed',
+    # (Round 17: a loop's target is not rendered; the statement fails closed.)
+    ('a loop over builtin text as an operand',
      "def f(c):\n    for suffix in (' WHERE a = 1', ''):\n        c.execute('UPDATE tr_key_limit SET reserved=0' + suffix)\n",
-     {('key_limit.sql', 'f'): False}),
+     {('key_limit.sql', 'f'): True}),
     ("an element of a nested container changed (the reviewer's)",
      _with(_R12_RUNNER, "def f(c):\n    boxes = [[]]\n    boxes[0].append(Runner(c))\n    boxes[0][0]['UPDATE tr_key_limit SET reserved=0']\n"),
      {('key_limit.escape', 'f'): True, ('key_limit.sql', 'f'): False}),
@@ -1343,7 +1358,7 @@ KEY_LIMIT_FORMS = [
      {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
     ("a .format precision (the reviewer's)",
      "def f(c):\n    c.execute('UPDATE {table:.12} SET day_limit_micro=1'.format(table='tr_key_limit_archive'))\n",
-     {('key_limit.sql', 'f'): True}),
+     {('sql.dynamic', 'f'): True}),  # (round 17: a spec is a part not known; the write is dynamic)
     ("rstrip with a literal argument (the reviewer's)",
      "def f(c):\n    c.execute('UPDATE ' + 'tr_key_limits'.rstrip('s') + ' SET day_limit_micro=1')\n",
      {('key_limit.sql', 'f'): True}),
@@ -1352,7 +1367,8 @@ KEY_LIMIT_FORMS = [
      {('key_limit.name', 'f'): True, ('key_limit.sql', 'f'): True}),
     ('an f-string conversion',
      "def f(c):\n    t = 'tr_key_limit'\n    c.execute(f'UPDATE {t!r} SET day_limit_micro=1')\n",
-     {('key_limit.name', 'f'): True, ('key_limit.sql', 'f'): True}),
+     # (round 17: a conversion is a part not known; the write is dynamic)
+     {('key_limit.name', 'f'): True, ('key_limit.sql', 'f'): True, ('sql.dynamic', 'f'): True}),
     ('a format spec holding a field of its own',
      "def f(c, w):\n    c.execute('UPDATE {t:{w}} SET day_limit_micro=1'.format(t='tr_key_limit_archive', w=w))\n",
      {('sql.dynamic', 'f'): True}),
@@ -1373,6 +1389,10 @@ KEY_LIMIT_FORMS = [
      {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
     ('a DML target with a part not known',
      "def f(c, rest):\n    c.execute('UPDATE tr_key_' + rest + ' SET day_limit_micro=1')\n",
+     {('sql.dynamic', 'f'): True}),
+    # (Round 17: the target rule holds for SQL text built and not run here.)
+    ('a DML target with a part not known, built and returned',
+     "def f(rest):\n    return 'UPDATE tr_key_' + rest + ' SET reserved=0'\n",
      {('sql.dynamic', 'f'): True}),
     ('a class rebound through the module object',
      "import sys\nfrom types import SimpleNamespace\nclass Runner:\n    @staticmethod\n    def probe_run(c, q):\n        c.execute(q)\nsys.modules[__name__].Runner = SimpleNamespace(probe_run=lambda c, q: c.execute(q + ', day_limit_micro=1'))\ndef f(c):\n    Runner.probe_run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
@@ -2605,9 +2625,11 @@ _ROUND_15_CONTROLS = {
     "3. a property and its setter": (
         f"ProbeRunner.probe_run(conn, {_R14_SQL})\n",
         _R15_STATIC_PROPERTY + "    @probe_prop.setter\n    @staticmethod\n    def probe_run(c, q):\n        c.execute(q)\n"),
-    "4. a precision that leaves another table's name": (
+    # (Round 17: a spec is not rendered, so a precision fails closed; the
+    # control is now a plain field naming another table.)
+    "4. a .format field naming another table": (
         "probe_truncated(conn)\n",
-        "def probe_truncated(c):\n    c.execute('UPDATE {t:.11} SET day_limit_micro=1'.format(t='tr_entities_x'))\n"),
+        "def probe_truncated(c):\n    c.execute('UPDATE {t} SET day_limit_micro=1'.format(t='tr_entities'))\n"),
     "5. rstrip leaving another table's name": (
         "probe_stripped(conn)\n",
         "def probe_stripped(c):\n    c.execute('UPDATE ' + 'tr_entitiess'.rstrip('s') + ' SET day_limit_micro=1')\n"),
@@ -2692,6 +2714,7 @@ def test_the_scanners_claim_names_tests_that_exist() -> None:
         "test_the_round_14_identity_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_14),
         "test_the_round_15_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_15),
         "test_the_round_16_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_16),
+        "test_the_round_17_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_17),
     }
     named = re.findall(r"\b(test_\w+)\b(?!\.py)(?:\[(.*?)\])?", section)
     assert len(named) >= 20
@@ -2752,13 +2775,14 @@ _ROUND_16 = {
         "def probe_built(c, rest):\n    c.execute('UPDATE tr_key_' + rest + ' SET day_limit_micro=1')\n"),
 }
 _ROUND_16_CONTROLS = {
-    "1. a %-mapping key with punctuation, another table": (
+    # (Round 17: only %s and %(name)s are rendered; the controls are those,
+    # naming another table.)
+    "1. a %(name)s field, another table": (
         "probe_built(conn)\n",
-        "def probe_built(c):\n"
-        "    c.execute('UPDATE %(table-name).11s SET day_limit_micro=1' % {'table-name': 'tr_entities_x'})\n"),
-    "2. a * width, another table": (
+        "def probe_built(c):\n    c.execute('UPDATE %(t)s SET day_limit_micro=1' % {'t': 'tr_entities'})\n"),
+    "2. %s fields, another table": (
         "probe_built(conn)\n",
-        "def probe_built(c):\n    c.execute('UPDATE %*s%s SET day_limit_micro=1' % (0, 'tr_', 'entities'))\n"),
+        "def probe_built(c):\n    c.execute('UPDATE %s%s SET day_limit_micro=1' % ('tr_', 'entities'))\n"),
     "3. 16 literal alternatives, none the table": (
         "probe_built(conn, False)\n",
         "def probe_built(c, flag):\n"  # noqa: S608 (scanned, never run)
@@ -2777,55 +2801,85 @@ def test_the_round_16_controls_are_not(tmp_path: Path, label: str) -> None:
     assert not _round_15_flagged(tmp_path, *_ROUND_16_CONTROLS[label]), label
 
 
-def _renderings(expression: str) -> list[str]:
+def _renderings(expression: str, preamble: str = "") -> list[str]:
     import ast
 
     from tests.key_limit_writers import _Index, _Module
 
-    tree = ast.parse("rendered = " + expression)
+    tree = ast.parse(preamble + ("rendered = " + expression if expression else ""))
     index = _Index([tree])
     module = _Module(Path("probe_renderings.py"), tree, index)
     index.modules = {id(tree): module}
-    statement = tree.body[0]
-    assert isinstance(statement, ast.Assign)
+    statement = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == "rendered" for t in node.targets))
     return module.texts(statement.value)
 
 
 _U = "\x00"
+# Round 17: form 2 is a small plain subset, rendered exactly; anything else
+# is a part not known, in place, the known text around it kept.
 _RENDERINGS = [
-    ("a %-mapping key of any text", "'%(a-b).3s|' % {'a-b': 'xyzw'}", ["xyz|"]),
-    ("a %-key with parentheses", "'%(a(b)).2s' % {'a(b)': 'xyz'}", ["xy"]),
-    ("an empty %-precision", "'%.s|' % 'abc'", ["|"]),
-    ("a * width consuming its argument", "'%*s%s' % (3, 'a', 'b')", ["  ab"]),
-    ("a * precision consuming its argument", "'%.*s' % (2, 'abc')", ["ab"]),
-    ("a * width not a literal", "'%*s|' % (width, 'a')", [_U + "|"]),
-    ("too few % arguments", "'%s %s' % 'a'", [_U]),
-    ("too many % arguments", "'%s' % ('a', 'b')", [_U]),
-    ("keyed and positional % fields", "'%s %(a)s' % {'a': 'x'}", [_U]),
-    ("a % key missing from the mapping", "'<%(a)s>' % {'b': 'x'}", [_U]),
-    ("a * in a keyed % field", "'<%(a)*s>' % {'a': 'x'}", [_U]),
-    ("a %-field CPython refuses", "'<%q>' % 'a'", [_U]),
-    ("a %% with a width", "'<%5%>' % ()", [_U]),
-    ("% arguments whose count is not known", "'%s<%s>' % pair", [_U + "<" + _U + ">"]),
-    ("a % precision on text not known", "'<%.2s>' % ('a' + y)", ["<" + _U + ">"]),
-    ("a % template with a part not known", "('ab' + x + 's|') % ()", ["ab" + _U, "ab" + _U + "s|"]),
-    ("%c of ints and text", "'%c%c' % (116, 'r')", ["tr"]),
-    ("a % argument that may be a tuple", "'<%s>' % values", ["<" + _U + ">"]),
-    ("a .format starred literal", "'{}{}'.format(*['a', 'b'])", ["ab"]),
-    ("a .format starred name", "'{}<{}>'.format(*parts)", [_U + "<" + _U + ">"]),
-    ("a .format ** literal", "'{x}'.format(**{'x': 'a'})", ["a"]),
-    ("automatic and manual .format numbering", "'{}{1}'.format('a', 'b')", [_U]),
-    ("a .format index past the arguments", "'<{2}>'.format('a')", [_U]),
-    ("an automatic .format field past the arguments", "'<{}{}>'.format('a')", [_U]),
-    ("a .format template with a part not known", "('ab' + x + '|').format()", ["ab" + _U, "ab" + _U + "|"]),
-    ("an automatic .format field after a part not known", "('<' + x + '{}>').format('a')",
-     ["<" + _U, "<" + _U + _U + ">"]),
-    ("a .format attribute", "'<{0.real}>'.format('a')", ["<" + _U + ">"]),
-    ("an f-string precision", "f'{\"abc\":.2}'", ["ab"]),
-    ("an f-string of a tuple", "f'<{(\"a\", \"b\")}>'", ["<" + _U + ">"]),
+    ("%s fields", "'%s-%s' % ('a', 'b')", ["a-b"]),
+    ("a %(name)s field", "'%(a)s|' % {'a': 'x'}", ["x|"]),
+    ("%% is %", "'%s%%' % ('a',)", ["a%"]),
+    ("one %s given one value", "'<%s>' % 'a'", ["<a>"]),
+    ("any other % code: the rest not known", "'UPDATE %d SET x' % (1,)", ["UPDATE " + _U]),
+    ("a % spec: the rest not known", "'<%.2s>' % ('abc',)", ["<" + _U]),
+    ("a % mapping with a spread", "'<%(t)s>' % {'t': 'a', **extra}", ["<" + _U + ">"]),
+    ("a computed % key", "'<%(t)s>' % {'t': 'a', 't' + '': 'b'}", ["<" + _U + ">"]),
+    ("a duplicate % key", "'<%(t)s>' % {'t': 'a', 't': 'b'}", ["<" + _U + ">"]),
+    ("a numeric % value", "'<%s>' % (1,)", ["<" + _U + ">"]),
+    ("a bytes % value", "'<%s>' % (b'a',)", ["<" + _U + ">"]),
+    ("% values that do not match", "'%s<%s>' % ('a',)", [_U + "<" + _U + ">"]),
+    ("a % value that may be a tuple", "'<%s>' % values", ["<" + _U + ">"]),
+    (".format automatic fields", "'{}-{}'.format('a', 'b')", ["a-b"]),
+    (".format numbered fields", "'{1}{0}'.format('a', 'b')", ["ba"]),
+    (".format named fields and escapes", "'{{x}}{n}'.format(n='a')", ["{x}a"]),
+    ("a .format spec", "'<{:.2}>'.format('abc')", ["<" + _U + ">"]),
+    ("a .format conversion", "'<{!r}>'.format('a')", ["<" + _U + ">"]),
+    ("a .format starred argument", "'<{}>'.format(*['a'])", ["<" + _U + ">"]),
+    ("a .format ** spread", "'<{x}>'.format(**{'x': 'a'})", ["<" + _U + ">"]),
+    ("a .format attribute field", "'<{0.real}>'.format('a')", ["<" + _U + ">"]),
+    ("automatic and manual .format numbering", "'<{}{0}>'.format('a')", ["<" + _U + _U + ">"]),
+    ("a numeric .format value", "'<{}>'.format(1)", ["<" + _U + ">"]),
+    ("an f-string field", "f'<{\"a\"}>'", ["<a>"]),
+    ("an f-string spec", "f'<{\"abc\":.2}>'", ["<" + _U + ">"]),
+    ("an f-string conversion", "f'<{\"a\"!r}>'", ["<" + _U + ">"]),
+    ("an f-string bytes value", "f'<{b\"a\"}>'", ["<" + _U + ">"]),
+    ("an f-string numeric value", "f'<{1}>'", ["<" + _U + ">"]),
+    ("a conditional", "('a' if flag else 'b') + '|'", ["a|", "b|"]),
     ("a str method with literal arguments", "'tr_key_limits'.rstrip('s')", ["tr_key_limit"]),
-    ("a str method with an argument not known", "'ab'.rstrip(chars)", [_U, "ab" + _U]),
+    ("join of a tuple display", "'_'.join(('a', 'b'))", ["a_b"]),
+    ("replace with a count", "'ab'.replace('a', 'c', 1)", ["ab" + _U]),
+    ("a str method with an argument not known", "'ab'.rstrip(chars)", ["ab" + _U]),
+    ("another str method", "'ab'.title()", ["ab" + _U]),
+    ("join of something not a display", "'_'.join(parts)", [_U]),
+    ("a call", "make('a')", [_U]),
+    ("a bytes literal", "b'abc'", [_U]),
+    ("a + of lists", "['a'] + ['b']", [_U]),
+    ("an automatic .format field after a part not known", "('<' + x + '{}>').format('a')", ["<" + _U + _U + ">"]),
+    ("a .format numbered field after a starred argument", "'<{1}>'.format(*pair, 'z')", ["<" + _U + ">"]),
 ]
+
+
+_R17_BOUND_33 = "".join(f"q = 'UPDATE tr_key_limit SET n{i}=1'\n" for i in range(33))  # noqa: S608 (rendered only)
+_R17_MANY = " else ".join(f"('n{i}' if flag" for i in range(31)) + " else 'n31'" + ")" * 31
+
+
+@pytest.mark.parametrize(("name", "preamble", "expression", "expected"), [
+    ("join of a name bound once to a tuple", "parts = ('a', 'b')\n", "'_'.join(parts)", ["a_b"]),
+    ("join of a name bound twice", "parts = ('a', 'b')\nparts = ('c',)\n", "'_'.join(parts)", [_U]),
+    ("join of a name bound to a list", "parts = ['a', 'b']\n", "'_'.join(parts)", [_U]),
+    ("a loop's target, not rendered", "PARTS = ('a', 'b')\ndef g():\n    for p in PARTS:\n        rendered = p + '|'\n",
+     "", [_U + "|"]),
+    ("replace past the bound", "old = 'a' if flag else 'b'\nnew = " + _R17_MANY + "\n", "'ab'.replace(old, new)",
+     ["ab" + _U]),
+    ("% renderings past the bound", "x = " + _R17_MANY + "\n", "('a%s' if flag else 'b%s') % (x,)", [_U]),
+    ("a name bound past the bound", _R17_BOUND_33, "q", ["UPDATE tr_key_limit SET n" + _U + "=1"]),  # noqa: S608
+], ids=lambda value: value if isinstance(value, str) and " " in value and "\n" not in value else None)
+def test_each_construction_with_bindings_is_rendered_whole_or_not_known(name: str, preamble: str, expression: str,
+                                                                     expected: list[str]) -> None:
+    assert _renderings(expression, preamble) == expected, name
 
 
 @pytest.mark.parametrize(("name", "expression", "expected"), _RENDERINGS, ids=[case[0] for case in _RENDERINGS])
@@ -2833,11 +2887,10 @@ def test_each_construction_is_rendered_whole_or_not_known(name: str, expression:
     assert _renderings(expression) == expected, name
 
 
-def test_a_bound_on_renderings_adds_one_standing_for_the_rest() -> None:
+def test_a_bound_on_renderings_keeps_the_known_text_around_what_varies() -> None:
     choices = " + ".join(f"('{c}' if flag else 'x{i}')" for i, c in enumerate("abcdef"))
     rendered = _renderings("'UPDATE ' + " + choices + " + ' SET day_limit_micro=1'")  # noqa: S608 (rendered only)
-    assert len(rendered) == 32
-    assert rendered[-1] == "UPDATE \x00 SET day_limit_micro=1"
+    assert rendered == ["UPDATE \x00 SET day_limit_micro=1"]
     assert len(_renderings(" + ".join(f"('{c}' if flag else 'x{i}')" for i, c in enumerate("abcde")))) == 32
 
 
@@ -2871,3 +2924,91 @@ def test_a_statement_past_the_bound_on_its_nodes_reaches_every_parameter() -> No
     module = _Module(Path("probe_long.py"), tree, index)
     index.modules = {id(tree): module}
     assert {sink.name for sink in derived_sinks(module).get("run", [])} >= {"q"}
+
+
+# Review round 17: form 2 shrunk to a plain subset. The round-16 reviewer's
+# four items: a % mapping overwritten by a spread or a computed key, a
+# numeric branch among alternatives, a bytes value, and a str method past
+# the bound. Each is now a part not known, the known DML kept, so the write
+# is dynamic SQL; each control is the subset naming another table.
+_R17_NEW = " else ".join(f"('a{i}' if flag" for i in range(31)) + " else 'limit'" + ")" * 31
+_ROUND_17 = {
+    "1. a % mapping overwritten by a spread (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    c.execute('UPDATE tr_%(t)s SET day_limit_micro=1' % {'t': 'archive', **{'t': 'key_limit'}})\n"),
+    "1. a % mapping overwritten by a computed key": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    c.execute('UPDATE tr_%(t)s SET day_limit_micro=1' % {'t': 'archive', 't' + '': 'key_limit'})\n"),
+    "2. a numeric branch given to %c (the reviewer's)": (
+        "probe_built(conn, True)\n",
+        "def probe_built(c, flag):\n    v = 116 if flag else 'x'\n"
+        "    c.execute('UPDATE %cr_key_limit SET day_limit_micro=1' % v)\n"),
+    "2. a numeric branch in an f-string": (
+        "probe_built(conn, True)\n",
+        "def probe_built(c, flag):\n    v = 7 if flag else 'x'\n"
+        "    c.execute(f'UPDATE {v}r_key_limit SET day_limit_micro=1'.replace('7', 't'))\n"),
+    "3. a bytes value in an f-string (the reviewer's)": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n"
+        "    c.execute(f\"UPDATE {b'r_key_limit'} SET day_limit_micro=1\".replace(\"b'\", 't').replace(\"'\", ''))\n"),
+    "4. replace past the bound (the reviewer's)": (
+        "probe_built(conn, False)\n",
+        "def probe_built(c, flag):\n    old = 'tr' if flag else 'x'\n    new = " + _R17_NEW + "\n"  # noqa: S608
+        "    c.execute('UPDATE tr_key_x SET day_limit_micro=1'.replace(old, new))\n"),
+}
+_ROUND_17_CONTROLS = {
+    "1. a % mapping, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute('UPDATE tr_%(t)s SET day_limit_micro=1' % {'t': 'entities'})\n"),
+    "2. str alternatives in an f-string, another table": (
+        "probe_built(conn, True)\n",
+        "def probe_built(c, flag):\n    v = 'tr_entities' if flag else 'tr_other'\n"
+        "    c.execute(f'UPDATE {v} SET day_limit_micro=1')\n"),
+    "3. a str value in an f-string, another table": (
+        "probe_built(conn)\n",
+        "def probe_built(c):\n    c.execute(f\"UPDATE {'tr_entities'} SET day_limit_micro=1\")\n"),
+    "4. replace under the bound, another table": (
+        "probe_built(conn, False)\n",
+        "def probe_built(c, flag):\n    old = 'x' if flag else 'y'\n    new = 'entities' if flag else 'other'\n"
+        "    c.execute('UPDATE tr_x SET day_limit_micro=1'.replace(old, new))\n"),
+}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_17))
+def test_the_round_17_forms_injected_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    assert _round_15_flagged(tmp_path, *_ROUND_17[label]), label
+
+
+@pytest.mark.parametrize("label", list(_ROUND_17_CONTROLS))
+def test_the_round_17_controls_are_not(tmp_path: Path, label: str) -> None:
+    assert not _round_15_flagged(tmp_path, *_ROUND_17_CONTROLS[label]), label
+
+
+def test_a_sequence_found_through_a_cycle_is_kept_for_every_name_on_it() -> None:
+    """Round 17: _is_sequence is memoized, and a False decided while a
+    cycle was cut is not kept unless the outermost call is False too."""
+    import ast
+
+    from tests.key_limit_writers import _Index, _Module
+
+    tree = ast.parse("a = b\nb = a\nb = ('t',)\nc = d\nd = c\n")
+    index = _Index([tree])
+    module = _Module(Path("probe_cycle.py"), tree, index)
+    index.modules = {id(tree): module}
+    b_in_a, a_in_b, _tuple, d_in_c, c_in_d = (statement.value for statement in tree.body)  # type: ignore[attr-defined]
+    assert module._is_sequence(b_in_a)
+    assert module._is_sequence(a_in_b)  # decided under the cut while b_in_a was
+    assert not module._is_sequence(d_in_c)
+    assert not module._is_sequence(c_in_d)
+
+
+def test_a_write_with_a_part_not_known_is_dynamic_in_any_scope(tmp_path: Path) -> None:
+    """Round 17: a statement holding a part not known whose known text has a
+    write verb is dynamic SQL wherever it runs, its known DML kept."""
+    source = ("def f(c, extra):\n    c.execute('UPDATE tr_other SET a = 1' + extra.title())\n"
+              "def g(c, cols):\n    c.execute('INSERT INTO tr_other (' + cols.upper() + ') VALUES (1)')\n"
+              "def h(c, where):\n    c.execute('SELECT a FROM tr_other WHERE ' + where)\n")
+    assert _scan_sample(tmp_path, "probe_dynamic.py", source) == {
+        ("sql.dynamic", "f"): True, ("sql.dynamic", "g"): True}

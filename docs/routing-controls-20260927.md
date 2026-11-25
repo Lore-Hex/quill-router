@@ -118,10 +118,15 @@ that file; the scanner's docstring names the cases, and a test checks that
 each named case exists:
 
 1. direct SQL in a scope, its columns read by a small grammar;
-2. SQL built from literal parts: concatenation, f-strings, `format` and `%`
-   (format specs and conversions applied), and str methods with literal
-   arguments; a field not understood whole, or a bound on the number of
-   renderings, makes that part not known rather than literal text;
+2. SQL built from literal parts, in a small plain subset rendered exactly:
+   str literals and names bound only to them, conditional expressions of
+   them, `+`, f-string and `format`/`%` fields that
+   are exactly `{}`, `{name}`, `{0}`, `%s` or `%(name)s` (no spec, no
+   conversion, str values only), and `join`, `replace`, the strip family,
+   `removeprefix`/`removesuffix` and `upper`/`lower` with str-literal
+   arguments. Everything else is a part not known, the known text around it
+   kept, and a statement run with a part not known whose known text has a
+   write verb is dynamic SQL in any scope;
 3. names, and containers made in the same function, holding the SQL;
 4. augmented assignment;
 5. helpers of the same module, when the callee is the helper by every
@@ -147,8 +152,9 @@ those are code review's job. What it does not model is listed in the
 scanner's docstring and left to code review: user-defined special-method
 adapters it does not see meet the text, namespaces and frames reached from
 another module, callees taken for executors by their names, code outside
-the scan, and SQL whose table or limit column arrives from another module
-or from data at run time.
+the scan, SQL whose table or limit column arrives from another module
+or from data at run time, and a statement whose known text has no write
+verb made into a write by a part not known.
 
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the
