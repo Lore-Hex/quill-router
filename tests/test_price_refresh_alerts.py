@@ -837,4 +837,5 @@ def test_publication_marker_only_follows_validated_output():
     marker = next(step for step in steps if step.get("name") == alerts.MARKER_STEP)
     assert marker["if"] == "steps.publication.outputs.validated == 'true'"
     assert steps.index(publication) < steps.index(marker)
-    assert publication["run"].count('echo "validated=true"') == 2
+    # No change, an exact-SHA publication, an accepted carried publication.
+    assert publication["run"].count('echo "validated=true"') == 3
