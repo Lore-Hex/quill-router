@@ -105,31 +105,49 @@ and the orphan-write replay (`scripts/deploy/replay_orphan_writes.py`) writes a
 key's records only into a target that holds no trace of the key (no api_key
 entity, no `tr_key_limit` row, no lookup or workspace-index record), so it can
 never bring back a deleted key or its credential. The writer inventory
-`tests/test_key_limit_writer_inventory.py` finds every place that names
+`tests/test_key_limit_writer_inventory.py` looks for the places that name
 `tr_key_limit` (in any case, quoting or string construction, or through a
-constant or variable) or writes a table it cannot resolve, in Python, shell,
-SQL, Terraform, YAML and the fast path's Go, fails on any one not reviewed and
-listed, and holds the writers of the limit columns to the two guarded functions
-and the documented exceptions, each pinned by a test and by a fingerprint of
-its reviewed source. In Python, text naming `tr_key_limit` may reach an
-executor only directly or through a helper of the same module that the scan
-follows. Beyond that, the scan is a best-effort regression guard for
-common code shapes, not a soundness guarantee for arbitrary Python. It
-models the data flow of that text through names, containers, augmented
-assignment, same-module helpers, method results and common builtins, and it
-counts as writing every limit column wherever it sees the text meet an
-operand, a receiver, a callee or a class it cannot prove builtin, or leave
-by any other route (another callee, a return, an attribute, a key, a
-global, a namespace read such as `locals()`, `globals()` or a frame). It
-decides what a name or callee is (a builtin, `getattr`, a plain decorator, a
-namespace reader, a same-module helper) by the name's bindings in the
-module, never by its spelling: a name any binding of which resolves to
-something else is not known, and the scan fails closed there. What
-it does not model is listed in the scanner's docstring and left to code
-review: user-defined special-method adapters it does not see meet the text,
-namespaces and frames reached from another module, callees taken for
-executors by their names, code outside the scan, and SQL whose table or
-limit column arrives from another module or from data at run time.
+constant or variable) or write a table it cannot resolve, in Python, shell,
+SQL, Terraform, YAML and the fast path's Go. It fails on any one not reviewed
+and listed, and holds the writers of the limit columns to the two guarded
+functions and the documented exceptions, each pinned by a test and by a
+fingerprint of its reviewed source.
+
+What the scan covers is an enumerated list. Each form is pinned by tests in
+that file; the scanner's docstring names the cases, and a test checks that
+each named case exists:
+
+1. direct SQL in a scope, its columns read by a small grammar;
+2. SQL built from literal parts: concatenation, f-strings, `format` and `%`
+   (format specs and conversions applied), and str methods with literal
+   arguments;
+3. names, and containers made in the same function, holding the SQL;
+4. augmented assignment;
+5. helpers of the same module, when the callee is the helper by every
+   binding;
+6. executors by name and through settled aliases, and `getattr` with a
+   literal name;
+7. Spanner mutation calls and mutation objects;
+8. batch DML;
+9. shell, SQL, YAML and Go text;
+10. the backstop: a scope holding the table, a limit column and a write;
+11. a value naming the table leaving its scope by another route (returned,
+    stored, raised, given to a callee not known to be builtin, read through
+    a namespace or frame);
+12. builtin names, `getattr`, plain decorators and namespace readers, read
+    from their bindings;
+13. reviewed exceptions, pinned by behaviour and fingerprint;
+14. this repository as it is.
+
+The scan is a regression guard for these forms and for code shaped like
+this repository's. It fails closed where it sees a value meet something it
+cannot resolve, but it makes no promise about other Python constructs:
+those are code review's job. What it does not model is listed in the
+scanner's docstring and left to code review: user-defined special-method
+adapters it does not see meet the text, namespaces and frames reached from
+another module, callees taken for executors by their names, code outside
+the scan, and SQL whose table or limit column arrives from another module
+or from data at run time.
 
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the

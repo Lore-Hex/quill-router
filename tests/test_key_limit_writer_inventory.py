@@ -1321,6 +1321,60 @@ KEY_LIMIT_FORMS = [
      "    def other():\n        payload = {}\n        payload['table'] = 'tr_other'\n        return payload\n"
      "    txn.update(**payload)\n",
      {('key_limit.name', 'f'): True, ('key_limit.escape', 'f'): True}),
+    # Review round 15: imported identities whose attribute is rebound, an
+    # executor attribute rebound, a property rebound, and format specs and str
+    # methods rendered exactly (or not known).
+    ("functools.cache rebound before an import of it (the reviewer's)",
+     "import functools\noriginal_cache = functools.cache\ndef with_limit(func):\n    def wrapped(c, q):\n        return func(c, q + ', day_limit_micro=1')\n    return wrapped\nfunctools.cache = with_limit\nfrom functools import cache as memo\nfunctools.cache = original_cache\n@memo\ndef run(c, q):\n    c.execute(q)\ndef f(c):\n    run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
+    ("builtins.len rebound before an import of it (the reviewer's)",
+     "import builtins\noriginal_len = builtins.len\ndef measured(c):\n    return lambda q: c.execute(q + ', day_limit_micro=1')\ndef f(c):\n    builtins.len = measured(c)\n    from builtins import len as size\n    builtins.len = original_len\n    size('UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): False, ('key_limit.escape', 'f'): True}),
+    ("builtins.getattr rebound before an import of it (the reviewer's)",
+     "import builtins\noriginal_getattr = builtins.getattr\ndef reader(c):\n    def read(q, name):\n        c.execute(q + ', day_limit_micro=1')\n        return lambda: None\n    return read\ndef f(c):\n    builtins.getattr = reader(c)\n    from builtins import getattr as fetch\n    builtins.getattr = original_getattr\n    fetch('UPDATE tr_key_limit SET reserved=0', 'upper')()\n",
+     {('key_limit.sql', 'f'): False, ('key_limit.escape', 'f'): True}),
+    ("an executor attribute rebound (the reviewer's)",
+     "from types import SimpleNamespace\ndef with_limit(func):\n    def wrapped(q):\n        return func(q + ', day_limit_micro=1')\n    return wrapped\ndef install(obj, c):\n    obj.send = c.execute\n    obj.send = with_limit(obj.send)\ndef f(c):\n    channel = SimpleNamespace()\n    install(channel, c)\n    channel.send('UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): False, ('key_limit.escape', 'f'): True}),
+    ("a property's name rebound, and its setter (the reviewer's)",
+     "def with_limit(func):\n    def wrapped(c, q):\n        return func(c, q + ', day_limit_micro=1')\n    return wrapped\nclass Runner:\n    @property\n    def prop(self):\n        return 0\n    def prop():\n        pass\n    prop.setter = with_limit\n    @prop.setter\n    @staticmethod\n    def run(c, q):\n        c.execute(q)\ndef f(c):\n    Runner.run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
+    ("a .format precision (the reviewer's)",
+     "def f(c):\n    c.execute('UPDATE {table:.12} SET day_limit_micro=1'.format(table='tr_key_limit_archive'))\n",
+     {('key_limit.sql', 'f'): True}),
+    ("rstrip with a literal argument (the reviewer's)",
+     "def f(c):\n    c.execute('UPDATE ' + 'tr_key_limits'.rstrip('s') + ' SET day_limit_micro=1')\n",
+     {('key_limit.sql', 'f'): True}),
+    ("rstrip with a literal argument, bound to a name (the reviewer's)",
+     "def f(c):\n    table = 'tr_key_limits'.rstrip('s')\n    c.execute(f'UPDATE {table} SET day_limit_micro=1')\n",
+     {('key_limit.name', 'f'): True, ('key_limit.sql', 'f'): True}),
+    ('an f-string conversion',
+     "def f(c):\n    t = 'tr_key_limit'\n    c.execute(f'UPDATE {t!r} SET day_limit_micro=1')\n",
+     {('key_limit.name', 'f'): True, ('key_limit.sql', 'f'): True}),
+    ('a format spec holding a field of its own',
+     "def f(c, w):\n    c.execute('UPDATE {t:{w}} SET day_limit_micro=1'.format(t='tr_key_limit_archive', w=w))\n",
+     {('sql.dynamic', 'f'): True}),
+    ('a %-format precision from an argument',
+     "def f(c, w):\n    c.execute('UPDATE %.*s SET day_limit_micro=1' % (w, 'tr_key_limit_archive'))\n",
+     {('sql.dynamic', 'f'): True}),
+    ('rstrip with an argument not known',
+     "def f(c, chars):\n    c.execute('UPDATE ' + 'tr_key_limits'.rstrip(chars) + ' SET day_limit_micro=1')\n",
+     {('sql.dynamic', 'f'): True}),
+    ('rstrip of text holding a part not known',
+     "def f(c, x):\n    c.execute('UPDATE ' + ('tr_key_limits' + x).rstrip('s') + ' SET day_limit_micro=1')\n",
+     {('sql.dynamic', 'f'): True}),
+    ('an f-string spec holding a field of its own',
+     "def f(c, w):\n    t = 'tr_key_limit_archive'\n    c.execute(f'UPDATE {t:{w}} SET day_limit_micro=1')\n",
+     {('sql.dynamic', 'f'): True}),
+    ("a property's name rebound by a plain def",
+     "class Runner:\n    @property\n    def prop(self):\n        return 0\n    def prop():\n        pass\n    @prop.setter\n    @staticmethod\n    def run(c, q):\n        c.execute(q)\ndef f(c):\n    Runner.run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
+    ('a class rebound through the module object',
+     "import sys\nfrom types import SimpleNamespace\nclass Runner:\n    @staticmethod\n    def probe_run(c, q):\n        c.execute(q)\nsys.modules[__name__].Runner = SimpleNamespace(probe_run=lambda c, q: c.execute(q + ', day_limit_micro=1'))\ndef f(c):\n    Runner.probe_run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
+    ("a property's setter rebound",
+     "def with_limit(func):\n    return lambda c, q: func(c, q + ', day_limit_micro=1')\nclass Runner:\n    @property\n    def prop(self):\n        return 0\n    prop.setter = with_limit\n    @prop.setter\n    @staticmethod\n    def run(c, q):\n        c.execute(q)\ndef f(c):\n    Runner.run(c, 'UPDATE tr_key_limit SET reserved=0')\n",
+     {('key_limit.sql', 'f'): True, ('key_limit.escape', 'f'): True}),
 ]
 
 
@@ -1351,7 +1405,7 @@ def test_reads_and_mentions_are_not_writes(tmp_path: Path, name: str, source: st
     assert _scan_sample(tmp_path, "sample.py", source) == {}, name
 
 
-@pytest.mark.parametrize(("name", "suffix", "source", "expected"), [
+TEXT_FORMS = [
     # Only a .sql file is read as SQL: DML near the table in any other text
     # (a shell argument or heredoc, YAML, Go) counts as writing every column.
     ("shell DML in an argument", ".sh",
@@ -1422,7 +1476,10 @@ def test_reads_and_mentions_are_not_writes(tmp_path: Path, name: str, source: st
     ("a table from a psql variable", ".sh", "psql -v t=tr_key_limit <<'SQL'\nUPDATE :t SET day_limit_micro=1;\nSQL\n",
      {("key_limit.text", "<file>"): True, ("sql.dynamic", "<file>"): True}),
     ("a continuation at the end of a comment", ".sh", "# tr_key_limit \\\necho ok\n", {}),
-])
+]
+
+
+@pytest.mark.parametrize(("name", "suffix", "source", "expected"), TEXT_FORMS, ids=[c[0] for c in TEXT_FORMS])
 def test_each_text_form_is_found(tmp_path: Path, name: str, suffix: str, source: str, expected: dict) -> None:
     assert _scan_sample(tmp_path, "sample" + suffix, source) == expected, name
 
@@ -2290,7 +2347,7 @@ def test_the_round_13_injections_into_a_listed_scope_are_caught(tmp_path: Path, 
 # scanner decided by a name's spelling (a helper rebound, getattr shadowed or
 # a receiver spelled builtins, a decorator imported under a plain one's name,
 # a namespace builtin imported under another name, a binding in an
-# annotation). Every identity decision now goes through one resolver
+# annotation). Those decisions now ask one resolver
 # (key_limit_writers._Identities). Each form is injected into
 # PostgresStore._release_key_hold_tx (helpers beside the module) and makes
 # the scope, or a helper it adds, a limit-column writer; each control, the
@@ -2475,3 +2532,176 @@ def test_a_namespace_reader_counts_by_any_identity_it_may_have(source: str, kind
     from tests.key_limit_writers import _Identities
 
     assert {kind for _node, kind in _Identities(ast.parse(source)).namespace_reads} == kinds
+
+
+# Review round 15: the round-14 reviewer's five items. Each form is injected
+# into PostgresStore._release_key_hold_tx, its construction in a helper
+# beside the module where the scope's own text would trip the backstop, and
+# makes the scope a limit-column writer or adds a finding in the helper (a
+# new finding the inventory fails on); each control, the same shape with the
+# identity intact or the text not naming the table, does neither.
+_R15_WITH_LIMIT = ("def probe_with_limit(func):\n    def wrapped(*args):\n"
+                   "        return func(*args[:-1], args[-1] + ', day_limit_micro=1')\n    return wrapped\n")
+_R15_STATIC_PROPERTY = ("class ProbeRunner:\n    @property\n    def probe_prop(self):\n        return 0\n")
+_ROUND_15 = {
+    "1. functools.cache rebound before it is imported under another name (the reviewer's)": (
+        f"probe_run(conn, {_R14_SQL})\n",
+        "import functools\n" + _R15_WITH_LIMIT + "probe_original = functools.cache\nfunctools.cache = probe_with_limit\n"
+        "from functools import cache as probe_memo\nfunctools.cache = probe_original\n"
+        "@probe_memo\ndef probe_run(c, q):\n    c.execute(q)\n"),
+    "1. builtins.len rebound before it is imported under another name (the reviewer's)": (
+        f"builtins.len = probe_make_len(conn)\nfrom builtins import len as probe_size\nprobe_size({_R14_SQL})\n",
+        "import builtins\n" + _R14_MAKE_LEN),
+    "1. builtins.getattr rebound before it is imported under another name (the reviewer's)": (
+        f"builtins.getattr = probe_make(conn)\nfrom builtins import getattr as probe_fetch\n"
+        f"probe_fetch({_R14_SQL}, 'upper')()\n", "import builtins\n" + _R14_MAKE),
+    "2. an executor attribute rebound (the reviewer's)": (
+        f"probe_channel = SimpleNamespace()\nprobe_install(probe_channel, conn)\nprobe_channel.probe_send({_R14_SQL})\n",
+        "from types import SimpleNamespace\n" + _R15_WITH_LIMIT + "def probe_install(obj, c):\n"
+        "    obj.probe_send = c.execute\n    obj.probe_send = probe_with_limit(obj.probe_send)\n"),
+    "3. a property's name rebound, and its setter (the reviewer's)": (
+        f"ProbeRunner.probe_run(conn, {_R14_SQL})\n",
+        _R15_WITH_LIMIT + _R15_STATIC_PROPERTY + "    def probe_prop():\n        pass\n"
+        "    probe_prop.setter = probe_with_limit\n    @probe_prop.setter\n    @staticmethod\n"
+        "    def probe_run(c, q):\n        c.execute(q)\n"),
+    "4. a .format precision (the reviewer's)": (
+        "probe_truncated(conn)\n",
+        "def probe_truncated(c):\n    c.execute('UPDATE {t:.12} SET day_limit_micro=1'.format(t='tr_key_limit_archive'))\n"),
+    "4. an f-string precision": (
+        "probe_truncated(conn)\n",
+        "def probe_truncated(c):\n    t = 'tr_key_limit_archive'\n    c.execute(f'UPDATE {t:.12} SET day_limit_micro=1')\n"),
+    "4. a %-format precision": (
+        "probe_truncated(conn)\n",
+        "def probe_truncated(c):\n    c.execute('UPDATE %.12s SET day_limit_micro=1' % 'tr_key_limit_archive')\n"),
+    "5. rstrip with a literal argument (the reviewer's)": (
+        "probe_stripped(conn)\n",
+        "def probe_stripped(c):\n    c.execute('UPDATE ' + 'tr_key_limits'.rstrip('s') + ' SET day_limit_micro=1')\n"),
+    "5. removesuffix with a literal argument": (
+        "probe_stripped(conn)\n",
+        "def probe_stripped(c):\n"
+        "    table = 'tr_key_limit_archive'.removesuffix('_archive')\n"
+        "    c.execute(f'UPDATE {table} SET day_limit_micro=1')\n"),
+    "5. replace and join with literal arguments": (
+        "probe_stripped(conn)\n",
+        "def probe_stripped(c):\n    table = '_'.join(['tr', 'key', 'lim']).replace('lim', 'limit')\n"
+        "    c.execute('UPDATE ' + table + ' SET day_limit_micro=1')\n"),
+    "5. rstrip with an argument not known": (
+        "probe_stripped(conn, 's')\n",
+        "def probe_stripped(c, chars):\n    c.execute('UPDATE ' + 'tr_key_limits'.rstrip(chars) + ' SET day_limit_micro=1')\n"),
+}
+_ROUND_15_CONTROLS = {
+    "1. another attribute of functools rebound": (
+        f"probe_run(conn, {_R14_SQL})\n",
+        "import functools\nfunctools.probe_unrelated = None\nfrom functools import cache as probe_memo\n"
+        "@probe_memo\ndef probe_run(c, q):\n    c.execute(q)\n"),
+    "2. an executor attribute bound once": (
+        f"probe_channel = SimpleNamespace()\nprobe_install(probe_channel, conn)\nprobe_channel.probe_send({_R14_SQL})\n",
+        "from types import SimpleNamespace\ndef probe_install(obj, c):\n    obj.probe_send = c.execute\n"),
+    "3. a property and its setter": (
+        f"ProbeRunner.probe_run(conn, {_R14_SQL})\n",
+        _R15_STATIC_PROPERTY + "    @probe_prop.setter\n    @staticmethod\n    def probe_run(c, q):\n        c.execute(q)\n"),
+    "4. a precision that leaves another table's name": (
+        "probe_truncated(conn)\n",
+        "def probe_truncated(c):\n    c.execute('UPDATE {t:.11} SET day_limit_micro=1'.format(t='tr_entities_x'))\n"),
+    "5. rstrip leaving another table's name": (
+        "probe_stripped(conn)\n",
+        "def probe_stripped(c):\n    c.execute('UPDATE ' + 'tr_entitiess'.rstrip('s') + ' SET day_limit_micro=1')\n"),
+}
+
+
+def _round_15_flagged(tmp_path: Path, change: str, helpers: str) -> set[tuple[str, str]]:
+    """The findings a replay adds that the inventory fails on: the scope a
+    limit-column writer, or any finding in a probe helper or class."""
+    source = (ROOT / _PG).read_text()
+    where = source.index(_RELEASE_END)
+    source = (source[:where] + "\n" + textwrap.indent(textwrap.dedent(change), "        ") + source[where:]
+              + "\n\n" + helpers)
+    compile(source, _PG, "exec", dont_inherit=True)
+    detail = _injected_detail(tmp_path, _PG, source)
+    scope = "PostgresStore._release_key_hold_tx"
+    flagged = {("limit", where) for path, where in limit_column_writers(detail)
+               if path == "storage_postgres.py" and (where == scope or where.startswith(scope + "."))}
+    return flagged | {(style, where) for style, path, where in detail
+                      if path == "storage_postgres.py" and where.startswith(("probe", "Probe"))}
+
+
+@pytest.mark.parametrize("label", list(_ROUND_15))
+def test_the_round_15_forms_injected_into_a_listed_scope_are_caught(tmp_path: Path, label: str) -> None:
+    assert _round_15_flagged(tmp_path, *_ROUND_15[label]), label
+
+
+@pytest.mark.parametrize("label", list(_ROUND_15_CONTROLS))
+def test_the_round_15_controls_are_not(tmp_path: Path, label: str) -> None:
+    assert not _round_15_flagged(tmp_path, *_ROUND_15_CONTROLS[label]), label
+
+
+@pytest.mark.parametrize(("name", "source", "expression", "foreign", "expected"), [
+    ("an import whose attribute is rebound first", "import functools\nfunctools.cache = wrap\n"
+     "from functools import cache as memo\nmemo\n", "memo", frozenset(), None),
+    ("an import of a builtin rebound first", "import builtins\nbuiltins.len = wrap\n"
+     "from builtins import len as size\nsize\n", "size", frozenset(), None),
+    ("an import whose attribute another module rebinds", "from functools import cache as memo\nmemo\n", "memo",
+     frozenset({("functools", "cache")}), None),
+    ("a builtin another module rebinds", "len\n", "len", frozenset({("builtins", "len")}), None),
+    ("an import with another attribute rebound", "import functools\nfunctools.other = wrap\n"
+     "from functools import cache as memo\nmemo\n", "memo", frozenset({("functools", "other")}), "functools.cache"),
+], ids=lambda value: value if isinstance(value, str) and " " in value else None)
+def test_an_imported_identity_holds_only_while_nothing_rebinds_it(name: str, source: str, expression: str,
+                                                                  foreign: frozenset[tuple[str, str]],
+                                                                  expected: str | None) -> None:
+    import ast
+
+    from tests.key_limit_writers import _Identities
+
+    ids = _Identities(ast.parse(source), foreign=foreign)
+    assert ids.of(ast.parse(expression, mode="eval").body) == expected, name
+
+
+def test_the_scan_collects_module_attributes_set_anywhere() -> None:
+    import ast
+
+    from tests.key_limit_writers import _module_attribute_stores
+
+    source = ("import functools, os.path\nimport builtins as b\nfrom json import decoder\n"
+              "functools.cache = 1\ndel os.path.sep\nsetattr(b, 'len', 2)\ndecoder.scanstring = 3\n"
+              "__builtins__.getattr = 4\nobj.cache = 5\nfrom .local import thing\nthing.x = 6\n")
+    assert _module_attribute_stores(ast.parse(source), {"local"}) == {
+        ("functools", "cache"), ("os.path", "sep"), ("builtins", "len"), ("json.decoder", "scanstring"),
+        ("builtins", "getattr")}
+
+
+def test_the_scanners_claim_names_tests_that_exist() -> None:
+    """Review round 15: the scanner's claim is a list of covered forms, each
+    with the tests (and their cases) that pin it; every one named exists."""
+    import re
+
+    import tests.key_limit_writers as scanner
+    import tests.test_key_limit_writer_exceptions as exceptions
+
+    doc = scanner.__doc__ or ""
+    section = " ".join(doc[doc.index("What it covers."):doc.index("That is the whole claim.")].split())
+    cases = {
+        "test_each_way_to_write_tr_key_limit_is_found": [c[0] for c in KEY_LIMIT_FORMS],
+        "test_each_way_to_write_a_limit_column_is_found": [c[0] for c in COLUMN_FORMS],
+        "test_each_text_form_is_found": [c[0] for c in TEXT_FORMS],
+        "test_the_round_14_identity_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_14),
+        "test_the_round_15_forms_injected_into_a_listed_scope_are_caught": list(_ROUND_15),
+    }
+    named = re.findall(r"\b(test_\w+)\b(?!\.py)(?:\[(.*?)\])?", section)
+    assert len(named) >= 20
+    for test, ids in named:
+        assert callable(globals().get(test)) or callable(getattr(exceptions, test, None)), test
+        for case in filter(None, (case.strip() for case in ids.split(" | "))):
+            assert case in cases[test], (test, case)
+
+
+def test_an_executor_attribute_rebound_in_another_module_is_not_settled(tmp_path: Path) -> None:
+    """Review round 15: an attribute callee is an executor for the escape
+    rule only while every binding of that attribute in the scan is one."""
+    installer = tmp_path / "probe_installer.py"
+    installer.write_text("def install(obj, wrap):\n    obj.send_sql = wrap(obj.send_sql)\n")
+    caller = tmp_path / "probe_caller.py"
+    caller.write_text("def f(c, obj):\n    obj.send_sql = c.execute\n    obj.send_sql('UPDATE tr_key_limit SET reserved=0')\n")
+    assert dict(scan_paths_detail([caller], [])) == {("key_limit.sql", "probe_caller.py", "f"): False}
+    assert dict(scan_paths_detail([installer, caller], [])) == {
+        ("key_limit.sql", "probe_caller.py", "f"): False, ("key_limit.escape", "probe_caller.py", "f"): True}
