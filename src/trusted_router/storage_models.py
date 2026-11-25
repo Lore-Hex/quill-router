@@ -189,6 +189,10 @@ class User:
     # GitHub account the user signed up with, kept for abuse review.
     github_login: str | None = None
     github_account_created_at: str | None = None
+    # Whether the payer email PayPal reported on this user's latest captured
+    # top-up equals the account email. Only the boolean is kept, never the
+    # payer's address; None until a capture that reports a payer email.
+    paypal_payer_email_matches: bool | None = None
     identity_verified_at: str | None = None
     identity_verified_name: str | None = None
     veriff_session_id: str | None = None

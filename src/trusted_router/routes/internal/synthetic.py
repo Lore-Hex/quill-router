@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import httpx
@@ -26,6 +26,7 @@ from trusted_router.operational_analytics import (
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
+from trusted_router.services.abuse_tripwires import run_hourly_tripwire_sweep
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.storage_rate_limits import InMemoryRateLimits
@@ -363,6 +364,7 @@ async def _run_and_record_impl(
             await run_in_threadpool(_client_watch_pass, settings, samples)
         except Exception:
             log.warning("client_watch.pass_failed", exc_info=True)
+        await _abuse_tripwire_pass(settings)
         result: dict[str, Any] = {
             "data": {
                 "recorded": len(samples),
@@ -424,48 +426,97 @@ def _run_remediator_with_held_slot(
         slot.release()
 
 
-def _run_remediator_worker(
-    settings: Settings,
-    slot: _HeldOperationSlot,
-    started: threading.Event,
-) -> int:
-    started.set()
-    return _run_remediator_with_held_slot(settings, slot)
+# Consecutive remediator passes in this process that outlived the request
+# deadline. One overrun is an expected outcome for a background tick (a slow
+# analytics answer); a run of them means the pass can no longer finish.
+_REMEDIATOR_OVERRUNS = 0
+_REMEDIATOR_OVERRUNS_LOCK = threading.Lock()
+REMEDIATOR_OVERRUN_ALERT_THRESHOLD = 3
+
+
+@dataclass(frozen=True)
+class RemediatorOverrun:
+    """A pass outlived its request deadline; the response says what happened."""
+
+    elapsed_seconds: float
+    worker: str  # "continuing": still running, owns the slot; "abandoned": never started
+    consecutive: int
+
+    def as_data(self) -> dict[str, Any]:
+        return {
+            "decisions": None,
+            "deadline_exceeded": True,
+            "worker": self.worker,
+            "elapsed_seconds": round(self.elapsed_seconds, 3),
+            "consecutive_overruns": self.consecutive,
+        }
+
+
+def _note_remediator_finished() -> None:
+    global _REMEDIATOR_OVERRUNS
+    with _REMEDIATOR_OVERRUNS_LOCK:
+        _REMEDIATOR_OVERRUNS = 0
+
+
+def _note_remediator_overrun() -> int:
+    global _REMEDIATOR_OVERRUNS
+    with _REMEDIATOR_OVERRUNS_LOCK:
+        _REMEDIATOR_OVERRUNS += 1
+        return _REMEDIATOR_OVERRUNS
 
 
 async def _run_remediator_with_deadline(
     settings: Settings,
     slot: _HeldOperationSlot,
-) -> int:
+) -> int | RemediatorOverrun:
+    """Run one pass; past the deadline, answer instead of raising.
+
+    The worker thread cannot be killed, so at the deadline the request stops
+    waiting and the worker keeps running to its own end (each of its reads is
+    capped, so that end is bounded) and keeps the process-local admission
+    until then. The next tick in this process therefore gets 429 "already in
+    progress", which the scheduler treats as a skip, instead of starting a
+    second concurrent pass. A worker that never started is cancelled and its
+    admission released here, because nobody else can own it.
+
+    Real failures of the pass still raise.
+    """
     started = time.monotonic()
-    worker_started = threading.Event()
-    loop = asyncio.get_running_loop()
-    worker = loop.run_in_executor(
-        _REMEDIATOR_EXECUTOR,
-        _run_remediator_worker,
-        settings,
-        slot,
-        worker_started,
+    work = _REMEDIATOR_EXECUTOR.submit(_run_remediator_with_held_slot, settings, slot)
+    worker = asyncio.wrap_future(work)
+    done, _pending = await asyncio.wait(
+        {worker},
+        timeout=settings.synthetic_remediator_deadline_seconds,
     )
-    try:
-        return await asyncio.wait_for(
-            asyncio.shield(worker),
-            timeout=settings.synthetic_remediator_deadline_seconds,
-        )
-    except TimeoutError:
-        # The worker thread cannot be killed. Abandon the await so this HTTP
-        # request releases Cloud Run concurrency immediately, but leave the
-        # process-local admission with the live worker until it actually exits.
-        # This prevents each scheduler tick from piling another blocked reader
-        # onto the same process. If cancellation won before the worker started,
-        # nobody else can own the admission, so release it here.
-        if not worker_started.is_set():
-            slot.release()
-        log.error(
-            "synthetic.remediator_deadline_exceeded elapsed_seconds=%.3f",
-            time.monotonic() - started,
-        )
-        raise
+    if done:
+        decisions = worker.result()  # re-raises a real failure of the pass
+        _note_remediator_finished()
+        return decisions
+    if work.cancel():
+        # Atomic: true only when the worker never started, so the admission
+        # is still ours to release and no pass will run for this tick.
+        slot.release()
+        state = "abandoned"
+    else:
+        state = "continuing"
+    consecutive = _note_remediator_overrun()
+    overrun = RemediatorOverrun(
+        elapsed_seconds=time.monotonic() - started,
+        worker=state,
+        consecutive=consecutive,
+    )
+    message = (
+        "synthetic.remediator_deadline_exceeded elapsed_seconds=%.3f "
+        "worker=%s consecutive=%d"
+    )
+    args = (overrun.elapsed_seconds, overrun.worker, consecutive)
+    if consecutive >= REMEDIATOR_OVERRUN_ALERT_THRESHOLD:
+        # Repeated overruns mean the pass cannot finish (an analytics outage,
+        # or work that outgrew the deadline): an ERROR, which reaches Sentry.
+        log.error(message + " repeated=true", *args)
+    else:
+        log.warning(message, *args)
+    return overrun
 
 
 async def _run_scheduled_remediator_pass(settings: Settings) -> int | None:
@@ -480,7 +531,8 @@ async def _run_scheduled_remediator_pass(settings: Settings) -> int | None:
         # be cancelled while TestClient (or the server) tears down its event
         # loop; separate threadpool awaits allowed that cancellation to land
         # after the first heartbeat and before remediation was dispatched.
-        return await _run_remediator_with_deadline(settings, slot)
+        result = await _run_remediator_with_deadline(settings, slot)
+        return None if isinstance(result, RemediatorOverrun) else result
     except Exception:
         # A remediation read/decision failure must remain visible, but it must
         # not discard the independent synthetic results from the same tick.
@@ -549,6 +601,7 @@ def register(router: APIRouter) -> None:
                 await run_in_threadpool(_client_watch_pass, settings, samples)
             except Exception:
                 log.warning("client_watch.pass_failed", exc_info=True)
+            await _abuse_tripwire_pass(settings)
             return {"data": {"recorded": len(samples)}}
         finally:
             slot.release()
@@ -638,7 +691,9 @@ def register(router: APIRouter) -> None:
             slot.release()
 
     @router.post("/internal/synthetic/remediate")
-    async def synthetic_remediate(request: Request, settings: SettingsDep) -> dict[str, Any]:
+    async def synthetic_remediate(
+        request: Request, settings: SettingsDep, response: Response
+    ) -> dict[str, Any]:
         """Run one remediation pass under request CPU.
 
         GCP's scheduled synthetic worker calls this endpoint. Publishing the
@@ -652,8 +707,13 @@ def register(router: APIRouter) -> None:
             # the response shape the scheduled worker requires.
             return {"data": {"decisions": 0, "skipped": "remediator_mode_off"}}
         slot = _HeldOperationSlot(_admit_operation("remediate"))
-        decisions = await _run_remediator_with_deadline(settings, slot)
-        return {"data": {"decisions": decisions}}
+        result = await _run_remediator_with_deadline(settings, slot)
+        if isinstance(result, RemediatorOverrun):
+            # An overrun is an expected outcome of a background tick, not a
+            # server error: 202 says the pass was accepted but not finished.
+            response.status_code = 202
+            return {"data": result.as_data()}
+        return {"data": {"decisions": result}}
 
     @router.post("/internal/synthetic/run")
     async def synthetic_run(
@@ -757,6 +817,14 @@ def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
 def _record_benchmark_samples(samples: list[ProviderBenchmarkSample]) -> None:
     for sample in samples:
         STORE.record_provider_benchmark(sample)
+
+
+async def _abuse_tripwire_pass(settings: Settings) -> None:
+    """One hourly abuse sweep riding the monitor tick; never fails the tick."""
+    try:
+        await run_in_threadpool(run_hourly_tripwire_sweep, settings, STORE)
+    except Exception:
+        log.warning("abuse_tripwire.pass_failed", exc_info=True)
 
 
 def _client_watch_pass(settings: Settings, samples: list[SyntheticProbeSample]) -> None:

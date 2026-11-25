@@ -630,6 +630,11 @@ class Settings(BaseSettings):
     # switch and ``new_signups_enabled`` must both be on to create one.
     wallet_signup_enabled: bool = False
 
+    # Hourly abuse tripwires (services/abuse_tripwires.py): shared client
+    # sessions across workspaces and first-week single-model spend. Alert
+    # only; nothing is paused or refused. Needs the ClickHouse reader.
+    abuse_tripwires_enabled: bool = True
+
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
     sentry_local_enabled: bool = False
@@ -1576,6 +1581,13 @@ class Settings(BaseSettings):
     # the general synthetic pass budget so an unavailable analytics replica
     # cannot occupy control-plane request capacity for minutes.
     synthetic_remediator_deadline_seconds: float = 15.0
+    # Ceiling on each analytics read inside one remediator pass. A healthy
+    # pass makes ~13 small ClickHouse reads of ~0.1 s each (whole pass
+    # 1.6-2.0 s). The reads run concurrently in at most two dependent rounds,
+    # so a pass whose reads all hit this cap still ends near 2x it, inside the
+    # request deadline above. Without it each read kept the client's 20 s
+    # default and one slow answer outlived the whole 15 s deadline.
+    synthetic_remediator_read_timeout_seconds: float = 5.0
     # Monthly self-funding for the monitor workspace, applied lazily on its
     # own gateway-authorize path (synthetic/funding.py). Each deployment has
     # its own database, so each cloud's monitor funds itself from config —
@@ -2163,6 +2175,8 @@ class Settings(BaseSettings):
             raise ValueError("TR_SYNTHETIC_RUN_DEADLINE_SECONDS must be positive")
         if self.synthetic_remediator_deadline_seconds <= 0:
             raise ValueError("TR_SYNTHETIC_REMEDIATOR_DEADLINE_SECONDS must be positive")
+        if self.synthetic_remediator_read_timeout_seconds <= 0:
+            raise ValueError("TR_SYNTHETIC_REMEDIATOR_READ_TIMEOUT_SECONDS must be positive")
         if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
             raise ValueError(
                 "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least TR_MAX_REQUEST_BODY_BYTES"
