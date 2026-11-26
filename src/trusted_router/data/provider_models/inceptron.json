@@ -319,7 +319,7 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 40000
     },
     {
       "display_name": "DeepSeek V4.1 Flash 1017",
@@ -369,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-26T15:32:08Z",
+  "generated_at": "2026-11-26T19:00:54Z",
   "model_count": 8
 }

@@ -643,7 +643,8 @@
       "routable": false,
       "routable_reason": "decision-model-namespace-unsupported",
       "input_token_price_per_m": 84000,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "missing_since": "2026-11-26"
     },
     {
       "display_name": "Decision Models torchcast-decision-31b-v1.0 (EU)",
@@ -675,7 +676,8 @@
       "routable": false,
       "routable_reason": "decision-model-namespace-unsupported",
       "input_token_price_per_m": 84000,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "missing_since": "2026-11-26"
     },
     {
       "display_name": "Decision Models clef-flash (EU)",
@@ -712,7 +714,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-11-26T15:32:08Z",
+  "generated_at": "2026-11-26T19:00:54Z",
   "price_scale": "microdollars_per_million",
   "model_count": 21
 }
