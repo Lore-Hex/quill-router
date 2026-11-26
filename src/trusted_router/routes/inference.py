@@ -536,6 +536,9 @@ def _require_messages_model(body: dict[str, Any]) -> Model:
     model_id = str(body.get("model") or "")
     if not model_id:
         raise api_error(400, "model is required", ErrorType.BAD_REQUEST)
+    # Accept Anthropic's own ids (claude-opus-5-5), which Claude Code and the
+    # Anthropic SDKs send, as the routing resolver does for the gateway path.
+    model_id = resolve_model_alias(model_id)
     model = MODELS.get(model_id)
     if model is None or not model.supports_messages:
         raise api_error(

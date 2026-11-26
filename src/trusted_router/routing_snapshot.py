@@ -532,7 +532,9 @@ def live_aliases() -> Aliases:
             for prefix, replacement in ROUTER_PREFIX_REWRITES
         ),
         router_base_rewrites=dict(ROUTER_BASE_REWRITES),
-        alias_targets=dict(ROUTING_MODEL_ALIAS_TARGETS),
+        # A native id is listed so the evaluator hands it to Python, as it does
+        # an alias; it is not a requested model and expands to nothing here.
+        alias_targets={**routing.native_model_id_targets(), **ROUTING_MODEL_ALIAS_TARGETS},
         dated_suffix_pattern=routing._DATED_SNAPSHOT_RE.pattern,
         bare_vendor_prefix=BARE_VENDOR_PREFIX,
         variant_suffixes=tuple(
