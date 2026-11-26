@@ -644,12 +644,21 @@ def test_a_retired_row_is_not_swept_and_does_not_count_as_served(
         provider="even", model_ids=frozenset({"maker/even-0", "maker/even-1", "maker/even-2"}),
         upstream_ids=frozenset(), effective_at=_HOLD_NOW - timedelta(days=1),
     )
-    monkeypatch.setattr(provider_lifecycle, "_RETIREMENTS", (*provider_lifecycle._RETIREMENTS, retired))
+    # Scheduled, but not yet at the time the sweep is run for: still a route.
+    # (It has passed by the wall clock, which the sweep must not consult.)
+    not_yet = provider_lifecycle._Retirement(
+        provider="odd", model_ids=frozenset({"maker/odd-0"}),
+        upstream_ids=frozenset(), effective_at=_HOLD_NOW + timedelta(hours=1),
+    )
+    monkeypatch.setattr(
+        provider_lifecycle, "_RETIREMENTS", (*provider_lifecycle._RETIREMENTS, retired, not_yet),
+    )
 
     plan = sweep_holds.plan(_hold_fixture(tmp_path / "plan"), now=_HOLD_NOW)
 
     planned = {route for routes in plan["slices"] for route in routes}
     assert not {route for route in planned if route[0] == "even"}
+    assert {route for route in planned if route[0] == "odd"} == {("odd", f"maker/odd-{index}") for index in range(5)}
     # Its one remaining route is the provider's last, which the step never holds.
     assert plan["never_held"] == [("even", "maker/even-3"), ("single", "maker/only")]
     with pytest.raises(SystemExit, match="would not hold"):

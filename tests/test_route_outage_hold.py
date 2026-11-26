@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scripts.pricing import unserved_route_holds as holds
+from trusted_router import unserved_route_hold_plan
 from trusted_router.storage_models import ProviderBenchmarkSample
 from trusted_router.synthetic import route_health
 from trusted_router.synthetic.route_health import (
@@ -33,6 +34,17 @@ from trusted_router.synthetic.route_health import (
 NOW = dt.datetime(2026, 11, 21, 1, 0, tzinfo=dt.UTC)
 ROUTE = ("chutes", "qwen/qwen3.5-27b")
 SIBLING = ("chutes", "deepseek/deepseek-v4-flash-0731")
+
+
+@pytest.fixture(autouse=True)
+def _no_route_here_retires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests replay real incidents under their real route names, some at
+    the wall clock. The hold's planner does not hold a route past its scheduled
+    retirement, so a retirement announced later for one of these routes would
+    turn them red at its cutover instant, on main, with nothing changed.
+    Retirement is covered in tests/test_unserved_hold_live_routes.py; here the
+    planner sees no retirement."""
+    monkeypatch.setattr(unserved_route_hold_plan, "provider_model_retired", lambda *args, **kwargs: False)
 
 
 def _sample(
