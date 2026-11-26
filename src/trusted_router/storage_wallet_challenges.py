@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import secrets
 import threading
+from collections.abc import Callable
 
 from trusted_router.security import (
     hash_api_key,
@@ -152,7 +153,9 @@ class InMemoryWalletChallenges:
             self._ids_by_scope[scope_id] = challenge_id
             return raw_nonce, record
 
-    def consume(self, raw_nonce: str) -> WalletChallenge | None:
+    def consume(
+        self, raw_nonce: str, *, accepts: Callable[[WalletChallenge], bool] | None = None,
+    ) -> WalletChallenge | None:
         """One-shot: returns the record on first valid call, None on
         missing/expired/replayed/tampered."""
         with self._lock:
@@ -177,6 +180,8 @@ class InMemoryWalletChallenges:
                     self._ids_by_scope.pop(scope_id, None)
                 return None
             if not verify_api_key(raw_nonce, record.salt, record.secret_hash):
+                return None
+            if accepts is not None and not accepts(record):
                 return None
             record.consumed_at = iso_now()
             return record

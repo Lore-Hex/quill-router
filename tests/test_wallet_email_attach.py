@@ -52,6 +52,13 @@ def wallet_client() -> Iterator[tuple[TestClient, User]]:
         yield client, user
 
 
+def test_disposable_address_cannot_upgrade_a_wallet(wallet_client: tuple[TestClient, User]) -> None:
+    client, user = wallet_client
+    result = client.post("/auth/wallet/email", data={"email": "new@qtymail.com", "csrf_token": _csrf(client)})
+    assert result.status_code == 400
+    assert is_wallet_only_user(STORE.get_user(user.id))
+
+
 def _csrf(client: TestClient) -> str:
     form = client.get("/auth/wallet/email")
     assert form.status_code == 200, form.text

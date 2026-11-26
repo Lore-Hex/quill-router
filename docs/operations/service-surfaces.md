@@ -98,9 +98,14 @@ which is off unless set. A wallet signature costs nothing and needs no mailbox,
 so it is the cheapest account to create in bulk. With the switch off, an
 unknown wallet is refused before a challenge is stored and again at verify;
 wallets that already have an account still sign in. Both switches must be on
-for a wallet to create an account. No deploy script sets the wallet switch and
-the rollout replaces the whole environment, so a value set by hand is dropped
-at the next rollout; reopening wallet sign-up means adding it to the rollout.
+for a wallet to create an account. The GCP issuer rollout opts into wallet
+registration when the wallet flag is absent and preserves an explicit brake.
+New wallets receive zero starter credit. Before creating a challenge for a new
+wallet, each process caps writes at 30 per minute (6 per trusted source when
+available). Only a valid, unexpired signature for the issuing domain can spend
+the nonce. New accounts share a fleet cap of 12 per ten-minute window, plus
+three per hour per trusted source where available. Existing wallets do not
+use either enrollment quota. Quota-store failures do not admit new accounts.
 
 For `TR_NEW_SIGNUPS_ENABLED`, use the checked operator command; do not edit a
 Cloud Run service by hand:

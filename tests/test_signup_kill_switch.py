@@ -13,6 +13,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.oauth_provider import OAuthUserInfo
 from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.storage_models import utcnow
 
 
 def _settings(**overrides: object) -> Settings:
@@ -216,6 +217,68 @@ def test_global_gate_blocks_wallet_account_creation_at_verify() -> None:
 def test_wallet_signup_is_closed_unless_configured() -> None:
     # The code default, whatever the process environment says.
     assert Settings.model_fields["wallet_signup_enabled"].default is False
+
+
+def test_wallet_proof_is_origin_bound_and_bad_proofs_do_not_consume_it() -> None:
+    client = _client(new_signups_enabled=True, trusted_domain_aliases="allyrouter.com")
+    wallet = Account.create()
+    proof = _signed_wallet_payload(client, wallet)
+    route = "/v1/auth/wallet/verify"
+    assert client.post(route, json=proof, headers={"Origin": "https://foreign.example"}).status_code == 403
+    for headers, payload in [
+        ({"host": "allyrouter.com"}, proof),
+        ({}, {**proof, "signature": "invalid"}),
+    ]:
+        assert client.post(route, json=payload, headers=headers).status_code == 400
+        assert STORE.find_user_by_wallet(wallet.address) is None
+    assert client.post(route, json=proof).status_code == 200
+    assert client.post(route, json=proof).status_code == 400
+
+
+def test_new_wallet_challenge_throttle_does_not_block_existing_wallets(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = utcnow()
+    monkeypatch.setattr("trusted_router.storage_rate_limits.utcnow", lambda: now)
+    client = _client(new_signups_enabled=True)
+    route = "/v1/auth/wallet/challenge"
+    for _ in range(6):
+        assert client.post(route, json={"address": Account.create().address}).status_code == 200
+    assert client.post(route, json={"address": Account.create().address}).status_code == 429
+    returning = Account.create()
+    STORE.create_wallet_user(returning.address)
+    assert client.post(route, json={"address": returning.address}).status_code == 200
+
+
+def test_enrollment_limit_spans_apps_but_not_returning_wallets(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = utcnow()
+    monkeypatch.setattr("trusted_router.storage_rate_limits.utcnow", lambda: now)
+    first = Account.create()
+    for i, wallet in enumerate((first, Account.create(), Account.create(), Account.create())):
+        client = _client(new_signups_enabled=True)
+        response = client.post("/v1/auth/wallet/verify", json=_signed_wallet_payload(client, wallet))
+        if i == 3:
+            assert response.status_code == 429
+            assert STORE.find_user_by_wallet(wallet.address) is None
+            assert "retry-after" in response.headers
+        else:
+            assert response.status_code == 200, response.text
+    assert STORE.find_user_by_wallet(first.address) is not None
+    assert client.post("/v1/auth/wallet/verify", json=_signed_wallet_payload(client, first)).status_code == 200
+
+
+def test_wallet_enrollment_fails_closed_on_quota_outage(monkeypatch: pytest.MonkeyPatch) -> None:
+    account = Account.create()
+    client = _client(new_signups_enabled=True)
+    payload = _signed_wallet_payload(client, account)
+
+    def unavailable(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("quota store unavailable")
+
+    monkeypatch.setattr(InMemoryStore, "hit_rate_limit", unavailable)
+    with TestClient(client.app, raise_server_exceptions=False) as offline:
+        rejected = offline.post("/v1/auth/wallet/verify", json=payload)
+        assert rejected.status_code >= 500
+        assert "tr_session=" not in rejected.headers.get("set-cookie", "")
+    assert STORE.find_user_by_wallet(account.address) is None
 
 
 def test_closed_email_signup_does_not_point_at_wallets() -> None:

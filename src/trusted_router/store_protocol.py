@@ -10,6 +10,7 @@ instead of a 4-AM AttributeError.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -351,7 +352,9 @@ class Store(Protocol):
         ttl_seconds: int,
         raw_nonce: str | None = ...,
     ) -> tuple[str, WalletChallenge]: ...
-    def consume_wallet_challenge(self, raw_nonce: str) -> WalletChallenge | None: ...
+    def consume_wallet_challenge(
+        self, raw_nonce: str, *, accepts: Callable[[WalletChallenge], bool] | None = None,
+    ) -> WalletChallenge | None: ...
 
     # Email verification tokens -----------------------------------------------
     def create_verification_token(
