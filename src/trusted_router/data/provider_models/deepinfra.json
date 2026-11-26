@@ -3059,6 +3059,8 @@
       "status": 1,
       "id": "ibm-granite/granite-4.2-8b",
       "upstream_id": "ibm-granite/granite-4.2-8b",
+      "retirement_at": "2026-12-03T00:00:00Z",
+      "replacement_model_id": "qwen/qwen3.5-9b",
       "context_length": 131072,
       "max_output_tokens": 131072,
       "input_token_price_per_m": 60000,

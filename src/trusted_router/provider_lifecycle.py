@@ -102,6 +102,9 @@ DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # DeepInfra deprecates nvidia/Nemotron-Content-Safety-3.5 on 30 Nov 2026 (date
 # only, so 00:00 UTC); its public model metadata says 02:35 UTC that day.
 DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT = datetime(2026, 11, 30, 0, 0, tzinfo=UTC)
+# DeepInfra deprecates ibm-granite/granite-4.2-8b on 3 Dec 2026 (date only, so
+# 00:00 UTC) and then redirects it to Qwen/Qwen3.5-9B.
+DEEPINFRA_GRANITE_42_8B_RETIREMENT_AT = datetime(2026, 12, 3, 0, 0, tzinfo=UTC)
 # Boundless's November 24 notices stop serving 18 models on Thursday 26 Nov
 # 2026 at 23:59 UTC (the first named eight; the follow-up lists all 18).
 BOUNDLESS_NOV_26_RETIREMENT_AT = datetime(2026, 11, 26, 23, 59, tzinfo=UTC)
@@ -1557,6 +1560,19 @@ _RETIREMENTS = (
         model_ids=frozenset({"nvidia/nemotron-content-safety-3.5"}),
         upstream_ids=frozenset({"nvidia/Nemotron-Content-Safety-3.5"}),
         effective_at=DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT,
+    ),
+    # DeepInfra's November 26 notice: "Model ibm-granite/granite-4.2-8b is being
+    # deprecated on 2026-12-03" (date only, so 00:00 UTC). Inference keeps
+    # answering after that but is redirected to Qwen/Qwen3.5-9B, a different
+    # model, so serving the old id would mislabel it. Retire DeepInfra's route
+    # instead of accepting the substitution and quote Qwen3.5 9B, as with the
+    # other DeepInfra redirects. W&B's granite-4.2-8b route is unaffected.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"ibm-granite/granite-4.2-8b"}),
+        upstream_ids=frozenset({"ibm-granite/granite-4.2-8b"}),
+        effective_at=DEEPINFRA_GRANITE_42_8B_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.5-9b",),
     ),
     # Boundless's November 24 notices: these 18 models stop serving on
     # Thursday 26 November 2026 at 23:59 UTC. The first notice named eight;
