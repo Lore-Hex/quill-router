@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -190,11 +190,11 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 8,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 16,
+    "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
   "darkbloom": {
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -721,10 +721,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 2,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 6,
+    "route_count": 4,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },

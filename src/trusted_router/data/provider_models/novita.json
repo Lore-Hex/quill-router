@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-26T05:28:50Z",
+  "generated_at": "2026-11-26T08:25:15Z",
   "model_count": 188,
   "models": [
     {
@@ -3826,9 +3826,9 @@
       "created": 1779367973,
       "context_length": 1000000,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 12500,
-      "output_token_price_per_m": 37500,
-      "cached_input_token_price_per_m": 2500
+      "input_token_price_per_m": 16500,
+      "output_token_price_per_m": 49510,
+      "cached_input_token_price_per_m": 3300
     },
     {
       "id": "stepfun/step-3.7-flash",
