@@ -176,13 +176,16 @@ async function localHtml(context) {
         assert.equal(new URL(page.url()).searchParams.get('step'),'3');
         await page.locator('#buy-email').fill(email);
         await page.locator('#buy-company').fill(company);
+        const calendlyRequests = () => requests.filter(request => new URL(request.url()).hostname === 'calendly.com').length;
+        assert.equal(calendlyRequests(), 0);
         await page.getByRole('button',{name:'Continue to scheduling'}).click();
         await check(4);
         const src = await page.locator('#buy-calendar iframe').getAttribute('src');
         const booking = new URL(src);
         assert.equal(booking.origin,'https://calendly.com');
         assert.equal(booking.pathname,'/joseph-perla/15min');
-        for (const [key,value] of Object.entries({embed_domain:new URL(page.url()).hostname,embed_type:'Inline',hide_gdpr_banner:'1',name,email})) {
+        assert(!booking.searchParams.has('hide_gdpr_banner'));
+        for (const [key,value] of Object.entries({embed_domain:new URL(page.url()).hostname,embed_type:'Inline',name,email})) {
           assert.equal(booking.searchParams.get(key), value);
         }
         const summary = booking.searchParams.get('a1');
@@ -198,15 +201,14 @@ async function localHtml(context) {
         await check(4);
         const completionsBeforeReload = events.filter(event => event.event === 'nyte.buy_completed');
         assert.equal(completionsBeforeReload.length, 1);
-        // Reload clears contact details and returns to valid reservation defaults.
+        await page.locator('#buy-calendar iframe').contentFrame().getByText('Calendly booking frame').waitFor();
+        const beforeReload = calendlyRequests();
         await page.reload();
         await page.waitForFunction(expected => new URLSearchParams(location.search).get('step') === expected,
-          '4');
+          '3');
         assert.equal(await page.locator('#buy-name').inputValue(),'');
-        assert.equal(await page.locator('#buy-calendar iframe').count(),1);
-        const reloadedBooking = new URL(await page.locator('#buy-calendar iframe').getAttribute('src'));
-        assert.equal(reloadedBooking.searchParams.get('email'), '');
-        assert.equal(reloadedBooking.searchParams.get('name'), '');
+        assert.equal(await page.locator('#buy-calendar iframe').count(),0);
+        assert.equal(calendlyRequests(), beforeReload);
         const buyEvents = events.filter(event => event.event.startsWith('nyte.buy_'));
         assert(buyEvents.some(event => event.event === 'nyte.buy_completed'));
         for (const event of buyEvents) {

@@ -248,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : `term: ${term}; start: ${get('start').value}`;
     const summary = `Unit: ${facility ? '1B-token lots' : unit}; quantity: ${quantity}; underlying: ${underlying}; ${timing}; company: ${clean(get('company').value) || 'not specified'}`;
     const url = new URL('https://calendly.com/joseph-perla/15min');
-    url.search = new URLSearchParams({embed_domain:location.hostname, embed_type:'Inline', hide_gdpr_banner:'1',
+    url.search = new URLSearchParams({embed_domain:location.hostname, embed_type:'Inline',
       name:clean(get('name').value), email:get('email').value.trim(), a1:summary}).toString();
     get('calendly-link').href = url.href;
     get('summary').textContent = summary;
@@ -264,7 +264,8 @@ document.addEventListener('DOMContentLoaded', () => {
     update();
     // A copied step URL cannot skip required request fields or an invalid contact prefill.
     if (number >= 3 && !fieldsValid(2)) number = 2;
-    else if (number === 4 && !fieldsValid(3)) number = 3;
+    // Loading a copied URL or refreshing must not initiate a Calendly request.
+    else if (number === 4 && (!fieldsValid(3) || (!completed && !(step === 3 && push)))) number = 3;
     step = number;
     steps.forEach(section => { section.hidden = Number(section.dataset.step) !== step; });
     flow.querySelectorAll('.buy-steps li').forEach((item, index) => {
@@ -279,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (step === 4) scheduling();
     else {
       get('calendar').replaceChildren();
-      get('calendly-link').href = `https://calendly.com/joseph-perla/15min?embed_domain=${encodeURIComponent(location.hostname)}&embed_type=Inline&hide_gdpr_banner=1`;
+      get('calendly-link').href = 'https://calendly.com/joseph-perla/15min';
     }
     get(`title-${step}`).focus({preventScroll:true});
     if (push) get(`title-${step}`).scrollIntoView({block:'start'});

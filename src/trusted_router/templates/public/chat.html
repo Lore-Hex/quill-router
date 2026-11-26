@@ -168,19 +168,12 @@
     storageKey: {{ storage_key|default('tr_chat_state_v1')|tojson }},
   };
 </script>
-{# Markdown + code highlighting + XSS sanitization loaded from CDN.
-   marked turns the assistant's content into HTML; highlight.js paints
-   code blocks; DOMPurify strips any <script nonce="{{ csp_nonce() }}"> a model might emit
-   before insertion. chunk 4 may vendor these locally for offline +
-   subresource-integrity guarantees. #}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
-<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/build/highlight.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-{# pako gzips the share-URL hash payload so longer chats fit in URL
-   constraints. Optional — if it fails to load, share falls back to
-   raw base64 which is bigger but still works for small chats. #}
-<script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
+{# Exact browser builds copied from the npm lockfile by scripts/vendor-chat.mjs. #}
+<link rel="stylesheet" href="/static/vendor/chat/highlightjs-11.12.0/github-dark.min.css">
+<script defer src="/static/vendor/chat/marked-18.3.0/marked.umd.js"></script>
+<script defer src="/static/vendor/chat/highlightjs-11.12.0/highlight.min.js"></script>
+<script defer src="/static/vendor/chat/dompurify-3.5.0/purify.min.js"></script>
+<script defer src="/static/vendor/chat/pako-3.0.3/pako.umd.min.js"></script>
 <script src="/static/model_catalog.js?v={{ static_version|default('local') }}" defer></script>
 <script src="/static/chat_controls.js?v={{ static_version|default('local') }}" defer></script>
 <script src="/static/chat.js?v={{ static_version|default('local') }}" defer></script>

@@ -17,6 +17,7 @@ and no inference request fires.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -88,12 +89,7 @@ def test_chat_page_appears_in_nav() -> None:
     assert '/chat' in page.text
 
 
-def test_chat_page_loads_required_external_libraries() -> None:
-    """The chat page renders model output with marked + highlight.js,
-    sanitizes via DOMPurify. If any of these CDN tags get accidentally
-    removed, the chat client falls back to plain-text rendering and
-    code blocks lose highlighting / model-emitted <script> tags would
-    suddenly become a real XSS vector."""
+def test_chat_page_serves_its_own_rendering_and_sharing_assets() -> None:
     settings = Settings(environment="local")
     app = create_app(settings, init_observability=False)
     client = TestClient(app)
@@ -101,9 +97,16 @@ def test_chat_page_loads_required_external_libraries() -> None:
     resp = client.get("/chat")
     assert resp.status_code == 200
     body = resp.text
-    assert "marked" in body
-    assert "highlight" in body
-    assert "dompurify" in body.lower() or "purify" in body.lower()
+    assert "cdn.jsdelivr.net" not in body
+    assets = re.findall(r'(?:href|src)="(/static/vendor/chat/[^"]+)"', body)
+    assert [path.rsplit("/", 1)[1] for path in assets] == [
+        "github-dark.min.css", "marked.umd.js", "highlight.min.js", "purify.min.js", "pako.umd.min.js",
+    ]
+    for path in assets:
+        assert body.index(path) < body.index('src="/static/chat.js')
+        asset = client.get(path)
+        assert asset.status_code == 200
+        assert ("css" if path.endswith(".css") else "javascript") in asset.headers["content-type"]
 
 
 def test_chat_page_render_does_not_require_models_list() -> None:

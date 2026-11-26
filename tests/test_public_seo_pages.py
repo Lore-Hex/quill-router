@@ -1111,7 +1111,11 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     payload = subprocessors_json.json()
     system_names = {row["name"] for row in payload["system_subprocessors"]}
     model_names = {row["name"] for row in payload["model_provider_subprocessors"]}
-    assert {"Google Cloud Platform", "Stripe", "Sentry"}.issubset(system_names)
+    assert {"Google Cloud Platform", "Stripe", "Sentry", "Microsoft Azure", "Amazon Web Services", "Adyen", "Calendly"}.issubset(system_names)
+    booking = next(row for row in payload["system_subprocessors"] if row["name"] == "Calendly")
+    assert "NYTE" in booking["purpose"]
+    assert "No API prompts or outputs" in booking["data_access"]
+    assert booking["policy_url"] in subprocessors.text
     assert {"Anthropic", "OpenAI", "Google AI Studio", "Google Vertex AI"}.issubset(model_names)
     anthropic = next(
         row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic"

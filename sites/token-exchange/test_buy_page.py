@@ -8,7 +8,7 @@ import unittest
 from html import unescape
 from pathlib import Path
 from typing import ClassVar
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from build import build, load_markets
 from test_provider_page import PageLinks
@@ -160,9 +160,7 @@ for (unit of ['blocks', 'throughput']) {
         links = [urlparse(link) for link in self.parser.links if 'calendly.com' in link]
         self.assertEqual(len(links), 1)
         self.assertEqual(links[0].path, '/joseph-perla/15min')
-        self.assertEqual(parse_qs(links[0].query), {
-            'embed_domain': ['nytokenexchange.com'], 'embed_type': ['Inline'], 'hide_gdpr_banner': ['1'],
-        })
+        self.assertEqual(links[0].query, '')
         self.assertIn('<noscript>', self.page)
         fallback = self.page.split('<div class="buy-fallback">', 1)[1].split('</div>', 1)[0]
         self.assertIn('Prefer to book directly? <a id="buy-calendly-link"', fallback)
@@ -322,7 +320,7 @@ assert.equal(url.searchParams.get('name'), fields.name.value);
 assert.equal(url.searchParams.get('email'), fields.email.value);
 assert.equal(url.searchParams.get('embed_domain'), 'londontoken.exchange');
 assert.equal(url.searchParams.get('embed_type'), 'Inline');
-assert.equal(url.searchParams.get('hide_gdpr_banner'), '1');
+assert(!url.searchParams.has('hide_gdpr_banner'));
 assert(url.searchParams.get('a1').includes('company: Research & Co + 東京'));
 assert(url.searchParams.get('a1').includes('quantity: 3 x 1B tokens'));
 assert(url.searchParams.get('a1').includes('provider A/B'));

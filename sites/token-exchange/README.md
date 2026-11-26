@@ -186,8 +186,9 @@ The separate card panel below uses the authoritative discounted quote and fixed
 
 The call wizard never submits contact fields to TrustedRouter or writes request data to browser storage. Card checkout submits only grade, lots and explicit terms acceptance.
 Only step, unit, grade and the allowlisted facility ID are written to page history. Contact details and the
-request summary go directly to Calendly's iframe/link prefill, without its widget
-script. Without JavaScript, the offer, editable model/provider text fields and
+request summary go directly to Calendly only when the visitor continues to scheduling;
+opening or reloading a step URL does not load the iframe. The embed uses Calendly's
+default cookie banner settings and no widget script. Without JavaScript, the offer, editable model/provider text fields and
 direct booking link remain available; the start month is optional. With JavaScript,
 it defaults to next month in local time and remains editable. At 1000 px and below, CSS
 places the wizard before the brand panel; the DOM retains the introduction and

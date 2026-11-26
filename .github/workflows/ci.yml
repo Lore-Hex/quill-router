@@ -413,6 +413,8 @@ jobs:
         run: |
           npx tsc
           git diff --exit-code -- src/trusted_router/static/dashboard.js src/trusted_router/static/token-index.js
+      - name: Verify vendored chat assets against the npm lockfile
+        run: node scripts/vendor-chat.mjs --check
       - name: ESLint
         run: npx eslint frontend/src
       - name: Stylelint
