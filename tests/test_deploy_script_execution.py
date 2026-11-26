@@ -786,6 +786,22 @@ def test_control_plane_allocates_cpu_for_background_workers(
         assert ("--no-traffic" in deploy) == (no_traffic == "1")
 
 
+def test_fal_enrollment_issues_primary_without_arming_or_changing_minimax(
+    harness: DeployScriptHarness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = harness.run("scripts/deploy/rollout.sh", extra_env={"TR_FAL_PRIMARY_402_ENABLED": "true"})
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    env = _cloud_run_job_env(deploy)
+    for name in ("TR_MANAGED_KEY_GENERATIONS", "TR_FAL_PRIMARY_402_ENABLED"):
+        monkeypatch.setenv(name, env[name])
+    settings = Settings(environment="test")
+    assert settings.fal_primary_402_enabled is False
+    assert set(settings.managed_key_generations) == {"fal"}
+    generation = settings.managed_key_generations["fal"]
+    assert len(generation) == 64 and bytes.fromhex(generation).hex() == generation
+
+
 def test_rollout_supplies_full_source_revision_for_shadow_evidence(
     harness: DeployScriptHarness,
 ) -> None:

@@ -489,6 +489,10 @@ if [ "${TR_TRUST_JOBS_DEPLOY}" = "1" ]; then
 fi
 
 ENV_VARS=(
+  # Phase 1: commit only to the ordered fal pair. No provider credentials here.
+  # Do not arm until every serving gateway has loaded both slots and drained.
+  'TR_MANAGED_KEY_GENERATIONS={"fal":"50c8108ecd9be4fb27cf7590ec86e13390d6980de6045b1ea3f9e9886d20014c"}'
+  "TR_FAL_PRIMARY_402_ENABLED=false"
   "TR_RESALE_ENABLED=false"
   "TR_RESALE_FEE_BPS=500"
   "TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true"
