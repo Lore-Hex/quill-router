@@ -13,6 +13,7 @@ from trusted_router.catalog import (
     MODELS,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
+    Model,
 )
 from trusted_router.provider_lifecycle import BASETEN_SEPTEMBER_2026_RETIREMENT_AT
 from trusted_router.spend_windows import KeyWindowLimitExceeded
@@ -91,12 +92,27 @@ def _price_llama_31_8b(monkeypatch: pytest.MonkeyPatch) -> None:
     ))
 
 
-def _llama_31_8b_on_a_byok_route(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A key's limit needs a bring-your-own-key route to ride on, not today's
-    catalog. The model's only such route was one host's, and that host
-    delisting the model (2026-11-26) turned "limit reached" into "no route"."""
+KEY_LIMIT_MODEL = "fixture/key-limit"
+
+
+def _a_model_on_a_byok_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key's limit needs a model and a bring-your-own-key route to ride on,
+    not today's catalog. These tests used Llama 3.1 8B, whose only such route
+    was one host's; that host delisting it (2026-11-26) turned "limit reached"
+    into "no route". The model here exists only in this fixture: $1/M input
+    and $3/M output, 1 and 3 microdollars a token. Its route is priced apart
+    from it, so usage billed at the route's price would not add up."""
     serve_on_fixture_route(
-        monkeypatch, "meta-llama/llama-3.1-8b-instruct", "novita", author="meta-llama", usage_type="BYOK",
+        monkeypatch, KEY_LIMIT_MODEL, "deepinfra", author="deepinfra", usage_type="BYOK",
+        model=Model(
+            id=KEY_LIMIT_MODEL, name="Fixture Key Limit", provider="deepinfra", context_length=131_072,
+            prompt_price_microdollars_per_million_tokens=1_000_000,
+            completion_price_microdollars_per_million_tokens=3_000_000,
+            published_prompt_price_microdollars_per_million_tokens=1_000_000,
+            published_completion_price_microdollars_per_million_tokens=3_000_000,
+        ),
+        prompt_price_microdollars_per_million_tokens=7_000_000,
+        completion_price_microdollars_per_million_tokens=11_000_000,
     )
 
 
@@ -753,7 +769,7 @@ def test_api_key_limit_blocks_credit_and_byok_usage(
     user_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _llama_31_8b_on_a_byok_route(monkeypatch)
+    _a_model_on_a_byok_route(monkeypatch)
     created = client.post(
         "/v1/keys",
         headers=user_headers,
@@ -764,7 +780,7 @@ def test_api_key_limit_blocks_credit_and_byok_usage(
         "/v1/chat/completions",
         headers=headers,
         json={
-            "model": "meta-llama/llama-3.1-8b-instruct",
+            "model": KEY_LIMIT_MODEL,
             "provider": {"usage": "byok"},
             "max_tokens": 100,
             "messages": [{"role": "user", "content": "hello"}],
@@ -779,8 +795,7 @@ def test_api_key_limit_can_exclude_byok_usage(
     user_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _price_llama_31_8b(monkeypatch)
-    _llama_31_8b_on_a_byok_route(monkeypatch)
+    _a_model_on_a_byok_route(monkeypatch)
     created = client.post(
         "/v1/keys",
         headers=user_headers,
@@ -791,7 +806,7 @@ def test_api_key_limit_can_exclude_byok_usage(
         "/v1/chat/completions",
         headers=headers,
         json={
-            "model": "meta-llama/llama-3.1-8b-instruct",
+            "model": KEY_LIMIT_MODEL,
             "provider": {"usage": "byok"},
             "max_tokens": 100,
             "messages": [{"role": "user", "content": "hello"}],
