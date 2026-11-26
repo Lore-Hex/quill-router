@@ -1,17 +1,28 @@
 """scripts/tombstone_sweep.py records a run that did not happen as a crash, and
 resumes a sweep only with the groups it was written with. Either mistake would
-report providers as safe to delist that were never tested."""
+report providers as safe to delist that were never tested. Its holds mode
+places the refresh's unserved-route hold with the refresh's own step, inside
+that step's limits, and never reports a row as held that the step refused."""
 
 from __future__ import annotations
 
 import json
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from scripts import tombstone_sweep as sweep
+from scripts import tombstone_sweep_holds as sweep_holds
+from scripts.pricing import unserved_route_holds
+from trusted_router import unserved_route_hold_plan
+from trusted_router.provider_manifest_policy import (
+    UNSERVED_ROUTE_HELD_AT_FIELD,
+    UNSERVED_ROUTE_HOLD_COUNT_FIELD,
+    UNSERVED_ROUTE_HOLD_REASON,
+)
 
 
 def _pytest_exits(
@@ -514,3 +525,271 @@ def test_a_values_sweep_with_nothing_pinned_stops_after_one_run(
 
     assert len(changed) == 1
     assert "groups" not in json.loads((tmp_path / "out" / "values.json").read_text(encoding="utf-8"))
+
+
+# --- holds: the refresh's own unserved-route hold ---------------------------
+
+
+def _hold_manifests(root: Path, providers: dict[str, list[dict[str, Any]]]) -> Path:
+    manifests = root / "provider_models"
+    manifests.mkdir(parents=True)
+    for provider, rows in providers.items():
+        (manifests / f"{provider}.json").write_text(
+            json.dumps({"provider": provider, "models": rows}, indent=2) + "\n", encoding="utf-8"
+        )
+    return manifests
+
+
+def _priced(model_id: str, **extra: Any) -> dict[str, Any]:
+    return {"id": model_id, "upstream_id": model_id, "input_token_price_per_m": 100_000,
+            "output_token_price_per_m": 400_000, **extra}
+
+
+_HOLD_NOW = datetime(2026, 11, 26, 7, 32, tzinfo=UTC)
+_STEP_TOTAL = unserved_route_hold_plan.MAX_ROUTES
+
+
+def _hold_fixture(root: Path) -> Path:
+    return _hold_manifests(root, {
+        "even": [_priced(f"maker/even-{index}") for index in range(4)]
+        + [_priced("maker/gone", routable=False, routable_reason="delisted-upstream")],
+        "odd": [_priced(f"maker/odd-{index}", routable=True) for index in range(5)],
+        "single": [_priced("maker/only")],
+        # Two of six listed rows are already held, so the step holds one more at a time.
+        "held": [_priced(f"maker/held-{index}") for index in range(4)] + [_priced(
+            f"maker/held-already-{index}", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+            **{UNSERVED_ROUTE_HELD_AT_FIELD: "2026-11-26T07:00:00Z", UNSERVED_ROUTE_HOLD_COUNT_FIELD: 1},
+        ) for index in range(2)],
+    })
+
+
+def test_a_swept_hold_is_the_one_the_refresh_step_writes(tmp_path: Path) -> None:
+    swept = _hold_fixture(tmp_path / "swept")
+    refreshed = _hold_fixture(tmp_path / "refreshed")
+
+    result = sweep_holds.hold([("even", "maker/even-1")], swept, now=_HOLD_NOW)
+    unserved_route_holds.apply_unserved_route_holds(
+        {("even", "maker/even-1")}, manifest_dir=refreshed, now=_HOLD_NOW,
+    )
+
+    assert result["held"] == [("even", "maker/even-1")]
+    assert result["total_route_cap_lifted"] is False
+    for provider in ("even", "odd", "single", "held"):
+        assert (swept / f"{provider}.json").read_bytes() == (refreshed / f"{provider}.json").read_bytes()
+    rows = {row["id"]: row for row in json.loads((swept / "even.json").read_text())["models"]}
+    assert rows["maker/even-1"] == _priced(
+        "maker/even-1", routable=False, routable_reason="provider-route-unserved",
+        unserved_held_at="2026-11-26T07:32:00Z", unserved_hold_count=1,
+    )
+    assert rows["maker/even-0"] == _priced("maker/even-0")
+
+
+def test_the_hold_plan_covers_every_row_within_the_steps_limits(tmp_path: Path) -> None:
+    manifests = _hold_fixture(tmp_path / "plan")
+
+    plan = sweep_holds.plan(manifests, now=_HOLD_NOW)
+
+    # Half of an even provider twice; an odd one needs a third run; a provider
+    # with rows already held gives up one row at a time; a provider's last
+    # routable row is never held.
+    assert plan == {
+        "slices": [
+            [("even", "maker/even-0"), ("even", "maker/even-1"), ("held", "maker/held-0"),
+             ("odd", "maker/odd-0"), ("odd", "maker/odd-1")],
+            [("even", "maker/even-2"), ("even", "maker/even-3"), ("held", "maker/held-1"),
+             ("odd", "maker/odd-2"), ("odd", "maker/odd-3")],
+            [("held", "maker/held-2"), ("odd", "maker/odd-4")],
+            [("held", "maker/held-3")],
+        ],
+        "never_held": [("single", "maker/only")],
+    }
+    assert unserved_route_hold_plan.MAX_ROUTES == _STEP_TOTAL
+    # The step holds every slice whole.
+    for index, routes in enumerate(plan["slices"]):
+        copy = _hold_fixture(tmp_path / f"slice{index}")
+        assert sweep_holds.hold(routes, copy, now=_HOLD_NOW)["held"] == sorted(routes)
+
+
+@pytest.mark.parametrize("routes", [
+    pytest.param([("single", "maker/only")], id="last-routable-row"),
+    pytest.param([("even", f"maker/even-{index}") for index in range(3)], id="more-than-half"),
+    pytest.param([("held", "maker/held-0"), ("held", "maker/held-1")], id="more-than-half-with-earlier-holds"),
+    pytest.param([("even", "maker/gone")], id="not-routable"),
+    pytest.param([("even", "maker/even-0"), ("single", "maker/only")], id="one-of-two-refused"),
+])
+def test_a_row_the_step_will_not_hold_stops_the_run(tmp_path: Path, routes: list[tuple[str, str]]) -> None:
+    manifests = _hold_fixture(tmp_path / "refused")
+
+    with pytest.raises(SystemExit, match="would not hold"):
+        sweep_holds.hold(routes, manifests, now=_HOLD_NOW)
+
+
+def test_only_a_run_beyond_the_steps_total_lifts_it(tmp_path: Path) -> None:
+    total = _STEP_TOTAL
+    rows = [_priced(f"maker/m-{index:03d}") for index in range(2 * total + 2)]
+    within = [("big", f"maker/m-{index:03d}") for index in range(total)]
+    beyond = [("big", f"maker/m-{index:03d}") for index in range(total + 1)]
+
+    held = sweep_holds.hold(within, _hold_manifests(tmp_path / "within", {"big": rows}), now=_HOLD_NOW)
+    assert (len(held["held"]), held["total_route_cap_lifted"]) == (total, False)
+
+    manifests = _hold_manifests(tmp_path / "beyond", {"big": rows})
+    held = sweep_holds.hold(beyond, manifests, now=_HOLD_NOW)
+    assert (len(held["held"]), held["total_route_cap_lifted"]) == (total + 1, True)
+    assert unserved_route_hold_plan.MAX_ROUTES == _STEP_TOTAL
+    # The step itself, asked for the same rows, holds none of them.
+    refreshed = _hold_manifests(tmp_path / "step", {"big": rows})
+    unserved_route_holds.apply_unserved_route_holds(set(beyond), manifest_dir=refreshed, now=_HOLD_NOW)
+    assert all("routable_reason" not in row for row in json.loads((refreshed / "big.json").read_text())["models"])
+
+
+def _hold_sweep(
+    monkeypatch: pytest.MonkeyPatch, slices: list[list[list[str]]], fails: Any,
+) -> tuple[list[list[list[str]]], list[list[str]]]:
+    """A holds sweep over these slices, where `fails(held, files)` names the failures."""
+    held: list[list[list[str]]] = []
+    runs: list[list[str]] = []
+    restored: list[int] = []
+    monkeypatch.setattr(sweep, "restore", lambda: restored.append(len(held)))
+    monkeypatch.setattr(sweep, "plan_holds", lambda: {"slices": slices, "never_held": [["single", "maker/only"]]})
+    monkeypatch.setattr(
+        sweep, "hold_routes",
+        lambda routes: held.append(routes) or {"total_route_cap_lifted": len(routes) > 25},
+    )
+
+    def run(files: list[str], *_: Any) -> tuple[set[str], str]:
+        runs.append(files)
+        # Nothing is held unless the data was restored since the last hold.
+        now_held = held[-1] if held and restored[-1] < len(held) else []
+        failed = set(fails(now_held, files))
+        return failed, f"{len(failed)} failed" if failed else "1 passed"
+
+    monkeypatch.setattr(sweep, "run_pytest", run)
+    return held, runs
+
+
+_SLICE = [["alpha", f"maker/a-{index}"] for index in range(5)] + [["beta", f"maker/b-{index}"] for index in range(3)]
+
+
+def test_the_holds_sweep_halves_a_failing_slice_down_to_the_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pinned = ["beta", "maker/b-1"]
+
+    def fails(held: list[list[str]], files: list[str]) -> list[str]:
+        return ["tests/test_x.py::test_pin[a b]"] if pinned in held and files in ([], ["tests/test_x.py"]) else []
+
+    held, runs = _hold_sweep(monkeypatch, [_SLICE, [["alpha", "maker/a-5"]]], fails)
+
+    sweep.holds(tmp_path / "out", workers=4, files=[])
+
+    state = json.loads((tmp_path / "out" / "holds.json").read_text(encoding="utf-8"))
+    assert state["rows"] == {"beta:maker/b-1": ["tests/test_x.py::test_pin[a b]"]}
+    assert state["needs_several_rows"] == []
+    assert state["never_held"] == [["single", "maker/only"]]
+    # Both slices whole, then only the halves of the failing one that hold the row.
+    assert held == [
+        _SLICE, _SLICE[:4], _SLICE[4:], _SLICE[4:6], _SLICE[6:], [_SLICE[6]], [_SLICE[7]],
+        [["alpha", "maker/a-5"]],
+    ]
+    # The baseline and each slice run the suite; a half runs the file that failed.
+    assert runs == [[], [], *[["tests/test_x.py"]] * 6, []]
+    assert state["runs"]["slice0bba"] == {
+        "routes": [pinned], "total_route_cap_lifted": False, "files": ["tests/test_x.py"],
+        "summary": "1 failed", "failures": ["tests/test_x.py::test_pin[a b]"],
+    }
+
+
+def test_a_failure_that_needs_two_rows_held_is_reported_as_such(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fails(held: list[list[str]], files: list[str]) -> list[str]:
+        both = ["alpha", "maker/a-0"] in held and ["beta", "maker/b-2"] in held
+        return ["tests/test_x.py::test_last_host"] if both else []
+
+    _hold_sweep(monkeypatch, [_SLICE], fails)
+
+    sweep.holds(tmp_path / "out", workers=4, files=["tests/test_x.py", "tests/test_a.py"])
+
+    state = json.loads((tmp_path / "out" / "holds.json").read_text(encoding="utf-8"))
+    assert state["rows"] == {}
+    assert state["needs_several_rows"] == ["tests/test_x.py::test_last_host"]
+    assert state["files"] == ["tests/test_a.py", "tests/test_x.py"]
+
+
+def test_a_crashed_slice_is_halved_over_everything_it_ran(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Holding one row stops the app from starting: no test id names a file.
+    def fails(held: list[list[str]], files: list[str]) -> list[str]:
+        return [sweep.SESSION_CRASH] if ["alpha", "maker/a-1"] in held else []
+
+    _held, runs = _hold_sweep(monkeypatch, [_SLICE[:4]], fails)
+
+    sweep.holds(tmp_path / "out", workers=4, files=["tests/test_a.py"])
+
+    state = json.loads((tmp_path / "out" / "holds.json").read_text(encoding="utf-8"))
+    assert state["rows"] == {"alpha:maker/a-1": [sweep.SESSION_CRASH]}
+    assert all(files == ["tests/test_a.py"] for files in runs)
+
+
+@pytest.mark.parametrize("baseline_failures", FAILING_BASELINES)
+def test_a_holds_sweep_starts_only_from_a_passing_suite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, baseline_failures: tuple[str, ...]
+) -> None:
+    held, _runs = _hold_sweep(monkeypatch, [_SLICE], lambda *_: baseline_failures)
+
+    with pytest.raises(SystemExit, match="must pass before a sweep"):
+        sweep.holds(tmp_path / "out", workers=4, files=[])
+    assert held == []
+    assert not (tmp_path / "out" / "holds.json").exists()
+
+
+def test_a_holds_sweep_resumes_only_with_the_rows_and_files_it_was_written_with(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    held, runs = _hold_sweep(monkeypatch, [_SLICE], lambda *_: [])
+    sweep.holds(tmp_path / "out", workers=4, files=["tests/test_a.py"])
+    assert (held, len(runs)) == ([_SLICE], 2)
+
+    # Other files, then other rows: a hold was placed or lifted since.
+    with pytest.raises(SystemExit, match="sweep into a new OUT"):
+        sweep.holds(tmp_path / "out", workers=4, files=[])
+    monkeypatch.setattr(sweep, "plan_holds", lambda: {"slices": [_SLICE[1:]], "never_held": []})
+    with pytest.raises(SystemExit, match="sweep into a new OUT"):
+        sweep.holds(tmp_path / "out", workers=4, files=["tests/test_a.py"])
+    assert (held, len(runs)) == ([_SLICE], 2)
+    # What it was written with resumes, with nothing left to run.
+    monkeypatch.setattr(sweep, "plan_holds", lambda: {"slices": [_SLICE], "never_held": []})
+    sweep.holds(tmp_path / "out", workers=4, files=["tests/test_a.py"])
+    assert (held, len(runs)) == ([_SLICE], 2)
+
+
+def test_the_data_is_restored_when_the_step_refuses_a_hold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    restored: list[str] = []
+    monkeypatch.setattr(sweep, "restore", lambda: restored.append("restored"))
+    monkeypatch.setattr(sweep, "plan_holds", lambda: {"slices": [_SLICE], "never_held": []})
+    monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
+
+    def refuse(routes: list[list[str]]) -> dict[str, Any]:
+        restored.append("held")
+        raise SystemExit("the refresh's step would not hold")
+
+    monkeypatch.setattr(sweep, "hold_routes", refuse)
+
+    with pytest.raises(SystemExit, match="would not hold"):
+        sweep.holds(tmp_path / "out", workers=4, files=[])
+    assert restored[-2:] == ["held", "restored"]
+    assert not json.loads((tmp_path / "out" / "holds.json").read_text()).get("runs")
+
+
+def test_a_holds_step_that_fails_is_never_an_empty_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="the refresh's step would not hold [...]")
+
+    monkeypatch.setattr(sweep.subprocess, "run", run)
+
+    with pytest.raises(SystemExit, match="would not hold"):
+        sweep.hold_routes([["alpha", "maker/a-0"]])

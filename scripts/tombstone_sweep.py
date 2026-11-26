@@ -35,6 +35,10 @@ this in a disposable worktree with no uncommitted data edits:
     python3 scripts/tombstone_sweep.py values /tmp/values-out [--group-size 8] [--workers 8]
     python3 scripts/tombstone_sweep.py run featherless tests/test_x.py --perturb
 
+    # the refresh's own unserved-route hold on every routable row it can hold
+    python3 scripts/tombstone_sweep.py holds /tmp/holds-out [--workers 8] [--files tests/test_x.py ...]
+    python3 scripts/tombstone_sweep.py run - tests/test_x.py --hold nscale:z-ai/glm-5.3,wafer:moonshotai/kimi-k3
+
 A provider delisting is one event; a model vanishing is another: providers sunset
 a model one by one until none serves it (Fireworks retired GLM 5.2 on 2026-09-25),
 and no single provider's delisting shows that. `models` tombstones one model's
@@ -54,6 +58,33 @@ today's values: input prices x2 and output prices x0.5 with cache prices held,
 other prices and every limit x2 (with `--down`, input x0.5, output x2, other
 prices and limits x0.5). (The refresh's price-spike gate may hold a real jump
 that size; that gate is deliberate and not a test.)
+
+The refresh also holds routes itself. Its step
+scripts/pricing/unserved_route_holds.py marks a listed route the provider
+refuses to serve routable=false with routable_reason="provider-route-unserved",
+unserved_held_at and unserved_hold_count, on any routable row of any provider,
+and the shared manifest writers carry the hold forward until that step lifts it.
+The row stays listed, so this is not a delisting: a test that reads a committed
+row and expects it to route, or lists the states a row may be in, fails on the
+refresh's own snapshot. On 2026-11-26 the step held one Cloudflare row
+(meta-llama/llama-3.2-11b-vision-instruct) and the refresh could not publish,
+because a Cloudflare manifest test allowed every state but that one. `holds`
+finds such tests. The step itself places each hold
+(scripts/tombstone_sweep_holds.py calls it), so a row carries exactly what the
+refresh writes, under the step's own limits: never a provider's last routable
+row, never more than half of its rows. Each provider's routable rows are cut
+into the fewest runs those limits allow (two, three for an odd count, more
+where the step already holds rows), and slice k holds every provider's k-th cut
+at once. A failing slice is halved, over the files that failed, until each
+failure is on one row (`rows` in OUT/holds.json) or needs several rows held
+together (`needs_several_rows`); the step can hold those together too, so they
+are findings, not noise. The step's limit of 25 held rows in total is lifted
+for a run that holds more, since no sweep could cover every row inside it; such
+a run is marked total_route_cap_lifted, and a single row is always held within
+every limit. Only the manifests change, as in that step: the snapshot, and the
+files later refresh steps derive from the manifests, stay as committed.
+`--files` sweeps those test files instead of the release suite. It resumes from
+OUT/holds.json, and only with the same files and routable rows.
 
 A sweep starts from a passing release suite, so every failure under a
 delisting is that delisting's. It resumes from OUT/state.json, and only with the
@@ -262,6 +293,31 @@ def perturb(providers: list[str], *, down: bool = False, skew: bool = False) -> 
                 counts["fields"] += changed
     SNAPSHOT.write_text(json.dumps(snapshot), encoding="utf-8")
     return counts
+
+
+def _holds_step(command: str, **request: Any) -> dict[str, Any]:
+    """Ask scripts/tombstone_sweep_holds.py, under the worktree's interpreter:
+    it plans and places holds with the refresh's own step."""
+    proc = subprocess.run(  # noqa: S603 - fixed argv
+        ["uv", "run", "python", str(PLUGIN_DIR / "tombstone_sweep_holds.py"), command],  # noqa: S607 - uv from PATH
+        cwd=ROOT, env=dict(os.environ, PYTHONPATH=f"{ROOT / 'src'}{os.pathsep}{ROOT}"),
+        input=json.dumps({"manifest_dir": str(MANIFESTS), **request}),
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(f"tombstone_sweep_holds.py {command} failed: {(proc.stderr or proc.stdout).strip()[-2000:]}")
+    result: dict[str, Any] = json.loads(proc.stdout.strip().splitlines()[-1])
+    return result
+
+
+def plan_holds() -> dict[str, Any]:
+    """The slices of routable rows to hold together, and the rows the step never holds."""
+    return _holds_step("plan")
+
+
+def hold_routes(routes: list[list[str]]) -> dict[str, Any]:
+    """Hold these [provider, model] rows as the refresh's unserved-route step does."""
+    return _holds_step("hold", routes=routes)
 
 
 def run_pytest(files: list[str], workers: int, log: Path) -> tuple[set[str], str]:
@@ -565,6 +621,92 @@ def models(out: Path, workers: int, only: list[str]) -> None:
     log(f"done: {len(failing)} of {len(state['models'])} models break a release test when every host delists them")
 
 
+def holds(out: Path, workers: int, files: list[str]) -> None:
+    """Hold each slice of routable rows as the refresh's unserved-route step
+    does, then halve a failing slice until each failure is on one row.
+
+    A half runs only the files that failed with the whole held. A failure that
+    neither half reproduces needs rows from both, and is reported as such."""
+    out.mkdir(parents=True, exist_ok=True)
+    state_path = out / "holds.json"
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    files = sorted(files)
+
+    def save() -> None:
+        state_path.write_text(json.dumps(state, indent=1, sort_keys=True), encoding="utf-8")
+
+    def log(message: str) -> None:
+        print(f"{time.strftime('%H:%M:%S')} {message}", flush=True)
+
+    restore()
+    plan = plan_holds()
+    # A saved run is the rows this sweep would hold under its key, over the
+    # files it would run; anything else would report rows that were never held.
+    if state and (state.get("files") != files or state.get("slices") != plan["slices"]):
+        raise SystemExit(
+            f"{state_path}: written for other test files, or the routable rows have changed since "
+            "(a hold placed or lifted, a new manifest); sweep into a new OUT"
+        )
+    state.update(files=files, slices=plan["slices"], never_held=plan["never_held"])
+    # Every failure under a hold is that hold's only if these files pass without one.
+    if "baseline" not in state:
+        failures, summary = run_pytest(files, workers, out / "baseline.log")
+        if failures:
+            raise SystemExit(f"the release suite must pass before a sweep: {summary}; see {out / 'baseline.log'}")
+        state["baseline"] = {"failures": [], "summary": summary}
+        save()
+        log(f"baseline: {summary}")
+    elif state["baseline"]["failures"]:
+        raise SystemExit(f"{state_path}: its baseline did not pass ({state['baseline']['summary']}); sweep into a new OUT")
+    state.setdefault("runs", {})
+
+    def held_run(key: str, routes: list[list[str]], run_files: list[str]) -> list[str]:
+        if key not in state["runs"]:
+            try:
+                held = hold_routes(routes)
+                failures, summary = run_pytest(
+                    run_files, max(1, min(workers, len(run_files))) if run_files else workers,
+                    out / f"{key}.log",
+                )
+            finally:
+                restore()
+            state["runs"][key] = {
+                "routes": routes, "total_route_cap_lifted": held["total_route_cap_lifted"],
+                "files": run_files, "summary": summary, "failures": sorted(failures),
+            }
+            save()
+            held_rows = f"{routes[0][0]}:{routes[0][1]}" if len(routes) == 1 else f"{len(routes)} rows"
+            log(f"{key} ({held_rows}): {summary}")
+        failed: list[str] = state["runs"][key]["failures"]
+        return failed
+
+    def narrow(key: str, routes: list[list[str]], failures: list[str]) -> None:
+        if not failures or len(routes) == 1:
+            return
+        # A crash names no file: the halves run everything the slice ran.
+        run_files = files if SESSION_CRASH in failures else sorted({test.split("::")[0] for test in failures})
+        middle = len(routes) // 2
+        for half_key, half in ((f"{key}a", routes[:middle]), (f"{key}b", routes[middle:])):
+            narrow(half_key, half, held_run(half_key, half, run_files))
+
+    for index, routes in enumerate(plan["slices"]):
+        narrow(f"slice{index}", routes, held_run(f"slice{index}", routes, files))
+
+    state["rows"] = {
+        f"{run['routes'][0][0]}:{run['routes'][0][1]}": run["failures"]
+        for run in state["runs"].values() if len(run["routes"]) == 1 and run["failures"]
+    }
+    attributed = {test for failures in state["rows"].values() for test in failures}
+    in_a_slice = {
+        test for index in range(len(plan["slices"])) for test in state["runs"][f"slice{index}"]["failures"]
+    }
+    state["needs_several_rows"] = sorted(in_a_slice - attributed)
+    save()
+    log(f"done: {len(attributed)} tests fail with one row held ({len(state['rows'])} rows); "
+        f"{len(state['needs_several_rows'])} only with several rows held together; "
+        f"{len(plan['never_held'])} rows the step never holds")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -580,6 +722,8 @@ def main() -> None:
     run_parser.add_argument("--perturb", action="store_true", help="change prices and limits, not delist")
     run_parser.add_argument("--down", action="store_true", help="with --perturb, lower prices and raise limits")
     run_parser.add_argument("--skew", action="store_true", help="with --perturb, move prices and limits apart and far")
+    run_parser.add_argument("--hold", default="",
+                            help="comma-separated provider:model rows to hold as the refresh's unserved-route step does")
     values_parser = commands.add_parser("values")
     values_parser.add_argument("out", type=Path)
     values_parser.add_argument("--group-size", type=int, default=8)
@@ -592,6 +736,10 @@ def main() -> None:
     models_parser.add_argument("out", type=Path)
     models_parser.add_argument("--workers", type=int, default=6)
     models_parser.add_argument("--only", nargs="*", default=[], help="sweep just these model ids")
+    holds_parser = commands.add_parser("holds")
+    holds_parser.add_argument("out", type=Path)
+    holds_parser.add_argument("--workers", type=int, default=8)
+    holds_parser.add_argument("--files", nargs="*", default=[], help="sweep these test files, not the release suite")
     args = parser.parse_args()
     if not (ROOT / DATA_PATHS[1]).exists():
         raise SystemExit("run from the repository root of a disposable worktree")
@@ -605,6 +753,9 @@ def main() -> None:
         sweep(args.out, args.group_size, args.workers, values=True, thorough=args.thorough, down=args.down,
               skew=args.skew)
         return
+    if args.command == "holds":
+        holds(args.out, args.workers, args.files)
+        return
     providers = [] if args.providers == "-" else args.providers.split(",")
     restore()
     try:
@@ -613,6 +764,8 @@ def main() -> None:
                   perturb(providers, down=args.down, skew=args.skew) if args.perturb else delist(providers))
         for model_id in filter(None, args.vanish.split(",")):
             print("vanished:", model_id, delist_model(model_id))
+        if args.hold:
+            print("held:", hold_routes([route.split(":", 1) for route in args.hold.split(",")])["notes"])
         failures, summary = run_pytest(args.files, args.workers, Path(tempfile.mkstemp(suffix=".log")[1]))
     finally:
         restore()
