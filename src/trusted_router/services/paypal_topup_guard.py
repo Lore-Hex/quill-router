@@ -27,6 +27,10 @@ Enforced rules (``ENFORCED_RULES``), refused in ``enforce`` mode:
   created before that gate still exist).
 * ``new_workspace_amount_cap``: a non-established workspace asks for more
   than ``paypal_new_workspace_max_topup_cents`` in one PayPal top-up.
+* ``new_workspace_payer_not_verified``: PayPal did not attest VERIFIED
+  wallet status on the approved order for a non-established workspace.
+* ``invalid_paypal_payer_email``: an invalid or known typo address, or a
+  missing address on an order for a non-established workspace.
 * ``new_workspace_daily_captures`` / ``new_owner_daily_captures``: more
   PayPal captures in a rolling day than the per-workspace / per-owner limit.
 
@@ -36,7 +40,7 @@ quiet): ``phone_unverified``, ``payer_email_mismatch`` and
 intangible goods, so most of our captures are expected to be NOT_ELIGIBLE;
 the status is logged to measure that rather than to gate on it.
 
-Established workspaces skip every rule except the two account-state rules:
+Established workspaces skip the new-workspace limits and verification check:
 the owner is identity-verified, or the owner account is at least
 ``paypal_established_min_owner_age_days`` old and has topped up at least
 ``paypal_established_min_lifetime_topup_cents`` in total.
@@ -55,6 +59,8 @@ import logging
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from email_validator import EmailNotValidError, validate_email
+
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.services.abuse_tripwires import github_account_was_new, parse_time
@@ -71,6 +77,8 @@ RULE_ACCOUNT_RESTRICTED = "account_restricted"
 RULE_NEW_GITHUB_ACCOUNT = "new_github_account"
 RULE_DISPOSABLE_EMAIL = "disposable_email"
 RULE_AMOUNT_CAP = "new_workspace_amount_cap"
+RULE_PAYER_VERIFICATION = "new_workspace_payer_not_verified"
+RULE_PAYER_EMAIL = "invalid_paypal_payer_email"
 RULE_WORKSPACE_VELOCITY = "new_workspace_daily_captures"
 RULE_OWNER_VELOCITY = "new_owner_daily_captures"
 SIGNAL_PHONE_UNVERIFIED = "phone_unverified"
@@ -83,6 +91,8 @@ ENFORCED_RULES = frozenset({
     RULE_NEW_GITHUB_ACCOUNT,
     RULE_DISPOSABLE_EMAIL,
     RULE_AMOUNT_CAP,
+    RULE_PAYER_VERIFICATION,
+    RULE_PAYER_EMAIL,
     RULE_WORKSPACE_VELOCITY,
     RULE_OWNER_VELOCITY,
 })
@@ -314,6 +324,34 @@ def check_paypal_capture(
     if enforced:
         raise _refusal(enforced, settings)
     return subject
+
+
+def check_approved_paypal_payer(
+    subject: GuardSubject, *, account_status: object, payer_email: object,
+    credit_cents: int, settings: Settings,
+) -> None:
+    """Use only the merchant's authenticated Orders response, never browser fields."""
+    findings: list[str] = []
+    if not subject.established:
+        if account_status != "VERIFIED":
+            findings.append(RULE_PAYER_VERIFICATION)
+        if credit_cents > settings.paypal_new_workspace_max_topup_cents:
+            findings.append(RULE_AMOUNT_CAP)
+    if payer_email is not None or not subject.established:
+        try:
+            domain = validate_email(
+                payer_email.strip() if isinstance(payer_email, str) else "",
+                check_deliverability=False,
+            ).domain.lower()
+        except EmailNotValidError:
+            domain = ""
+        # Exact known mistakes only. Never fuzzy-match custom or international domains.
+        if not domain or domain.endswith(".con") or domain in {"gmial.com", "gamil.com", "gmai.com"}:
+            findings.append(RULE_PAYER_EMAIL)
+    enforced = _enforced(findings, settings)
+    _report("approved_order", subject, findings, enforced)
+    if enforced:
+        raise _refusal(enforced, settings)
 
 
 def _velocity_findings(store: Any, subject: GuardSubject, settings: Settings) -> list[str]:

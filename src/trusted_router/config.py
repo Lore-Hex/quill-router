@@ -649,7 +649,7 @@ class Settings(BaseSettings):
     paypal_topup_guard_log_only_rules: str = ""
     # Largest single PayPal top-up (credit amount) for a workspace that is not
     # yet established.
-    paypal_new_workspace_max_topup_cents: int = 10_000
+    paypal_new_workspace_max_topup_cents: int = 2_500
     # PayPal captures per rolling day for a workspace / owner not established.
     paypal_new_workspace_daily_captures: int = 2
     paypal_new_owner_daily_captures: int = 3

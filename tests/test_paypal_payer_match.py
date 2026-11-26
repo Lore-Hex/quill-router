@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from tests.paypal_approved_order import mock_approved_order
 from trusted_router.config import Settings
 from trusted_router.services import paypal_billing
 from trusted_router.services.paypal_billing import (
@@ -59,6 +60,7 @@ def test_capture_records_payer_match_boolean(
     monkeypatch: pytest.MonkeyPatch, payer_email: str, expected: bool,
 ) -> None:
     workspace_id, user_id = _account("owner@example.com")
+    mock_approved_order(monkeypatch, workspace_id)
     monkeypatch.setattr(
         paypal_billing, "_paypal_post",
         lambda *_a, **_k: _order(workspace_id, user_id, payer_email=payer_email),
@@ -79,6 +81,7 @@ def test_capture_records_payer_match_boolean(
 
 def test_capture_without_payer_email_records_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     workspace_id, user_id = _account("owner@example.com")
+    mock_approved_order(monkeypatch, workspace_id)
     monkeypatch.setattr(
         paypal_billing, "_paypal_post",
         lambda *_a, **_k: _order(workspace_id, user_id, payer_email=None),
@@ -106,6 +109,7 @@ def test_legacy_reference_falls_back_to_workspace_owner() -> None:
 
 def test_store_failure_never_fails_the_capture(monkeypatch: pytest.MonkeyPatch) -> None:
     workspace_id, user_id = _account("owner@example.com")
+    mock_approved_order(monkeypatch, workspace_id)
 
     def broken(*_a: object, **_k: object) -> None:
         raise RuntimeError("store down")
