@@ -419,6 +419,27 @@ from one window's cadence, not a measurement of the new workflow.
 
 ## Validation and measurement
 
+Normal releases have three bounded shortcuts:
+
+* Selection reuses the previous main-push selector's immutable receipt. A run
+  ID, attempt, commit or update timestamp mismatch triggers fresh job reads.
+  Missing evidence, a changed verifier, or changed main ancestry causes a cold
+  scan. The log separates total historical rows from reused rows.
+* The typed-counter and fast-path migrations batch named table/column checks
+  against live Spanner metadata. The snapshot lasts one script invocation and
+  is invalidated before any DDL. Index readiness, timestamp options, backfills
+  and fresh reads on a miss still run.
+* For changes confined to reviewed standalone worker entry points, the public
+  site can retain its last smoke-tested image for up to one day. The four
+  serving revisions, public invoker permissions, configuration, secret version
+  metadata, runtime layers and live API release must match the evidence.
+  Anything unknown uses the ordinary public rollout. The public edge smoke
+  always runs. Only the exact control-plane evidence URL follows the API; the
+  gateway attestation documents still follow the trust/public surface.
+
+The first eligible release seeds the receipts. Do not infer a production
+speedup from a cold run or mix worker-only releases with full website releases.
+
 Tests cover process handoffs, late failures, serial fallback, malformed tokens,
 worker cleanup, complete retention, stale fences, primary isolation, prepared
 successor eligibility, out-of-order preparation and cloud gate reconciliation.

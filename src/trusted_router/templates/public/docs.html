@@ -188,6 +188,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
 
 <section id="model-capabilities" style="margin-top:48px">
   <h2 class="section-center" id="model-request-capabilities">{{ topic("model-capabilities", "Model request capabilities") }}</h2>
+  <p>Some models price long prompts higher. In the models API, <code>pricing.tiers</code> lists each tier's prompt, completion, and available cache-read prices. The tier is chosen by the request's total prompt tokens, counting cached tokens, including cache reads and cache creation.</p>
   <h3 id="media-discovery">{{ topic("media-discovery", "Media options and prices") }}</h3>
   <p>To budget a video, use <code>pricing</code> on <code>/v1/videos/models</code> or <code>trustedrouter.media.pricing</code> on <code>/v1/models</code>. The general catalog's <code>pricing.prompt</code> and <code>pricing.completion</code> are token prices, not the cost of a video.</p>
   <p>Match the provider, resolution, audio and input mode. Multiply <code>usd_per_second</code> by a duration in <code>priced_durations</code>, or look up the exact total in <code>usd_by_duration</code> where rounding or a minimum applies.</p>

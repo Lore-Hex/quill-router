@@ -322,6 +322,42 @@ def test_later_queued_runs_do_not_repeat_delivered_batch():
     assert result["release"]["commit"] == C and result["deploy"] is False
 
 
+@pytest.mark.parametrize("change", ["none", "attempt", "timestamp", "ancestry", "verifier", "fork", "malformed"])
+def test_history_checkpoint_rechecks_new_changed_or_untrusted_receipts(change, monkeypatch):
+    api = Evidence()
+    delivered(api, run_id=4)
+    delivered(api, controller=B, selected=C, run_id=5)
+    def listed(run_id, sha):
+        return {"databaseId": run_id, "headSha": sha, "attempt": 1, "updatedAt": "2026-11-25T00:00:00Z",
+                "event": "push", "headBranch": "main", "status": "completed", "conclusion": "success"}
+    old, latest = listed(4, A), listed(5, B)
+    evidence = {}
+    train.read_deliveries(api, [old], D, checkpoint=evidence)
+    api.runs[5]["head_repository"] = {"full_name": train.REPO}
+    api.artifacts[5, "selected"].update(controller_attempt=1, history=evidence)
+    if change == "attempt":
+        old["attempt"] = 2
+    elif change == "timestamp":
+        old["updatedAt"] = "2026-11-25T01:00:00Z"
+    elif change == "ancestry":
+        evidence["head"] = "f" * 40
+    elif change == "verifier":
+        evidence["verifier"] = "old"
+    elif change == "fork":
+        api.runs[5]["head_repository"]["full_name"] = "other/repo"
+    elif change == "malformed":
+        evidence["entries"][train.history_key(old)] = {"commit": "main"}
+    jobs = api.jobs
+    calls = []
+    def record(i):
+        calls.append(i)
+        return jobs(i)
+    monkeypatch.setattr(api, "jobs", record)
+    assert train.read_deliveries(api, [latest, old], D, checkpoint={}) == ([C, C], [])
+    assert 5 in calls
+    assert (4 in calls) == (change != "none")
+
+
 def test_legacy_delivery_also_prevents_downgrade():
     api = Evidence()
     delivered(api, controller=C)

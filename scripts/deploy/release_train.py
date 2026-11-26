@@ -8,6 +8,7 @@ must not run a newer image with an older, different production workflow.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -32,6 +33,7 @@ COMPATIBILITY_PATHS = (
     "scripts/deploy/release_train.py", "scripts/deploy/superseded_deploy.py",
     ".github/workflows/deploy-public-docs.yml", "scripts/deploy/public_docs.py",
     "scripts/deploy/public_surface.sh",
+    "scripts/deploy/public_reuse.py",
 )
 FULL_SHA = re.compile(r"[a-f0-9]{40}")
 MAX_ARTIFACT_BYTES = 1024 * 1024
@@ -73,13 +75,13 @@ class Release:
         return cls(**raw)
 
 
-def manifest_from_zip(content: bytes) -> dict:
+def manifest_from_zip(content: bytes, *, max_manifest: int = MAX_MANIFEST_BYTES) -> dict:
     require(len(content) <= MAX_ARTIFACT_BYTES, "oversized release artifact")
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             files = archive.infolist()
             require(len(files) == 1 and files[0].filename == "release.json"
-                    and files[0].file_size <= MAX_MANIFEST_BYTES,
+                    and files[0].file_size <= max_manifest,
                     "release artifact must contain only bounded release.json")
             raw = json.loads(archive.read(files[0]))
     except (ValueError, OSError, RuntimeError, zipfile.BadZipFile, KeyError) as exc:
@@ -126,6 +128,22 @@ class GitHub:
                 "invalid comparison SHA")
         if base == head:
             return "identical"
+        # Full commit history (without historical blobs) comes from the
+        # checkout of this repository. A positive Git proof works offline;
+        # a missing/new object or an inconclusive comparison uses GitHub.
+        if os.environ.get("TR_TRAIN_LOCAL_ANCESTRY") == "true":
+            try:
+                for ancestor, descendant, relation in ((base, head, "ahead"), (head, base, "behind")):
+                    result = subprocess.run(  # noqa: S603
+                        ["git", "--no-replace-objects", "merge-base", "--is-ancestor", ancestor, descendant],  # noqa: S607
+                        capture_output=True, timeout=2, env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
+                    )
+                    if result.returncode == 0:
+                        return relation
+                    if result.returncode != 1:
+                        break
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         raw = self.json("api", f"repos/{REPO}/compare/{base}...{head}")
         require(isinstance(raw, dict), "invalid commit comparison")
         return str(raw.get("status", "unknown"))
@@ -183,7 +201,7 @@ class GitHub:
         return True
 
     def artifact(self, run: dict, kind: str) -> dict:
-        require(kind in {"prepared", "selected", "public"}, "unknown release artifact")
+        require(kind in {"prepared", "selected", "public", "website"}, "unknown release artifact")
         rows = self.json("api", f"repos/{REPO}/actions/runs/{run['id']}/artifacts?per_page=100")
         require(isinstance(rows, dict) and isinstance(rows.get("artifacts"), list)
                 and rows.get("total_count", 101) <= 100, "incomplete release artifact listing")
@@ -221,7 +239,7 @@ class GitHub:
                 raise Refused("release artifact download failed") from exc
             except (OSError, subprocess.SubprocessError) as exc:
                 raise Refused("release artifact download failed") from exc
-        raw = manifest_from_zip(result.stdout)
+        raw = manifest_from_zip(result.stdout, max_manifest=65536 if kind == "selected" else MAX_MANIFEST_BYTES)
         require(type(raw.get("schema_version")) is int and raw["schema_version"] == 1,
                 "unknown release manifest version")
         if kind == "prepared":
@@ -268,7 +286,64 @@ def public_delivered(jobs: list[dict]) -> bool:
     return markers[0]["conclusion"] == "success"
 
 
-def read_deliveries(api: GitHub, history: list[dict], head: str) -> tuple[list[str], list[Release]]:
+def history_key(row: dict) -> str:
+    if (type(row.get("databaseId")) is not int or type(row.get("attempt")) is not int
+            or row["databaseId"] <= 0 or row["attempt"] <= 0
+            or not FULL_SHA.fullmatch(str(row.get("headSha", "")))
+            or not re.fullmatch(r"[0-9T:.Z+-]{20,35}", str(row.get("updatedAt", "")))
+            or (row.get("status"), row.get("conclusion")) != ("completed", "success")):
+        return ""
+    return f"{row['databaseId']}:{row['attempt']}:{row['headSha']}:{row['updatedAt']}"
+
+
+def verifier_version() -> str:
+    root = Path(__file__).resolve().parents[2]
+    digest = hashlib.sha256()
+    for path in COMPATIBILITY_PATHS:
+        digest.update(hashlib.sha256((root / path).read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def previous_history(api: GitHub, history: list[dict], head: str) -> dict:
+    # Only a selected receipt from our successful main push can certify an
+    # earlier scan. Never trust a branch cache, a dispatch, or an old attempt.
+    candidates = (r for r in history if history_key(r) and r.get("headBranch") == "main"
+                  and r.get("event") == "push")
+    for _ in range(3):
+        listed = next(candidates, None)
+        if listed is None:
+            break
+        try:
+            run = api.run(listed["databaseId"])
+            require((run.get("head_branch"), run.get("event"), run.get("head_sha"),
+                     run.get("run_attempt"), run.get("status"), run.get("conclusion")) ==
+                    ("main", "push", listed["headSha"], listed["attempt"], "completed", "success")
+                    and run.get("head_repository", {}).get("full_name") == REPO, "untrusted checkpoint run")
+            receipt = api.artifact(run, "selected")
+            checkpoint = receipt["history"]
+            require(receipt["controller_attempt"] == listed["attempt"] and
+                    checkpoint["verifier"] == verifier_version() and
+                    api.relation(run["head_sha"], checkpoint["head"]) in {"ahead", "identical"} and
+                    api.relation(checkpoint["head"], head) in {"ahead", "identical"},
+                    "stale release-history checkpoint")
+            entries = checkpoint["entries"]
+            require(isinstance(entries, dict) and len(entries) <= 100, "invalid checkpoint size")
+            parsed = {}
+            for key, value in entries.items():
+                if isinstance(value, dict):
+                    parsed[key] = Release.parse(value)
+                else:
+                    require(value is None or isinstance(value, str) and FULL_SHA.fullmatch(value) is not None,
+                            "invalid checkpoint delivery")
+                    parsed[key] = value
+            return parsed
+        except (Refused, KeyError, ValueError, TypeError, AttributeError):
+            continue
+    return {}
+
+
+def read_deliveries(api: GitHub, history: list[dict], head: str, *,
+                    checkpoint: dict | None = None) -> tuple[list[str], list[Release]]:
     """Verify every completed success, before choosing a successor or refreshing evidence."""
     def read(listed: dict) -> str | Release | None:
         try:
@@ -289,6 +364,7 @@ def read_deliveries(api: GitHub, history: list[dict], head: str) -> tuple[list[s
             return public
         return None
 
+    cached = previous_history(api, history, head) if checkpoint is not None else {}
     delivered: list[str] = []
     public_deliveries: list[Release] = []
     started = time.monotonic()
@@ -304,6 +380,10 @@ def read_deliveries(api: GitHub, history: list[dict], head: str) -> tuple[list[s
                 if item is None:
                     break
                 i, listed = item
+                key = history_key(listed)
+                if key and key in cached:
+                    receipts[i] = cached[key]
+                    continue
                 pending[pool.submit(read, listed)] = i
             if not pending:
                 break
@@ -311,12 +391,18 @@ def read_deliveries(api: GitHub, history: list[dict], head: str) -> tuple[list[s
             for future in finished:
                 receipts[pending.pop(future)] = future.result()
     # Public no-downgrade floors must retain the listing order, not finish order.
-    for receipt in receipts:
+    entries = {}
+    for row, receipt in zip(history, receipts, strict=True):
+        if key := history_key(row):
+            entries[key] = asdict(receipt) if isinstance(receipt, Release) else receipt
         if isinstance(receipt, Release):
             public_deliveries.append(receipt)
         elif receipt is not None:
             delivered.append(receipt)
-    print(f"release history: checked={len(history)} api={len(delivered)} public={len(public_deliveries)} "
+    if checkpoint is not None:
+        checkpoint.update(verifier=verifier_version(), head=head, entries=entries)
+    print(f"release history: checked={len(history)} reused={len(entries.keys() & cached.keys())} "
+          f"api={len(delivered)} public={len(public_deliveries)} "
           f"elapsed_seconds={time.monotonic() - started:.1f}")
     return delivered, public_deliveries
 
@@ -327,17 +413,18 @@ def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False
     tracking = automatic(controller)
     require(not (tracking and hotfix), "main-tracking trains require green CI")
     chosen, ci_run, deploy = base, 0 if hotfix else api.ci(base.commit), True
+    checkpoint: dict = {}
     if tracking:
         head = api.json("api", f"repos/{REPO}/git/ref/heads/main")["object"]["sha"]
         require(api.relation(base.commit, head) in {"ahead", "identical"}, "controller left main")
         runs = api.json("run", "list", "--repo", REPO, "--workflow", "deploy.yml", "--branch", "main",
                         "--limit", "100", "--json",
-                        "databaseId,status,conclusion,headSha,headBranch,event,displayTitle")
+                        "databaseId,status,conclusion,headSha,headBranch,event,displayTitle,attempt,updatedAt")
         require(isinstance(runs, list), "release train queue unavailable")
         others = [r for r in runs if r.get("databaseId") != controller["id"]]
         delivered, public_deliveries = read_deliveries(api, [
             r for r in others if r.get("status") == "completed" and r.get("conclusion") == "success"
-        ], head)
+        ], head, checkpoint=checkpoint)
         for listed in others:
             try:
                 if not superseded.tracks_main(listed) or listed.get("status") == "completed":
@@ -383,7 +470,8 @@ def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False
         ci_run = api.ci(chosen.commit)
     return {"schema_version": 1, "controller_commit": controller["head_sha"],
             "controller_run": controller["id"], "controller_attempt": controller["run_attempt"],
-            "release": asdict(chosen), "ci_run": ci_run, "deploy": deploy}
+            "release": asdict(chosen), "ci_run": ci_run, "deploy": deploy,
+            **({"history": checkpoint} if checkpoint else {})}
 
 
 class NeedsIncidentBuild(Refused):

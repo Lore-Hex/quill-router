@@ -29,7 +29,7 @@ from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_postgres import PostgresStore
 from trusted_router.typed_balance import live_credit_summary
 
-CREDIT = 300_000
+CREDIT = 30_000
 
 
 @pytest.mark.parametrize(
@@ -86,6 +86,17 @@ def _credit_for(store: Any, email: str, *, limit: int | None, credit: int = CRED
     )
     summary = live_credit_summary(_workspace_id(store, user.id), store=store)
     return int(summary["total_credits"]) if summary else 0
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_new_default_does_not_replace_or_repeat_a_historical_grant(backend: str) -> None:
+    store = BACKENDS[backend]()
+    current = Settings(environment="test").signup_trial_credit_microdollars
+    old_email, new_email = "old@gmail.com", "new@gmail.com"
+    assert _credit_for(store, old_email, limit=None, credit=300_000) == 300_000
+    assert _credit_for(store, new_email, limit=None, credit=current) == 30_000
+    assert _credit_for(store, old_email, limit=None, credit=current) == 300_000
+    assert _credit_for(store, new_email, limit=None, credit=current) == 30_000
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

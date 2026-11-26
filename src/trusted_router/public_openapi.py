@@ -25,6 +25,48 @@ INFERENCE_API_SERVERS: tuple[dict[str, str], ...] = (
 HTTP_METHODS = frozenset({"delete", "get", "head", "options", "patch", "post", "put", "trace"})
 
 
+def catalog_pricing_responses() -> dict[str, Any]:
+    """Document the additive pricing fields without filtering catalog responses."""
+    rates = {
+        "prompt": {"type": "string", "description": "USD per input token."},
+        "completion": {"type": "string", "description": "USD per output token."},
+        "input_cache_read": {"type": "string", "description": "USD per cached input token, when declared."},
+    }
+    pricing = {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            **rates,
+            "tiers": {
+                "type": "array",
+                "minItems": 2,
+                "description": (
+                    "Ordered customer token prices, present for routes with multiple tiers; "
+                    "the tier is chosen by total prompt tokens including cached tokens "
+                    "(cache reads and cache creation)."
+                ),
+                "items": {
+                    "type": "object",
+                    "required": ["max_prompt_tokens", "prompt", "completion"],
+                    "properties": {
+                        "max_prompt_tokens": {
+                            "anyOf": [{"type": "integer"}, {"type": "null"}],
+                            "description": "Inclusive prompt-token bound; null for the final tier.",
+                        },
+                        **rates,
+                    },
+                },
+            },
+        },
+    }
+    return {"200": {"content": {"application/json": {"schema": {
+        "type": "object",
+        "properties": {"data": {"type": "array", "items": {
+            "type": "object", "properties": {"pricing": pricing},
+        }}},
+    }}}}}
+
+
 def inference_servers() -> list[dict[str, str]]:
     return [dict(server) for server in INFERENCE_API_SERVERS]
 

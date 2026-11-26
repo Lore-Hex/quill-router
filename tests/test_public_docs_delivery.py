@@ -398,4 +398,11 @@ def test_workflow_retains_ci_immutable_build_and_exclusive_ordering():
     observations = [s for s in full_steps if "scripts.deploy.public_rollout_report" in s.get("run", "")]
     assert len(observations) == 2 and all(s["continue-on-error"] and "id" not in s for s in observations)
     mutations = [s for s in full_steps if "bash scripts/deploy/public_surface.sh" in s.get("run", "")]
-    assert len(mutations) == 1 and "if" not in mutations[0]
+    assert len(mutations) == 1
+    assert mutations[0]["if"] == "steps.website.outcome != 'success' || steps.website.outputs.reuse != 'true'"
+    plan, = [step for step in full_steps if step.get("id") == "website"]
+    assert plan["if"] == "steps.public_stage.outputs.stage == 'routed' && github.event_name == 'push'"
+    assert plan["run"].splitlines() == ["bash scripts/deploy/deploy_mutex.sh assert",
+                                        "python3 -m scripts.deploy.public_reuse plan"]
+    smoke, = [step for step in full_steps if step.get("name") == "Smoke isolated T1 public service"]
+    assert "if" not in smoke and full_steps.index(plan) < full_steps.index(mutations[0]) < full_steps.index(smoke)

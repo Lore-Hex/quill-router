@@ -320,7 +320,7 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
     assert user is not None
     assert user.email_verified is True
     workspace = STORE.list_workspaces_for_user(user.id)[0]
-    assert live_credit_summary(workspace.id)["total_credits"] == 300_000
+    assert live_credit_summary(workspace.id)["total_credits"] == 30_000
 
 
 @pytest.mark.parametrize("provider", ["google", "github"])
@@ -647,8 +647,8 @@ async def test_github_callback_creates_session(github_client: TestClient) -> Non
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("email", "account_age_days", "expected_credit"), [
-    ("gh@example.com", 400, 300_000),
-    ("gh@example.com", 31, 300_000),
+    ("gh@example.com", 400, 30_000),
+    ("gh@example.com", 31, 30_000),
     ("gh@example.com", 29, 0),
     ("gh@example.com", 0, 0),
     ("gh@example.com", None, 0),

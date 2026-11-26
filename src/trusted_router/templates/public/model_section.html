@@ -94,6 +94,9 @@
             {{ provider_privacy_badges(endpoint) }}
           </td>
         </tr>
+        {% if endpoint.long_prompt_prices %}
+        <tr class="model-tier-prices"><td colspan="5">{% for line in endpoint.long_prompt_prices %}<div>{{ line }}</div>{% endfor %}</td></tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
@@ -194,10 +197,13 @@
             {% endif %}
             {% endif %}
             {% else %}
-            Flat
+            {{ 'By prompt length' if endpoint.long_prompt_prices else 'Flat' }}
             {% endif %}
           </td>
         </tr>
+        {% if endpoint.long_prompt_prices %}
+        <tr class="model-tier-prices"><td colspan="5">{% for line in endpoint.long_prompt_prices %}<div>{{ line }}</div>{% endfor %}</td></tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>

@@ -470,7 +470,7 @@ def test_http_redirects_to_https(client: httpx.Client) -> None:
 def test_plain_email_signup_is_closed(client: httpx.Client) -> None:
     """Plain-email /v1/signup is closed in prod (TR_EMAIL_SIGNUP_ENABLED
     is false) to stop credit-farming via disposable addresses — it was
-    an open endpoint minting a management key + $0.30 trial credit for
+    an open endpoint minting a management key and starter credit for
     any email. Real signups go through Google or GitHub.
     Smoke-verify the abuse endpoint stays closed; a deploy that reopens
     it (flips the flag on) trips this. The request is rejected before any

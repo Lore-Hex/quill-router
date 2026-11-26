@@ -68,10 +68,19 @@ def inventory_settings(surface, enabled):
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False, console_support=False,
               wallet_email_verify=False, routing_evidence=False, request_billing=False,
-              byok_docs=False, notes=False, activity_tags=False, rerank_catalog=False, rerank_gateway=False):
+              byok_docs=False, notes=False, activity_tags=False, rerank_catalog=False, rerank_gateway=False,
+              evidence_surface=None):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    if evidence_surface:
+        evidence = ["/trust/control-plane.json", ["GET"], "register_control_plane_evidence.<locals>.trust_control_plane"]
+        exists = evidence_surface in {"control", "public", "observer", "combined"}
+        assert routes.count(evidence) == int(exists)
+        if exists:
+            routes.remove(evidence)
+        if evidence_surface in {"public", "observer", "combined"}:
+            routes.append([evidence[0], evidence[1], "register_public_routes.<locals>.trust_control_plane"])
     for prefix in ("", "/v1"):
         catalog_route = [f"{prefix}/rerank/models", ["GET"],
                          "register_catalog_routes.<locals>.rerank_models"]
@@ -208,6 +217,7 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     assert delta["base_revision"] == "43f8cf6e73c999bc2140147e854f2ff96b2f124b"
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
     assert inventory(app, delta["surfaces"][surface],
+                     evidence_surface=surface,
                      rerank_catalog=surface in {"combined", "public", "observer"},
                      rerank_gateway=surface in {"combined", "control"},
                      abliterated_page=surface in {"combined", "public", "observer"},
@@ -487,6 +497,15 @@ def test_existing_factory_code_matches_frozen_main_below_worker_branch():
     node = ast.parse(inspect.getsource(create_app)).body[0]
     node.body = [statement for statement in node.body if not (
         isinstance(statement, ast.If) and ast.unparse(statement.test) == "surface == 'settle-drain'")]
+    # Remove only this exact reviewed addition; hash every other factory node
+    # against the original fixture, including the public registration branch.
+    branch, = [s for s in node.body if isinstance(s, ast.If)
+               and ast.unparse(s.test) == "surface in {'combined', 'public', 'observer'}"
+               and ast.unparse(s.body[0]) == "register_public_routes(app, settings)"]
+    extra, = branch.orelse
+    assert ast.dump(extra) == ast.dump(ast.parse(
+        "if surface == 'control': register_control_plane_evidence(app, settings)").body[0])
+    branch.orelse.clear()
     assert hashlib.sha256(ast.dump(node).encode()).hexdigest() == frozen["factory_ast_sha256"]
 
 
