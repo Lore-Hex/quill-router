@@ -91,6 +91,15 @@ def _price_llama_31_8b(monkeypatch: pytest.MonkeyPatch) -> None:
     ))
 
 
+def _llama_31_8b_on_a_byok_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key's limit needs a bring-your-own-key route to ride on, not today's
+    catalog. The model's only such route was one host's, and that host
+    delisting the model (2026-11-26) turned "limit reached" into "no route"."""
+    serve_on_fixture_route(
+        monkeypatch, "meta-llama/llama-3.1-8b-instruct", "novita", author="meta-llama", usage_type="BYOK",
+    )
+
+
 def test_inference_key_cannot_call_management_api(
     client: TestClient, inference_headers: dict[str, str]
 ) -> None:
@@ -742,7 +751,9 @@ def test_prepaid_insufficient_credits_blocks_before_provider_call(
 def test_api_key_limit_blocks_credit_and_byok_usage(
     client: TestClient,
     user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _llama_31_8b_on_a_byok_route(monkeypatch)
     created = client.post(
         "/v1/keys",
         headers=user_headers,
@@ -769,6 +780,7 @@ def test_api_key_limit_can_exclude_byok_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _price_llama_31_8b(monkeypatch)
+    _llama_31_8b_on_a_byok_route(monkeypatch)
     created = client.post(
         "/v1/keys",
         headers=user_headers,
