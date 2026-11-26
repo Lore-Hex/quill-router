@@ -35,7 +35,7 @@ export OPENAI_BASE_URL="{{ api_base_url }}"</code></pre>
       <p>Claude Code:</p>
       <pre><code>export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
 export ANTHROPIC_AUTH_TOKEN="$TRUSTEDROUTER_API_KEY"</code></pre>
-      <p>Claude Code also needs its models pinned to listed IDs with the <span class="mono">anthropic/</span> prefix; the <a href="/docs/claude-code">Claude Code guide</a> has the lines to copy.</p>
+      <p>Claude Code's default model IDs are accepted as sent. To choose other models, set listed IDs with the <span class="mono">anthropic/</span> prefix; the <a href="/docs/claude-code">Claude Code guide</a> has the lines to copy.</p>
       <p>Anthropic SDKs:</p>
       <pre><code># Anthropic SDKs use the non-/v1 base URL.
 export ANTHROPIC_API_KEY="$TRUSTEDROUTER_API_KEY"

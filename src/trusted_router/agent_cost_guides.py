@@ -30,6 +30,7 @@ from trusted_router.pricing import (
     PriceTier,
     resolve_request_rates,
 )
+from trusted_router.routing import native_model_id_targets
 
 DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash"
 COST_GUIDE_ROUTES = (
@@ -231,6 +232,22 @@ def _newest_claude(rows: list[dict[str, Any]], family: str) -> dict[str, Any] | 
     return max(numbered, key=lambda entry: entry[0])[1] if numbered else None
 
 
+def _native_id_example(model_ids: list[str]) -> dict[str, str] | None:
+    """One of Anthropic's own ids the router accepts, with the listed model it names.
+
+    Read from the router's own map, so the page shows an id only while it
+    resolves. The first of `model_ids` with such an id is used, by its
+    shortest spelling.
+    """
+    spellings: dict[str, list[str]] = {}
+    for spelling, model_id in native_model_id_targets().items():
+        spellings.setdefault(model_id, []).append(spelling)
+    for model_id in model_ids:
+        if model_id in spellings:
+            return {"native_id": min(spellings[model_id], key=lambda s: (len(s), s)), "model_id": model_id}
+    return None
+
+
 def claude_code_context() -> dict[str, Any]:
     return _claude_code_context(_context_revision())
 
@@ -274,12 +291,13 @@ def _claude_code_context(revision: tuple[tuple[int, str], int]) -> dict[str, Any
     # quality score.
     newest = {family: _newest_claude(rows, family) for family, _ in CLAUDE_CODE_ALIAS_VARIABLES}
     premium = newest["opus"]
-    # Claude Code sends Anthropic's own ids for its aliases; this API accepts
-    # catalog ids, so the guide pins each alias to a listed one.
+    # Claude Code sends Anthropic's own ids for its aliases. The router accepts
+    # one when it names a listed model, so the pins are a choice, not a step.
     pins = [{"variable": variable, "model_id": row["model"].id}
             for family, variable in CLAUDE_CODE_ALIAS_VARIABLES if (row := newest[family]) is not None]
     return {"claude_guide": {
         "rows": rows, "cheapest": rows[0] if rows else None, "premium": premium, "pins": pins,
+        "native_example": _native_id_example([pin["model_id"] for pin in pins]),
         "requests": CLAUDE_SESSION_REQUESTS,
         "input_tokens": CLAUDE_SESSION_INPUT_TOKENS, "output_tokens": CLAUDE_SESSION_OUTPUT_TOKENS,
         "input_millions": _rate(Decimal(CLAUDE_SESSION_REQUESTS * CLAUDE_SESSION_INPUT_TOKENS) / _MILLION),
