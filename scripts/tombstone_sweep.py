@@ -75,10 +75,10 @@ refresh writes, under the step's own limits: never a provider's last routable
 row, never more than half of its rows. Each provider's routable rows are cut
 into the fewest runs those limits allow (two, three for an odd count, more
 where the step already holds rows), and slice k holds every provider's k-th cut
-at once. A failing slice is halved, over the files that failed, until each
-failure is on one row (`rows` in OUT/holds.json) or needs several rows held
-together (`needs_several_rows`); the step can hold those together too, so they
-are findings, not noise. The step's limit of 25 held rows in total is lifted
+at once. Once every slice has run, a failing one is halved, over the files that
+failed, until each failure is on one row (`rows` in OUT/holds.json) or needs
+several rows held together (`needs_several_rows`); the step can hold those
+together too, so they are findings, not noise. The step's limit of 25 held rows in total is lifted
 for a run that holds more, since no sweep could cover every row inside it; such
 a run is marked total_route_cap_lifted, and a single row is always held within
 every limit. Only the manifests change, as in that step: the snapshot, and the
@@ -689,8 +689,13 @@ def holds(out: Path, workers: int, files: list[str]) -> None:
         for half_key, half in ((f"{key}a", routes[:middle]), (f"{key}b", routes[middle:])):
             narrow(half_key, half, held_run(half_key, half, run_files))
 
-    for index, routes in enumerate(plan["slices"]):
-        narrow(f"slice{index}", routes, held_run(f"slice{index}", routes, files))
+    # Every slice first: which tests fail under a hold is known after one run
+    # per slice, and the halving, which is most of a sweep, can be left to resume.
+    whole = [(f"slice{index}", routes) for index, routes in enumerate(plan["slices"])]
+    for key, routes in whole:
+        held_run(key, routes, files)
+    for key, routes in whole:
+        narrow(key, routes, held_run(key, routes, files))
 
     state["rows"] = {
         f"{run['routes'][0][0]}:{run['routes'][0][1]}": run["failures"]

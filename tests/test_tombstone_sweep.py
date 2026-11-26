@@ -687,13 +687,13 @@ def test_the_holds_sweep_halves_a_failing_slice_down_to_the_row(
     assert state["rows"] == {"beta:maker/b-1": ["tests/test_x.py::test_pin[a b]"]}
     assert state["needs_several_rows"] == []
     assert state["never_held"] == [["single", "maker/only"]]
-    # Both slices whole, then only the halves of the failing one that hold the row.
+    # Both slices whole first, then only the halves of the failing one that hold the row.
     assert held == [
-        _SLICE, _SLICE[:4], _SLICE[4:], _SLICE[4:6], _SLICE[6:], [_SLICE[6]], [_SLICE[7]],
-        [["alpha", "maker/a-5"]],
+        _SLICE, [["alpha", "maker/a-5"]],
+        _SLICE[:4], _SLICE[4:], _SLICE[4:6], _SLICE[6:], [_SLICE[6]], [_SLICE[7]],
     ]
     # The baseline and each slice run the suite; a half runs the file that failed.
-    assert runs == [[], [], *[["tests/test_x.py"]] * 6, []]
+    assert runs == [[], [], [], *[["tests/test_x.py"]] * 6]
     assert state["runs"]["slice0bba"] == {
         "routes": [pinned], "total_route_cap_lifted": False, "files": ["tests/test_x.py"],
         "summary": "1 failed", "failures": ["tests/test_x.py::test_pin[a b]"],
