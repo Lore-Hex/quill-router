@@ -8,16 +8,13 @@ import pytest
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import chutes, cloudflare_workers_ai, digitalocean
 from tests import catalog_vehicles
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     PROVIDERS,
 )
 from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
-from trusted_router.provider_manifest_policy import (
-    UNSERVED_ROUTE_HELD_AT_FIELD,
-    UNSERVED_ROUTE_HOLD_REASON,
-)
 
 
 def test_digitalocean_official_pricing_uses_integer_microdollars() -> None:
@@ -87,11 +84,7 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
         row.get("routable") is True
         or row.get("routable_reason") == "awaiting-price"
         or (row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed")
-        or (
-            row.get("routable") is False
-            and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
-            and row.get(UNSERVED_ROUTE_HELD_AT_FIELD)
-        )
+        or row_on_unserved_route_hold(row)
         or (row.get("routable_reason") == "delisted-upstream" and row.get("missing_since"))
         for row in rows
     )

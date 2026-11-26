@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from scripts.pricing import unserved_route_holds as holds
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HOLD_REASON,
     provider_manifest_canary_quarantine_valid_until,
@@ -372,6 +373,42 @@ def test_listed_but_unserved_route_is_held_after_the_threshold(tmp_path: Path) -
     assert "routable" not in rows["z-ai/glm-5.2"] and "routable" not in rows["qwen/qwen3"]
     assert makora.read_bytes() == makora_before
     assert any("held z-ai/glm-5.1" in note for note in notes)
+
+
+def test_release_tests_recognise_this_hold_and_no_other(tmp_path: Path) -> None:
+    # A release test that expects a committed row to route accepts, in its
+    # place, tests/provider_holds.row_on_unserved_route_hold. That must be the
+    # hold this step writes and nothing else that leaves a row unroutable.
+    stamp = {holds.HELD_AT_FIELD: "2026-11-11T17:00:00Z"}
+    other_reasons = [
+        "provider-canary-failed", "delisted-upstream", "awaiting-price", "price-unavailable",
+        "provider-access-unavailable", "operator-hold",
+    ]
+    others = [
+        *[_row(f"vendor/{reason}", routable=False, routable_reason=reason) for reason in other_reasons],
+        _row("vendor/curated", routable=False),
+        # This step's reason without its stamp, and a lifted hold's record.
+        _row("vendor/unstamped", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON),
+        _row("vendor/lifted", **{holds.HOLD_COUNT_FIELD: 1, holds.LIFTED_AT_FIELD: "2026-11-11T12:00:00Z"}),
+    ]
+    # Not this hold either: its stamp on a row that is unroutable for another
+    # reason, and its reason and stamp on a row that routes.
+    never_written = [
+        *[_row(f"vendor/{reason}", routable=False, routable_reason=reason, **stamp) for reason in other_reasons],
+        _row("vendor/curated", routable=False, **stamp),
+        _row("vendor/routes", routable=True, routable_reason=UNSERVED_ROUTE_HOLD_REASON, **stamp),
+    ]
+    assert not any(row_on_unserved_route_hold(row) for row in (*others, *never_written))
+    phala = _manifest(tmp_path, "phala", [_row("z-ai/glm-5.1"), _row("z-ai/glm-5.2"), *others])
+
+    holds.apply_unserved_route_holds({("phala", "z-ai/glm-5.1")}, manifest_dir=tmp_path, now=NOW)
+
+    rows = _rows(phala)
+    assert {model for model, row in rows.items() if row_on_unserved_route_hold(row)} == {"z-ai/glm-5.1"}
+    # Once the step lifts it, the row is expected to route again.
+    holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=NOW + dt.timedelta(hours=25))
+    lifted = _rows(phala)["z-ai/glm-5.1"]
+    assert lifted.get("routable") is not False and not row_on_unserved_route_hold(lifted)
 
 
 def test_hold_survives_the_next_refresh_until_it_expires(tmp_path: Path) -> None:

@@ -35,7 +35,7 @@ from scripts.pricing.providers._direct_openai import (
 )
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
 from tests import catalog_vehicles
-from tests.provider_holds import provider_fully_on_reviewed_hold
+from tests.provider_holds import provider_fully_on_reviewed_hold, row_on_unserved_route_hold
 from trusted_router import catalog_data, catalog_ingest
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -153,6 +153,10 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
         assert manifest["models"]
         for row in manifest["models"]:
             assert row["upstream_id"]
+            if row_on_unserved_route_hold(row):
+                # The refresh's own hold on a listed route the provider
+                # refuses; it is re-probed when the hold lifts.
+                continue
             if row.get("routable") is False:
                 reason = row.get("routable_reason")
                 assert reason in {
@@ -654,7 +658,10 @@ def test_arcee_delisted_flash_stays_held_on_relist(
         assert rows[held]["routable"] is False
         assert rows[held]["routable_reason"] == "provider-access-unavailable"
     assert native_id not in probed
-    assert rows["moonshotai/kimi-k3"]["routable"] is True
+    # A listed route with no access hold routes, unless the refresh itself
+    # holds the committed row as unserved: the writer carries that hold forward.
+    kimi = rows["moonshotai/kimi-k3"]
+    assert kimi["routable"] is True or row_on_unserved_route_hold(kimi)
 
 
 def test_direct_provider_normalization_is_the_single_audit_policy() -> None:

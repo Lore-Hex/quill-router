@@ -108,8 +108,14 @@ def test_wafer_kimi26_stale_feed_preserves_deadline_and_cannot_restore_route(
         "moonshotai/kimi-k3": "Kimi-K3",
         "z-ai/glm-5.3-flash": "GLM-5.3-Flash",
     }
+    # Only the retiring row comes from the committed manifest: its recorded
+    # deadline is what a stale feed must not lose. The two routes that stay
+    # arrive from this test's own feed, so their rows are whatever that feed
+    # lists and not today's committed rows, which the refresh may hold. One of
+    # them held left two routable rows, and tombstoning one of two trips the
+    # mass-prune guard, which is not what this test is about.
     manifest = json.loads(wafer.MANIFEST_PATH.read_text())
-    manifest["models"] = [row for row in manifest["models"] if row["id"] in ids]
+    manifest["models"] = [row for row in manifest["models"] if row["id"] == _KIMI_MODEL]
     path = tmp_path / "wafer.json"
     path.write_text(json.dumps(manifest))
     payload = {"data": [
