@@ -3326,6 +3326,14 @@ class PostgresStore(OperationalAnalyticsReads):
 
         self._run_transaction(txn)
 
+    def managed_key_promoted(self, provider: str, generation: str) -> bool:
+        return self._read_entity("managed_key_promotion", f"{provider}#{generation}", dict) is not None
+
+    def record_managed_key_promotion(self, provider: str, generation: str) -> None:
+        self._run_transaction(lambda conn: self._insert_entity_once_tx(
+            conn, "managed_key_promotion", f"{provider}#{generation}", {"promoted": True},
+        ))
+
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         return self._run_transaction(
             lambda conn: self._insert_entity_once_tx(

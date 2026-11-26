@@ -213,6 +213,7 @@ class InMemoryStore:
         self.resale_entities: dict[tuple[str, str], dict[str, Any]] = {}
         self.reserved_notifications: dict[str, dict[str, Any]] = {}
         self.webhook_events: set[tuple[str, str]] = set()
+        self.managed_key_promotions: set[tuple[str, str]] = set()
         self.retirement_notices: dict[str, dict[str, str]] = {}
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.user_transfer_daily: dict[tuple[str, str], int] = {}
@@ -302,6 +303,7 @@ class InMemoryStore:
             self.reserved_notifications.clear()
             self.resale_entities.clear()
             self.webhook_events.clear()
+            self.managed_key_promotions.clear()
             self.retirement_notices.clear()
             self.earnings_money.clear()
             self.credit_movements.clear()
@@ -4080,6 +4082,14 @@ class InMemoryStore:
             row = self.reserved_notifications.get(session_id, {})
             if row.get("owner") == owner:
                 row.update(sent=sent, lease_until=0)
+
+    def managed_key_promoted(self, provider: str, generation: str) -> bool:
+        with self._lock:
+            return (provider, generation) in self.managed_key_promotions
+
+    def record_managed_key_promotion(self, provider: str, generation: str) -> None:
+        with self._lock:
+            self.managed_key_promotions.add((provider, generation))
 
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         with self._lock:

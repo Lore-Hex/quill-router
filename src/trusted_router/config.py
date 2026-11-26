@@ -279,6 +279,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "attribution_cookie_key": frozenset({"public", "control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),
     "internal_gateway_token": frozenset({"internal"}),
+    "managed_key_funding_token": frozenset({"internal"}),
     "operator_token": frozenset({"internal"}),
     # Internal owns this only for synthetic/Sentry routes; its billing routes
     # still select internal_gateway_token by path.
@@ -456,6 +457,12 @@ class Settings(BaseSettings):
     )
 
     environment: str = "local"
+    managed_key_generations: dict[str, str] = Field(default_factory=dict)
+    # Arm only after every serving gateway has the exact fal pair loaded.
+    fal_primary_402_enabled: bool = False
+    managed_key_receipt_public_key: str = ""
+    managed_key_receipt_audience: str = ""
+    managed_key_funding_token: str | None = Field(default=None, repr=False)
     release: str = "local"
     source_revision: str = Field(default="", pattern=r"^(?:[0-9a-f]{40})?$")
     service_name: str = "trusted-router"
@@ -2352,7 +2359,7 @@ class Settings(BaseSettings):
         settlement_tokens = parse_settlement_inbound_tokens(
             self.federation_settlement_inbound_tokens
         )
-        if self.operator_token:
+        if self.operator_token or self.managed_key_funding_token:
             for field_name in sorted(operator_credential_setting_names(type(self))):
                 raw_value = getattr(self, field_name)
                 values: tuple[str, ...]
@@ -2362,11 +2369,16 @@ class Settings(BaseSettings):
                     values = (raw_value,) if raw_value else ()
                 else:
                     values = ()
-                if any(value and hmac.compare_digest(self.operator_token, value) for value in values):
+                if self.operator_token and any(value and hmac.compare_digest(self.operator_token, value) for value in values):
                     raise ValueError(
                         "TR_OPERATOR_TOKEN must differ from "
                         f"TR_{field_name.upper()}"
                     )
+                if (
+                    self.managed_key_funding_token and field_name != "managed_key_funding_token"
+                    and any(value and hmac.compare_digest(self.managed_key_funding_token, value) for value in values)
+                ):
+                    raise ValueError(f"TR_MANAGED_KEY_FUNDING_TOKEN must differ from TR_{field_name.upper()}")
         if self.federation_settlement_home_token and not self.federation_home_base_url:
             raise ValueError(
                 "TR_FEDERATION_SETTLEMENT_HOME_TOKEN is set but "

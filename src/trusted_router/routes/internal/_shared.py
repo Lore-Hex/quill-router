@@ -31,6 +31,8 @@ def internal_service_credential(
     normalized_path = path[3:] if path.startswith("/v1/internal/") else path
     from trusted_router.routes.internal.admin import is_operator_route
 
+    if normalized_path == "/internal/gateway/managed-key-funding-event":
+        return "provider_funding", settings.managed_key_funding_token
     if is_operator_route(normalized_path):
         return "operator", settings.operator_token
     observer_path = normalized_path in _OBSERVER_INTERNAL_EXACT_PATHS or normalized_path.startswith(
