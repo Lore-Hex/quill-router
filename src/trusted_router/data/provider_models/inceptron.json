@@ -93,7 +93,7 @@
         "top_p"
       ],
       "input_token_price_per_m": 565500,
-      "output_token_price_per_m": 3060000,
+      "output_token_price_per_m": 3420000,
       "cached_input_token_price_per_m": 150000
     },
     {
@@ -369,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-26T08:25:15Z",
+  "generated_at": "2026-11-26T10:04:45Z",
   "model_count": 8
 }
