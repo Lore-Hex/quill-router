@@ -177,13 +177,16 @@ def test_only_authenticated_fal_primary_submit_402_switches(test_settings, monke
     gen = "a" * 64
     test_settings.managed_key_generations = {"fal": gen}
     test_settings.internal_gateway_token = secrets.token_hex(16)
+    path = "/v1/internal/gateway/fal-primary-402"
+    assert path not in route_paths(create_app(test_settings, configure_store_arg=False, init_observability=False))
+    test_settings.fal_primary_402_enabled = True
     client = TestClient(create_app(test_settings, init_observability=False))
     auth = GatewayAuthorization("auth-test", "w", "k", "m", "fal", "Credits", 1, endpoint_id=endpoint)
     if as_candidate:
         auth.endpoint_id = "other"
         auth.candidate_endpoint_ids = [endpoint]
     monkeypatch.setattr(InMemoryStore, "get_gateway_authorization", lambda self, id: auth if id == auth.id else None)
-    url = "/v1/internal/gateway/fal-primary-402"
+    url = path
     headers = {"x-trustedrouter-internal-token": test_settings.internal_gateway_token}
     body = {"authorization_id": auth.id, "endpoint_id": endpoint, "primary_generation": gen, "upstream_status": 402}
     assert client.post(url, json=body).status_code == 401

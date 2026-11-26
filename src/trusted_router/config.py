@@ -458,6 +458,8 @@ class Settings(BaseSettings):
 
     environment: str = "local"
     managed_key_generations: dict[str, str] = Field(default_factory=dict)
+    # Arm only after every serving gateway has the exact fal pair loaded.
+    fal_primary_402_enabled: bool = False
     managed_key_receipt_public_key: str = ""
     managed_key_receipt_audience: str = ""
     managed_key_funding_token: str | None = Field(default=None, repr=False)

@@ -49,7 +49,11 @@ attestation before enrolling a pair. Pin the exact generation in
 `TR_MANAGED_KEY_GENERATIONS`. For MiniMax only, provision `TR_MANAGED_KEY_RECEIPT_PUBLIC_KEY`,
 `TR_MANAGED_KEY_RECEIPT_AUDIENCE` and a scoped `TR_MANAGED_KEY_FUNDING_TOKEN`
 through reviewed deployment configuration. Confirm all authorities issue the
-explicit primary decision before loading the standby. For MiniMax, no producer, no
+explicit primary decision before loading the standby. Keep
+`TR_FAL_PRIMARY_402_ENABLED=false` while staging. After all serving gateway
+revisions have loaded the same fal pair and old revisions have drained,
+enable it through the normal control-plane rollout. Disarming it prevents
+new promotions but never reverses an existing one. For MiniMax, no producer, no
 verified final-funding source, a missing account binding or an unfunded
 standby means no activation. Never remove a promoted generation or roll a
 serving authority back to an incompatible version as a way to undo a cutover.

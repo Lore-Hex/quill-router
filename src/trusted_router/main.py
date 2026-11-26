@@ -998,7 +998,12 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_observer_internal_routes(router)
     if surface in {"combined", "internal"} and settings.operator_token:
         register_operator_internal_routes(router)
-    if surface in {"combined", "internal"} and settings.internal_gateway_token and settings.managed_key_generations.get("fal"):
+    if (
+        surface in {"combined", "internal"}
+        and settings.internal_gateway_token
+        and settings.fal_primary_402_enabled
+        and settings.managed_key_generations.get("fal")
+    ):
         register_fal_primary_402_route(router)
     if (
         surface in {"combined", "internal"}
