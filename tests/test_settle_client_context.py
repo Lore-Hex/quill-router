@@ -314,12 +314,14 @@ def test_broadcast_excludes_client_but_keeps_gateway_request_id(
         authorization,
         client_context=VALID_CLIENT_CONTEXT,
         gateway_request_id=GATEWAY_REQUEST_ID,
-        extra={"app_id": "forged-app"},
+        extra={"app_id": "forged-app", "cache_creation_input_tokens": 2,
+               "cache_creation_1h_input_tokens": 1},
     )
 
     assert captured["generation"] is generation
     assert "client" not in captured["settle_body"]
     assert "app_id" not in captured["settle_body"]
+    assert "cache_creation_1h_input_tokens" not in captured["settle_body"]
     assert captured["settle_body"]["gateway_request_id"] == GATEWAY_REQUEST_ID
     assert generation.client_sdk == "tr-py"
 

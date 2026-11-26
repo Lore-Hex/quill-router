@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from trusted_router.money import token_cost_microdollars
-from trusted_router.pricing import _customer_price
+from trusted_router.pricing import CACHE_WRITE_1H_MULTIPLIER, _customer_price
 from trusted_router.provider_lifecycle import openai_gpt56_sol_pricing_period
 
 OPENAI_SERVICE_TIERS = ("default", "auto", "priority")
@@ -114,11 +114,13 @@ def openai_priority_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    cache_creation_1h_tokens: int = 0,
     effective_at: datetime | str | None = None,
 ) -> int:
     pricing = openai_priority_pricing(model_id, at=effective_at)
     if pricing is None:
         raise ValueError(f"OpenAI Priority processing is unavailable for {model_id}")
+    creation_1h = min(max(cache_creation_1h_tokens, 0), max(cache_creation_tokens, 0))
     cost = (
         token_cost_microdollars(
             input_tokens,
@@ -129,8 +131,12 @@ def openai_priority_cost_microdollars(
             pricing.cached_prompt_microdollars_per_million_tokens,
         )
         + token_cost_microdollars(
-            cache_creation_tokens,
+            cache_creation_tokens - creation_1h,
             pricing.cache_write_microdollars_per_million_tokens,
+        )
+        + token_cost_microdollars(
+            creation_1h,
+            CACHE_WRITE_1H_MULTIPLIER * pricing.prompt_microdollars_per_million_tokens,
         )
         + token_cost_microdollars(
             output_tokens,

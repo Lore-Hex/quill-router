@@ -72,6 +72,11 @@ ASYNC_ROUTES = ("chat.completions", "responses", "decide")
 # How a pricing statement or an input is covered, when not by a requested fact.
 PLAIN = "the plain endpoint formula, or an input every ordinary request has"
 REFUND = "a refund is free in both paths"
+# An input no async-v1 settlement can carry: the async usage contract
+# (billing_snapshot.RawUsage) refuses any field it does not name, so a request
+# that has this input can only be settled synchronously, where it is priced.
+# With the input absent or zero the statement is the plain formula.
+SYNC_ONLY = "an input the async usage contract has no field for"
 IDENTITY = "identity or bookkeeping, never a price"
 
 # The facts a request's exclusion reads (billing_snapshot.exclusion).
@@ -92,7 +97,7 @@ class Statement(NamedTuple):
 PRICING_NAMES = frozenset({
     "actual_cost", "selected_endpoint", "price_tier_input_tokens", "service_tier", "video_cost",
     "user_model_pair", "partner_mode", "billing_snapshot", "additional_cost", "uncached_input",
-    "total_input", "cache_read", "cache_creation", "output_tokens",
+    "total_input", "cache_read", "cache_creation", "cache_creation_1h", "output_tokens",
 })
 
 
@@ -176,6 +181,9 @@ COVERED: list[tuple[Statement, str]] = [
      "service_tier"),
     (Statement(("uncached_input", "total_input", "cache_read", "cache_creation"), (),
                "normalized_prompt_accounting(selected_endpoint.provider, body, model_id=selected_endpoint.model_id)"), PLAIN),
+    # One-hour cache writes, a subset of cache_creation priced at twice the
+    # input rate. See SYNC_ONLY and test_the_one_hour_count_cannot_ride_an_async_settlement.
+    (Statement(("cache_creation_1h",), (), "body.cache_creation_1h_count"), SYNC_ONLY),
     (Statement(("uncached_input",), ("user_model_pair is not None",), "total_input"), "user_model"),
     (Statement(("partner_mode",), (),
                "_partner_billing_mode_or_error(requested_model_id=authorization.requested_model_id, "
@@ -197,11 +205,13 @@ COVERED: list[tuple[Statement, str]] = [
     (Statement(("actual_cost",), ("billing_snapshot is not None",),
                "_endpoint_cost_microdollars_from_document(billing_snapshot, selected_endpoint.id, "
                "uncached_input, output_tokens, cache_read_tokens=cache_read, "
-               "cache_creation_tokens=cache_creation, price_tier_input_tokens=price_tier_input_tokens)"),
+               "cache_creation_tokens=cache_creation, cache_creation_1h_tokens=cache_creation_1h, "
+               "price_tier_input_tokens=price_tier_input_tokens)"),
      PLAIN),
     (Statement(("actual_cost",), ("otherwise",),
                "_endpoint_cost_microdollars(selected_endpoint, uncached_input, output_tokens, "
                "cache_read_tokens=cache_read, cache_creation_tokens=cache_creation, "
+               "cache_creation_1h_tokens=cache_creation_1h, "
                "price_tier_input_tokens=price_tier_input_tokens, effective_at=authorization.created_at, "
                "service_tier=service_tier)"), PLAIN),
     (Statement(("actual_cost",), ("not success",), "0"), REFUND),
@@ -287,7 +297,7 @@ def test_every_pricing_statement_of_the_settle_path_is_assigned_a_fact() -> None
     for seen, (want, covered) in zip(found, COVERED, strict=True):
         assert (seen.names, seen.guards) == (want.names, want.guards), (seen, want)
         assert seen.value.startswith(want.value), (seen, want)
-        assert covered in FACTS or covered in (PLAIN, REFUND), covered
+        assert covered in FACTS or covered in (PLAIN, REFUND, SYNC_ONLY), covered
     # The two plain-formula calls take exactly these keywords: a new pricing
     # input needs a fact of its own.
     keywords = {
@@ -296,11 +306,40 @@ def test_every_pricing_statement_of_the_settle_path_is_assigned_a_fact() -> None
         and ast.unparse(node.func) in ("_endpoint_cost_microdollars", "_endpoint_cost_microdollars_from_document")
     }
     assert keywords == {
-        "_endpoint_cost_microdollars": ["cache_creation_tokens", "cache_read_tokens", "effective_at",
+        "_endpoint_cost_microdollars": ["cache_creation_1h_tokens", "cache_creation_tokens",
+                                        "cache_read_tokens", "effective_at",
                                         "price_tier_input_tokens", "service_tier"],
-        "_endpoint_cost_microdollars_from_document": ["cache_creation_tokens", "cache_read_tokens",
-                                                      "price_tier_input_tokens"],
+        "_endpoint_cost_microdollars_from_document": ["cache_creation_1h_tokens", "cache_creation_tokens",
+                                                      "cache_read_tokens", "price_tier_input_tokens"],
     }
+    # Exactly one statement is covered by SYNC_ONLY: the category is not a
+    # general way to add a pricing input without a fact.
+    assert [statement.names for statement, covered in COVERED if covered == SYNC_ONLY] == [
+        ("cache_creation_1h",)]
+
+
+def test_the_one_hour_count_cannot_ride_an_async_settlement() -> None:
+    """What SYNC_ONLY rests on: the async usage contract has no field for the
+    one-hour count and refuses unknown fields, and with the count absent or
+    zero the settle formula is the plain one a billing snapshot reproduces."""
+    from pydantic import ValidationError
+
+    from trusted_router.stage_d import endpoint_cost_microdollars_from_candidate
+
+    assert not any("1h" in name for name in billing.RawUsage.model_fields)
+    assert not any("1h" in name for name in billing.Eligibility.model_fields)
+    for name in ("cache_creation_1h_input_tokens", "cache_creation_1h_tokens"):
+        with pytest.raises(ValidationError):
+            billing.RawUsage(input_tokens=1, output_tokens=1, cache_creation_tokens=1, **{name: 1})
+    cases = {case["name"]: case for case in json.loads(
+        (Path(__file__).parent / "fixtures" / "usage_cost_vectors.json").read_text())}
+    mixed = cases["cache-1h-mixed"]
+    usage = {key: value for key, value in mixed["usage"].items() if key != "cache_creation_1h_input_tokens"}
+    plain = endpoint_cost_microdollars_from_candidate(mixed["candidate"], **usage)
+    assert endpoint_cost_microdollars_from_candidate(
+        mixed["candidate"], cache_creation_1h_tokens=0, **usage) == plain == cases["cache-1h-zero"]["expected_microdollars"]
+    assert mixed["usage"]["cache_creation_1h_input_tokens"] > 0
+    assert mixed["expected_microdollars"] > plain
 
 
 def test_every_input_of_the_settle_path_is_assigned_a_fact() -> None:
