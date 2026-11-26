@@ -4534,15 +4534,6 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "without naming a headquarters."
         ),
     ),
-    "baidu": ModelOrigin(
-        country=PROVIDER_JURISDICTION_CN,
-        lab_name="Baidu (ERNIE)",
-        source_url="https://www.sec.gov/Archives/edgar/data/1329099/000119312524068527/d584913d20f.htm",
-        note=(
-            "Baidu, Inc.'s Form 20-F gives principal executive offices at Baidu "
-            "Campus, No. 10 Shangdi 10th Street, Haidian District, Beijing, PRC."
-        ),
-    ),
     "tencent": ModelOrigin(
         country=PROVIDER_JURISDICTION_CN,
         lab_name="Tencent (Hunyuan)",

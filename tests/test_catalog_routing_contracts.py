@@ -1905,7 +1905,9 @@ def test_prometheus_1m_keeps_every_member_that_still_has_a_1m_window() -> None:
     """Live provider state: a member leaves Prometheus 1.0 1M when its window
     falls below 1M or the catalog no longer offers it. provider-catalog-health.yml
     reports it hourly, and the price refresh does not wait on it. Since
-    2026-11-06 MiniMax M3 (524,288) and MiMo-V2.5-Pro (262,144) fall below."""
+    2026-11-06 MiniMax M3 (524,288) falls below. MiMo-V2.5-Pro fell below with
+    it (262,144 on DigitalOcean) until DigitalOcean retired its route on
+    2026-11-23; Atlas Cloud's 1,024,000 window puts it back."""
     frozen = [
         "minimax/minimax-m3",
         "xiaomi/mimo-v2.5-pro",
@@ -2468,8 +2470,10 @@ def test_xiaomi_mimo_v25_pro_advertises_its_first_hosts_window() -> None:
     # the price refresh does not wait on it.
     # Xiaomi retired its own MiMo-V2.5-Pro route on 2026-10-14, so no maker
     # window applies; the advertised window is the first serving host's.
-    # DigitalOcean, the default prepaid route, serves 262,144 tokens.
-    assert MODELS["xiaomi/mimo-v2.5-pro"].context_length == 262_144
+    # DigitalOcean, whose 262,144-token route was the default, retired it on
+    # 2026-11-23 (its November 18 notice). Atlas Cloud, the one host left,
+    # serves 1,024,000 tokens.
+    assert MODELS["xiaomi/mimo-v2.5-pro"].context_length == 1_024_000
 
 
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:

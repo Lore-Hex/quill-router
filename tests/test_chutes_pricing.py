@@ -475,3 +475,26 @@ def test_qwen35_tee_routes_are_held_for_runtime_502s(model_id: str) -> None:
     committed = _manifest_rows(chutes.MANIFEST_PATH)[model_id]
     assert committed["routable"] is False
     assert committed["routable_reason"] == "provider-route-unavailable"
+
+
+@pytest.mark.parametrize(("model_id", "native_id"), [
+    ("qwen/qwen3.5-397b-a17b", "Qwen/Qwen3.5-397B-A17B-TEE"),
+    ("qwen/qwen3.5-27b", "Qwen/Qwen3.5-27B-TEE"),
+])
+def test_qwen35_tee_holds_are_reviewed_holds_for_freshness_reports(
+    model_id: str, native_id: str,
+) -> None:
+    from trusted_router.provider_contracts import (
+        OPERATOR_HELD_PROVIDER_MODELS,
+        provider_route_reviewed_hold,
+    )
+
+    # The refresh's hold and the registry state one decision: a held route is
+    # held on purpose, not drifted, and the two are lifted together.
+    assert chutes._OPERATOR_HOLD_REASONS[model_id] == "provider-route-unavailable"
+    assert ("chutes", model_id) in OPERATOR_HELD_PROVIDER_MODELS
+    assert provider_route_reviewed_hold("chutes", model_id, native_id)
+    # Only these two routes: Chutes' other TEE routes and the models' other
+    # hosts are untouched.
+    assert not provider_route_reviewed_hold("chutes", "z-ai/glm-5.2", GLM)
+    assert not provider_route_reviewed_hold("parasail", model_id)

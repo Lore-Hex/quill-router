@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 78,
+    "model_count": 77,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 155,
+    "route_count": 153,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -640,10 +640,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 82,
+    "model_count": 74,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 159,
+    "route_count": 147,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

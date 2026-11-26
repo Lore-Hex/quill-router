@@ -146,6 +146,11 @@ FORTANIX_GLM_53_FLASH_SUSPENSION_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
+# 2026-11-26 05:00 UTC: SambaNova's and Fireworks' model APIs no longer list
+# these routes. The hourly refresh has marked them dark since 2026-11-17 and
+# 2026-11-21, and still did in its runs on either side of this instant
+# (2026-11-26 03:28 and 05:28 UTC).
+NOVEMBER_26_DELISTED_RETIREMENT_AT = datetime(2026, 11, 26, 5, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1517,6 +1522,30 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"Qwen/Qwen3-32B-TEE"}),
         effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
         replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    # Delisted without a notice: https://api.sambanova.ai/v1/models stopped
+    # listing Meta-Llama-3.3-70B-Instruct on 2026-11-17 and
+    # https://api.fireworks.ai/inference/v1/models stopped listing
+    # gpt-oss-120b on 2026-11-21. Every refresh since, through 2026-11-26
+    # 05:28 UTC, has kept the manifest rows dark (delisted-upstream), and the
+    # catalog dropped the routes on 2026-11-18 and 2026-11-21 (model_changes),
+    # so the cutoff records a loss rather than causing one. Retire
+    # only these two providers' routes: both models stay on their other
+    # hosts. Neither provider named a successor, so no replacement is quoted.
+    # SambaNova heads lev-1.0's chain and Fireworks is third on trev-1.0's;
+    # the names keep serving on the hosts that remain, and the chains are
+    # unchanged, as with lev-1.0's retired Together leg.
+    _Retirement(
+        provider="sambanova",
+        model_ids=frozenset({"meta-llama/llama-3.3-70b-instruct"}),
+        upstream_ids=frozenset({"Meta-Llama-3.3-70B-Instruct"}),
+        effective_at=NOVEMBER_26_DELISTED_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="fireworks",
+        model_ids=frozenset({"openai/gpt-oss-120b"}),
+        upstream_ids=frozenset({"accounts/fireworks/models/gpt-oss-120b"}),
+        effective_at=NOVEMBER_26_DELISTED_RETIREMENT_AT,
     ),
     # DeepInfra's November 8 notice deprecates inclusionAI/Ling-3.1-flash on
     # 15 November 2026 (date only, so 00:00 UTC) and redirects requests to

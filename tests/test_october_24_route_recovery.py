@@ -7,13 +7,14 @@ credit hold.
 """
 
 import json
+from datetime import timedelta
 
 import pytest
 
 from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
 from scripts.pricing.providers import _direct_openai, pearl, sambanova
-from trusted_router import catalog_ingest
+from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.provider_contracts import (
     PEARL_GEMMA_4_31B_HOLD_REASON,
     PEARL_GEMMA_4_31B_MODEL_ID,
@@ -122,8 +123,19 @@ _SAMBANOVA_WORKING = {
 _SAMBANOVA_DELISTED = {f"fixture/delisted-{n}": f"Delisted-{n}" for n in range(5)}
 
 
+def _before_the_sambanova_llama_retirement(monkeypatch):
+    # The delisting became a reviewed retirement on 2026-11-26 05:00 UTC
+    # (provider_lifecycle). These rules are about October 24, when the route
+    # was working, so they are checked just before that cutover.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.NOVEMBER_26_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
+    )
+
+
 @pytest.mark.parametrize("model", list(_SAMBANOVA_WORKING))
 def test_sambanova_account_hold_does_not_disable_working_models(model, monkeypatch, tmp_path):
+    _before_the_sambanova_llama_retirement(monkeypatch)
     routes = {**_SAMBANOVA_CREDIT_HELD, **_SAMBANOVA_WORKING}
     manifest = tmp_path / "sambanova.json"
     manifest.write_text(json.dumps({"provider": "sambanova", "models": [
@@ -170,6 +182,7 @@ def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold(mo
     # place) and the 2026-10-25 refreshes missed it twice. Two refreshes whose
     # feed omits it must leave a recoverable feed tombstone, never a credit
     # hold, and leave the 402 credit holds and the working routes as they were.
+    _before_the_sambanova_llama_retirement(monkeypatch)
     retired, retired_native = "minimax/minimax-m3", "MiniMax-M3"
     listed = {**_SAMBANOVA_CREDIT_HELD, **_SAMBANOVA_WORKING}
     manifest = tmp_path / "sambanova.json"

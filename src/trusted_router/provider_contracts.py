@@ -175,6 +175,16 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # fleet, or move video to an xAI team without ZDR and narrow the grok
         # ZDR claim. Then delete this entry after a paid-path canary passes.
         ("grok", GROK_IMAGINE_VIDEO_MODEL_ID),
+        # November 21, 2026: Chutes lists both Qwen3.5 TEE routes, but its
+        # probes answered HTTP 502 (the 397B on all but one day from
+        # November 11 to 21, the 27B on every day since November 18; Sentry
+        # QUILL-ROUTER-HR, -BS). The refresh has held them since then as
+        # provider-route-unavailable (scripts/pricing/providers/chutes.py
+        # _OPERATOR_HOLD_REASONS, #2835); they are recorded here too so that
+        # freshness reports read the hold as a decision, not as drift. To
+        # lift: remove both entries after a paid-path canary passes.
+        ("chutes", "qwen/qwen3.5-397b-a17b"),
+        ("chutes", "qwen/qwen3.5-27b"),
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
