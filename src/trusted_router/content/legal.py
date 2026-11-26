@@ -20,6 +20,18 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
         "policy_url": "https://cloud.google.com/security/compliance",
     },
     {
+        "name": "Microsoft Azure",
+        "purpose": "Cloud hosting for the Azure gateway and control plane, including PostgreSQL and Key Vault.",
+        "data_access": "Encrypted serving workloads, control-plane records and operational metadata.",
+        "policy_url": "https://www.microsoft.com/en-us/privacy/privacystatement",
+    },
+    {
+        "name": "Amazon Web Services",
+        "purpose": "Cloud hosting for the AWS gateway and control plane, including Nitro Enclaves, PostgreSQL and Secrets Manager.",
+        "data_access": "Encrypted serving workloads, control-plane records and operational metadata. Email delivery is listed separately below.",
+        "policy_url": "https://aws.amazon.com/privacy/",
+    },
+    {
         "name": "Cloudflare",
         "purpose": "DNS, public-site caching, status/trust hosting support, and edge protection for non-prompt surfaces.",
         "data_access": "Public website traffic and DNS metadata. Production prompt TLS is designed to terminate inside the attested gateway, not inside the control-plane site.",
@@ -36,6 +48,18 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
         "purpose": "Optional PayPal payment processing for prepaid credits.",
         "data_access": "Billing identity and payment metadata. No prompt/output content.",
         "policy_url": "https://www.paypal.com/us/legalhub/privacy-full",
+    },
+    {
+        "name": "Calendly",
+        "purpose": "Optional call scheduling on the NYTE token exchange. The booking frame loads only when the visitor continues to scheduling; visitors can also open the booking link directly.",
+        "data_access": "Browser connection data, booking details and any supplied name, email, company and capacity request summary. No API prompts or outputs.",
+        "policy_url": "https://calendly.com/legal/privacy-notice",
+    },
+    {
+        "name": "Adyen",
+        "purpose": "Optional payment processing for prepaid credits where Adyen checkout is enabled.",
+        "data_access": "Payment details, billing and transaction references for that checkout. No API prompts or outputs.",
+        "policy_url": "https://www.adyen.com/privacy-policy",
     },
     {
         "name": "Amazon Web Services SES/SNS",

@@ -447,14 +447,8 @@ def current_csp_nonce() -> str:
 
 
 #: The policy the site would have to satisfy before CSP can be enforced.
-#: Derived from what the templates actually reference today (jsdelivr for a
-#: couple of scripts, the trust and status subdomains, GitHub links), not from
-#: a generic template -- a policy nobody measured is one that gets switched to
-#: report-only forever.
-#: Script origins the templates actually load today: our own static files,
-#: four jsdelivr libraries, and Adyen's checkout SDK on the credits page.
+#: Chat libraries are served from 'self'. The credits page also uses Adyen.
 CSP_SCRIPT_ORIGINS = (
-    "https://cdn.jsdelivr.net",
     "https://checkoutshopper-live.cdn.adyen.com",
     "https://checkoutshopper-test.cdn.adyen.com",
 )
@@ -477,9 +471,9 @@ def content_security_policy(nonce: str) -> str:
         (
             "default-src 'self'",
             f"script-src 'self' 'nonce-{nonce}' " + " ".join(CSP_SCRIPT_ORIGINS),
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+            "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data: https:",
-            "font-src 'self' data: https://cdn.jsdelivr.net",
+            "font-src 'self' data:",
             "connect-src 'self' https://api.trustedrouter.com "
             "https://trust.trustedrouter.com https://status.trustedrouter.com",
             "frame-src 'self' https://checkoutshopper-live.cdn.adyen.com "

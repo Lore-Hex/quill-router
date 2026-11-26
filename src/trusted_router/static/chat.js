@@ -2300,9 +2300,7 @@
 
     function renderMarkdown(text) {
         if (!text) return "";
-        // marked + DOMPurify are loaded from CDN in chat.html (chunk 4
-        // pins these to vendored copies once we choose specific
-        // versions). If absent, render plain text with line breaks.
+        // If the renderer or sanitizer is unavailable, show escaped plain text.
         if (typeof window.marked === "undefined" || typeof window.DOMPurify === "undefined") {
             const escaped = String(text)
                 .replace(/&/g, "&amp;")
@@ -2310,21 +2308,15 @@
                 .replace(/>/g, "&gt;");
             return escaped.replace(/\n/g, "<br>");
         }
-        if (typeof window.hljs !== "undefined" && window.marked.setOptions) {
-            window.marked.setOptions({
-                highlight: function (code, lang) {
-                    try {
-                        return lang && window.hljs.getLanguage(lang)
-                            ? window.hljs.highlight(code, { language: lang }).value
-                            : window.hljs.highlightAuto(code).value;
-                    } catch (_) {
-                        return code;
-                    }
-                },
-                breaks: true,
-            });
-        }
-        const html = window.marked.parse(String(text));
+        const renderer = new window.marked.Renderer();
+        const plainCode = renderer.code.bind(renderer);
+        renderer.code = token => {
+            const language = (token.lang || "").split(/\s+/, 1)[0];
+            if (!window.hljs || !language || !window.hljs.getLanguage(language)) return plainCode(token);
+            const highlighted = window.hljs.highlight(token.text, { language }).value;
+            return plainCode({ ...token, text: highlighted, escaped: true });
+        };
+        const html = window.marked.parse(String(text), { renderer, breaks: true });
         return window.DOMPurify.sanitize(html, {
             ADD_ATTR: ["target", "rel"],
         });
@@ -3766,7 +3758,7 @@
                     const bytes = new Uint8Array(bin.length);
                     for (let i = 0; i < bin.length; i++)
                         bytes[i] = bin.charCodeAt(i);
-                    json = window.pako.inflate(bytes, { to: "string" });
+                    json = window.pako.inflate(bytes, { toText: true });
                 } catch (_) {
                     json = decodeURIComponent(escape(atob(encoded)));
                 }
