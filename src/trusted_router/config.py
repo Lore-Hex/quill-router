@@ -456,6 +456,10 @@ class Settings(BaseSettings):
     )
 
     environment: str = "local"
+    managed_key_generations: dict[str, str] = Field(default_factory=dict)
+    managed_key_receipt_public_key: str = ""
+    managed_key_receipt_audience: str = ""
+    managed_key_funding_token: str | None = Field(default=None, repr=False)
     release: str = "local"
     source_revision: str = Field(default="", pattern=r"^(?:[0-9a-f]{40})?$")
     service_name: str = "trusted-router"

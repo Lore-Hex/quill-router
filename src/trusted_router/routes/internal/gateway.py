@@ -192,7 +192,7 @@ from trusted_router.scopes import SCOPE_INFERENCE
 # Stable injected ports also consumed by the byte-pinned gateway regression oracle.
 from trusted_router.security import lookup_hash_api_key as lookup_hash_api_key
 from trusted_router.services import fastpath_frontdoor as _fastpath
-from trusted_router.services import federation, starter_session_gate
+from trusted_router.services import federation, managed_key_cutovers, starter_session_gate
 from trusted_router.services.broadcast import (
     drain_broadcast_queue,
     enqueue_metadata_broadcast,
@@ -2605,7 +2605,23 @@ def register(router: APIRouter) -> None:
         body: GatewayAuthorizeRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        return await authorize_gateway(request, body, settings)
+        reply = await authorize_gateway(request, body, settings)
+        if settings.managed_key_generations:
+            cutovers = await run_in_threadpool(managed_key_cutovers.decisions, settings, STORE, reply["data"])
+            if cutovers:
+                reply = {**reply, "data": {**reply["data"], "managed_key_cutovers": cutovers}}
+        return reply
+
+    @router.post("/internal/gateway/managed-key-funding-event")
+    async def managed_key_funding_event(
+        request: Request, body: managed_key_cutovers.Delivery, settings: SettingsDep,
+    ) -> dict[str, str | bool]:
+        require_internal_gateway(request, settings)
+        try:
+            provider, generation = await run_in_threadpool(managed_key_cutovers.accept, settings, STORE, body)
+        except ValueError:
+            raise api_error(403, "Funding event not accepted", ErrorType.FORBIDDEN) from None
+        return {"accepted": True, "provider": provider, "generation": generation}
 
     @router.post("/internal/gateway/heartbeat")
     async def gateway_heartbeat(

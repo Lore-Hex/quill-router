@@ -7470,6 +7470,13 @@ class SpannerStore(OperationalAnalyticsReads):
 
         self._run_in_transaction(txn)
 
+    def managed_key_promoted(self, provider: str, generation: str) -> bool:
+        return self._read_entity("managed_key_promotion", f"{provider}#{generation}", dict) is not None
+
+    def record_managed_key_promotion(self, provider: str, generation: str) -> None:
+        # Same value on all deliveries. No inverse operation or TTL.
+        self._write_entity("managed_key_promotion", f"{provider}#{generation}", {"promoted": True})
+
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         entity_id = f"{source}#{event_id}"
 
