@@ -10,7 +10,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_async_settle_drain_health.sh': '588828c2e795532cf485fd3c771bf524a133015d57e0bdfad0d3208fc62bfb61',
  'scripts/deploy/migrate_clickhouse_node_role.sh': 'f99add3916f65e14ba3d61fb02c027553a8ba1bbb9319ca744d9ae5894006254',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
- 'scripts/deploy/migrate_fastpath.sh': '17ece08d96c4ee007ac4d46d0f2c128262fc22bc52c91ed9c9b86e3c6e910099',
+ 'scripts/deploy/migrate_fastpath.sh': '169ac00ff9cd8d991e4bf8c4ae88384da931e11d87f8dc7298e7bac8133d60f3',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
  'scripts/deploy/migrate_money_primitives.sh': 'a35e4012706fa88f48be8f8d6b5abc7a3f828d36bceea59191784b58007d7e41',
@@ -21,7 +21,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_speculation_shadow.sh': 'defd388fd3d507e1c8c7b1faf3059dd09df819a114ccccbb18fb6b978c1ba7e6',
  'scripts/deploy/migrate_spend_lease.sh': '198790ab42b43f20306431e386db98188a0c0ad88f948afbc7232f072a7c2798',
  'scripts/deploy/migrate_trust_reconciliation.sh': '7864237a2a0a187f5db14da4812e96481f105b28c4737bc2cfc83b481321140c',
- 'scripts/deploy/migrate_typed_counters.sh': '662d7925229da597a7ddfa947f07f70bfdffef9b4bb0438ce05512f9b85ec465',
+ 'scripts/deploy/migrate_typed_counters.sh': '68e7c24363d16b529e3392d154b277b8eb2b4385dd317b38214bb29de40c9809',
  'scripts/deploy/retire_settle_outbox_hot_index.sh': 'ce6bac93d3c5442eccfe88aa74eeff151033905161b2d6c87489b4ec9c08cd45'}
 
 DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body '

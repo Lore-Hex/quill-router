@@ -25,7 +25,15 @@ PROJECT_ARG=()
 
 log() { printf '%s %s\n' "[migrate_typed_counters]" "$*"; }
 
+SCHEMA_PRESENCE=""
+if [ "${TR_BATCH_SCHEMA_CHECKS:-}" = true ]; then
+  SCHEMA_PRESENCE="$(python3 "$(dirname "${BASH_SOURCE[0]}")/schema_presence.py" \
+    "$DATABASE" "$INSTANCE" "${GCP_PROJECT_ID:-}" tr_credit_balance tr_key_limit tr_reservation tr_settle_outbox \
+    tr_trust_event tr_trust_inbox tr_owner_workspace tr_trust_override tr_trust_demotion_remainder tr_trust_backfill)" || SCHEMA_PRESENCE=""
+fi
+
 table_exists() {
+  [[ "$SCHEMA_PRESENCE" == *"|$1|"* ]] && return 0
   local name="$1"
   local n
   n=$(gcloud spanner databases execute-sql "$DATABASE" \
@@ -46,6 +54,7 @@ index_exists() {
 }
 
 apply_ddl() {
+  SCHEMA_PRESENCE=""
   log "applying: $1"
   gcloud spanner databases ddl update "$DATABASE" \
     --instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$1"
@@ -165,6 +174,7 @@ fi
 # Config columns (*_limit_micro) are seeded from the api_key row on create; the
 # window usage/state columns are typed-DML-owned and bumped lazily by release_key.
 column_exists() {
+  [[ "$SCHEMA_PRESENCE" == *"|$1.$2|"* ]] && return 0
   local table="$1" col="$2" n
   n=$(gcloud spanner databases execute-sql "$DATABASE" \
         --instance="$INSTANCE" "${PROJECT_ARG[@]}" \

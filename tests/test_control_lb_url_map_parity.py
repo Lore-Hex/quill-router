@@ -246,6 +246,10 @@ def test_disabled_renderer_differential_against_base(
     expected = _render(base, deepcopy(live), internal, gateway)
     actual = _render(module, deepcopy(live), internal, gateway)
     expected_control = next(r for r in expected["pathMatchers"][0]["pathRules"] if "/v1" in r["paths"])
+    assert "/trust/control-plane.json" not in expected_control["paths"]
+    expected_control["paths"].insert(0, "/trust/control-plane.json")
+    assert any("/trust/control-plane.json" in rule
+               for rule in _terraform_rule_paths("trusted-router-control-backend"))
     assert "/earnings" not in expected_control["paths"]
     index = expected_control["paths"].index("/user-models/*") + 1
     expected_control["paths"][index:index] = ["/earnings", "/earnings/*"]

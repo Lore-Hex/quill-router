@@ -856,12 +856,11 @@ async def test_nothing_but_the_mounted_evidence_get_is_exempt(
     assert refused is not None and refused.status_code == 429
 
 
-def test_the_not_exempt_cases_cover_three_unmounted_surfaces() -> None:
+def test_the_not_exempt_cases_cover_unmounted_surfaces() -> None:
     # The parametrization above derives its unmounted surfaces from the
     # constant; an exemption widened to every surface would empty that list.
     assert set(_WEB_SURFACES) - CONTROL_PLANE_EVIDENCE_SURFACES == {
         "actions",
-        "control",
         "internal",
     }
     assert CONTROL_PLANE_EVIDENCE_SURFACES <= set(_WEB_SURFACES)

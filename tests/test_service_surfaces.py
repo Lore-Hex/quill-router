@@ -106,9 +106,13 @@ def test_split_surface_route_inventory_is_total_and_has_one_owner() -> None:
     assert combined == split | combined_control_bridge
     assert combined_control_bridge.isdisjoint(split)
     owned = [public, actions, control, internal]
+    # Both process types retain this metadata-only read during independent
+    # application/URL-map rollouts. Only the API owns its public edge path.
+    evidence = {("GET", "/trust/control-plane.json")}
     for index, left in enumerate(owned):
         for right in owned[index + 1 :]:
-            assert _without_shared_health(left).isdisjoint(_without_shared_health(right))
+            overlap = _without_shared_health(left) & _without_shared_health(right)
+            assert overlap == (evidence if left is public and right is control else set())
 
 
 def test_public_surface_has_no_authenticated_or_internal_routes() -> None:

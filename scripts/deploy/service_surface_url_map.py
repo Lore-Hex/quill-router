@@ -54,6 +54,7 @@ ACTIONS_PATH_PATTERNS = (
 )
 
 CONTROL_PATH_PATTERNS = (
+    "/trust/control-plane.json",
     "/token-exchange/reservations",
     "/v1",
     "/v1/*",
