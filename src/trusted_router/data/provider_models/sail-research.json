@@ -165,13 +165,14 @@
       "id": "deepseek/deepseek-v4-pro-0813",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro-0813",
       "created": 1700000000,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 920000,
       "output_token_price_per_m": 2770000,
       "cached_input_token_price_per_m": 40000,
       "context_length": 1048576,
       "max_output_tokens": 384000,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "google/gemma-4-12B-it",
@@ -349,7 +350,7 @@
   ],
   "source": "https://api.sailresearch.com/v1/models",
   "pricing_source": "https://docs.sailresearch.com/pricing",
-  "generated_at": "2026-11-26T03:28:25Z",
+  "generated_at": "2026-11-26T05:28:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 14
 }
