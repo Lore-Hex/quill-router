@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +17,12 @@ from tests.pinned_manifests import (
     FIREWORKS_KIMI_K3,
     serve_manifest_rows,
 )
+from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, Model, endpoints_for_model
 from trusted_router.provider_lifecycle import (
     BASETEN_DECEMBER_2026_RETIREMENT_AT,
     FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+    NOVEMBER_26_DELISTED_RETIREMENT_AT,
 )
 from trusted_router.providers import (
     OPENAI_COMPATIBLE_PROVIDERS,
@@ -668,9 +671,11 @@ async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(tmp_path, m
 # The catalog tests below build each route from its manifest row pinned in
 # tests/pinned_manifests.py: how a row is published holds whatever the host
 # lists today. That it still lists these routes is a provider_health check.
+# Fireworks stopped listing gpt-oss-120b on 2026-11-21 and its route retired on
+# 2026-11-26 (provider_lifecycle), so that route is no longer checked here;
+# Kimi K3 is the Fireworks route this check keeps.
 @pytest.mark.provider_health
 @pytest.mark.parametrize("endpoint_id", [
-    "openai/gpt-oss-120b@fireworks/prepaid",
     "moonshotai/kimi-k3@fireworks/prepaid",
     "z-ai/glm-5.3-fast@baseten/prepaid",
     "qwen/qwen3.7-flash@alibaba/prepaid",
@@ -683,6 +688,12 @@ def test_provider_still_serves_the_contract_route(endpoint_id: str) -> None:
 def test_fireworks_catalog_exposes_provider_specific_endpoints(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    # Fireworks stopped listing gpt-oss-120b; its route retires on 2026-11-26
+    # 05:00 UTC, so the pinned row is built just before the cutover.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: NOVEMBER_26_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
+    )
     serve_manifest_rows(monkeypatch, tmp_path, "fireworks", [FIREWORKS_GPT_OSS_120B])
     endpoints = endpoints_for_model("openai/gpt-oss-120b")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
