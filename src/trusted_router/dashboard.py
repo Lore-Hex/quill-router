@@ -1527,14 +1527,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             ("How do I point Claude Code at a gateway, proxy or router?",
              "Set ANTHROPIC_BASE_URL to https://api.trustedrouter.com and "
-             "ANTHROPIC_AUTH_TOKEN to your TrustedRouter API key. Then pin the model aliases "
+             "ANTHROPIC_AUTH_TOKEN to your TrustedRouter API key. Claude Code's default model IDs are accepted "
+             "for listed models that Anthropic serves directly. For any other model, set the alias variables "
              "(ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL and "
-             "ANTHROPIC_DEFAULT_FABLE_MODEL), and ANTHROPIC_MODEL if you set one, to listed IDs, which carry the "
+             "ANTHROPIC_DEFAULT_FABLE_MODEL) or ANTHROPIC_MODEL to listed IDs, which carry the "
              "anthropic/ prefix."),
             ("What ANTHROPIC_BASE_URL should Claude Code use?",
              "Use ANTHROPIC_BASE_URL=https://api.trustedrouter.com without /v1; the client appends /v1/messages. "
-             "Set ANTHROPIC_AUTH_TOKEN to your TrustedRouter key, and pin the model aliases and ANTHROPIC_MODEL "
-             "to listed IDs with the anthropic/ prefix."),
+             "Set ANTHROPIC_AUTH_TOKEN to your TrustedRouter key. To pick a model, ANTHROPIC_MODEL takes a "
+             "listed ID with the anthropic/ prefix, or Anthropic's own ID for a listed model that Anthropic "
+             "serves directly."),
             ("Can I set a Claude Code spend limit per key?",
              "Yes: use a dedicated TrustedRouter key as ANTHROPIC_AUTH_TOKEN with daily, weekly or monthly limits. "
              "Strict mode includes outstanding estimates; actual charges can exceed estimates."),
