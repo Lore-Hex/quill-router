@@ -93,6 +93,8 @@ def test_checkout_services_charge_the_fee_the_page_previews() -> None:
     same rates the page embeds, so the summary equals the line items."""
     settings = Settings(environment="local")
     _, user, workspace = _console_client()
+    # Established, so the $100 PayPal checkout is past the new-workspace cap.
+    user.identity_status = "approved"
     for dollars in (5, 20, 100):
         for method in ("auto", "ach", "stablecoin"):
             data = create_checkout_session(

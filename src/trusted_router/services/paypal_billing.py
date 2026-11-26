@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
+from fastapi import HTTPException
 
 from trusted_router.acquisition import record_checkout_started, record_credit_purchase
 from trusted_router.config import Settings
@@ -30,6 +31,7 @@ from trusted_router.services.paused_topup import (
     refuse_topup_if_abuse_paused,
 )
 from trusted_router.services.paypal_topup_guard import (
+    PayPalPayerFacts,
     check_paypal_capture,
     check_paypal_checkout,
     observe_paypal_capture,
@@ -204,7 +206,14 @@ def capture_paypal_order_for_workspace(
     # Capturing is the moment money moves. Refusing here leaves the approved
     # order uncaptured: PayPal never charges the buyer and it expires.
     refuse_topup_if_abuse_paused(STORE.get_workspace(workspace_id))
-    check_paypal_capture(STORE, workspace_id=workspace_id, settings=settings)
+    # The payer rules read the approved order first (a GET, no money moves);
+    # established workspaces skip that read.
+    check_paypal_capture(
+        STORE,
+        workspace_id=workspace_id,
+        settings=settings,
+        load_payer=lambda: paypal_payer_facts(fetch_paypal_order(settings, order_id)),
+    )
     order = _paypal_post(
         settings,
         f"/v2/checkout/orders/{order_id}/capture",
@@ -241,12 +250,57 @@ def capture_paypal_order_for_workspace(
 
 
 def paypal_payer_email(order: Mapping[str, Any]) -> str | None:
-    """The payer email on a captured order, when PayPal reports one."""
-    payer = order.get("payer")
-    if not isinstance(payer, Mapping):
-        return None
-    email = payer.get("email_address")
-    return email.strip().lower() if isinstance(email, str) and "@" in email else None
+    """The payer email on an approved or captured order, when PayPal reports
+    one: ``payer.email_address``, else ``payment_source.paypal.email_address``."""
+    for holder in (order.get("payer"), _paypal_wallet_source(order)):
+        if isinstance(holder, Mapping):
+            email = holder.get("email_address")
+            if isinstance(email, str) and "@" in email:
+                return email.strip().lower()
+    return None
+
+
+def _paypal_wallet_source(order: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    source = order.get("payment_source")
+    wallet = source.get("paypal") if isinstance(source, Mapping) else None
+    return wallet if isinstance(wallet, Mapping) else None
+
+
+def paypal_payer_account_status(order: Mapping[str, Any]) -> str | None:
+    """``payment_source.paypal.account_status`` (VERIFIED / UNVERIFIED): whether
+    the buyer has verified the financial details on their PayPal account.
+    None when absent, e.g. a guest card payment with no PayPal account."""
+    wallet = _paypal_wallet_source(order)
+    status = wallet.get("account_status") if wallet is not None else None
+    return status.strip().upper()[:32] if isinstance(status, str) and status.strip() else None
+
+
+def paypal_payer_facts(order: Mapping[str, Any]) -> PayPalPayerFacts:
+    """What the guard checks about the buyer of an approved order."""
+    initiating_user_id: str | None = None
+    units = order.get("purchase_units")
+    unit = units[0] if isinstance(units, list) and units else None
+    if isinstance(unit, Mapping):
+        try:
+            initiating_user_id = _paypal_credit_reference(unit, fallback=unit).initiating_user_id
+        except HTTPException:
+            initiating_user_id = None
+    return PayPalPayerFacts(
+        email=paypal_payer_email(order),
+        account_status=paypal_payer_account_status(order),
+        initiating_user_id=initiating_user_id,
+    )
+
+
+def fetch_paypal_order(settings: Settings, order_id: str) -> dict[str, Any]:
+    """GET an order (approved, not yet captured) to read its payer."""
+    if not order_id or any(character in order_id for character in "/?#"):
+        raise api_error(400, "PayPal order could not be captured", ErrorType.BAD_REQUEST)
+    return _paypal_get(
+        settings,
+        f"/v2/checkout/orders/{order_id}",
+        client_error_message="PayPal order could not be captured",
+    )
 
 
 def record_paypal_payer_email_match(order: Mapping[str, Any], *, workspace_id: str) -> bool | None:
@@ -510,7 +564,12 @@ def fetch_paypal_capture(settings: Settings, capture_id: str) -> dict[str, Any]:
     return _paypal_get(settings, f"/v2/payments/captures/{capture_id}")
 
 
-def _paypal_get(settings: Settings, path: str) -> dict[str, Any]:
+def _paypal_get(
+    settings: Settings,
+    path: str,
+    *,
+    client_error_message: str | None = None,
+) -> dict[str, Any]:
     token = _access_token(settings)
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -523,6 +582,10 @@ def _paypal_get(settings: Settings, path: str) -> dict[str, Any]:
             )
             response.raise_for_status()
             data = response.json()
+    except httpx.HTTPStatusError as exc:
+        if client_error_message is not None and exc.response.status_code in PAYPAL_CLIENT_ERROR_STATUSES:
+            raise api_error(400, client_error_message, ErrorType.BAD_REQUEST) from exc
+        raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
     if not isinstance(data, dict):
