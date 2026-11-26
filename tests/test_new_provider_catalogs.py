@@ -14,6 +14,10 @@ from trusted_router.catalog import (
     PROVIDERS,
 )
 from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
+from trusted_router.provider_manifest_policy import (
+    UNSERVED_ROUTE_HELD_AT_FIELD,
+    UNSERVED_ROUTE_HOLD_REASON,
+)
 
 
 def test_digitalocean_official_pricing_uses_integer_microdollars() -> None:
@@ -75,12 +79,20 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
 
     assert rows
     # A row is routable, awaiting a price, held unroutable after the refresh's
-    # live canary failed (it recovers on a passing canary), or tombstoned by
-    # the refresh after the provider delisted it.
+    # live canary failed (it recovers on a passing canary), held by the
+    # refresh while the provider refuses to serve it (the hold expires and the
+    # route is probed again), or tombstoned by the refresh after the provider
+    # delisted it. Every state here is one the refresh writes on its own, so
+    # none of them may fail the snapshot it publishes.
     assert all(
         row.get("routable") is True
         or row.get("routable_reason") == "awaiting-price"
         or (row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed")
+        or (
+            row.get("routable") is False
+            and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+            and row.get(UNSERVED_ROUTE_HELD_AT_FIELD)
+        )
         or (row.get("routable_reason") == "delisted-upstream" and row.get("missing_since"))
         for row in rows
     )
