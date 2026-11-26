@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -608,6 +608,30 @@ def test_the_hold_plan_covers_every_row_within_the_steps_limits(tmp_path: Path) 
     for index, routes in enumerate(plan["slices"]):
         copy = _hold_fixture(tmp_path / f"slice{index}")
         assert sweep_holds.hold(routes, copy, now=_HOLD_NOW)["held"] == sorted(routes)
+
+
+def test_a_hold_that_ran_out_and_was_not_lifted_yet_is_a_row_to_hold(tmp_path: Path) -> None:
+    """A committed hold outlives its hours until the next refresh lifts it. The
+    step lifts it and can hold the row again, so the plan lists the row and
+    the hold must not refuse it as already held: one clock decides both."""
+    ran_out = [("held", f"maker/held-already-{index}") for index in range(2)]
+    later = _HOLD_NOW + timedelta(hours=unserved_route_hold_plan.HOLD_HOURS)
+
+    # While the hold is live the row is neither planned nor held again.
+    live = sweep_holds.plan(_hold_fixture(tmp_path / "live-plan"), now=_HOLD_NOW)
+    assert not set(ran_out) & {route for routes in live["slices"] for route in routes}
+    with pytest.raises(SystemExit, match="already held before this run"):
+        sweep_holds.hold(ran_out[:1], _hold_fixture(tmp_path / "live"), now=_HOLD_NOW)
+
+    plan = sweep_holds.plan(_hold_fixture(tmp_path / "plan"), now=later)
+    assert set(ran_out) <= {route for routes in plan["slices"] for route in routes}
+    for index, routes in enumerate(plan["slices"]):
+        copy = _hold_fixture(tmp_path / f"slice{index}")
+        assert sweep_holds.hold(routes, copy, now=later)["held"] == sorted(routes)
+        rows = {row["id"]: row for row in json.loads((copy / "held.json").read_text())["models"]}
+        for _provider, model_id in set(ran_out) - set(routes):
+            # Lifted by the step, not left on the hold that ran out.
+            assert "routable_reason" not in rows[model_id], model_id
 
 
 @pytest.mark.parametrize("routes", [

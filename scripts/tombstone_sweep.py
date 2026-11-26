@@ -80,8 +80,9 @@ failed, until each failure is on one row (`rows` in OUT/holds.json) or needs
 several rows held together (`needs_several_rows`); the step can hold those
 together too, so they are findings, not noise. The step's limit of 25 held rows in total is lifted
 for a run that holds more, since no sweep could cover every row inside it; such
-a run is marked total_route_cap_lifted, and a single row is always held within
-every limit. Only the manifests change, as in that step: the snapshot, and the
+a run is marked total_route_cap_lifted (`run --hold` prints it), and a single
+row is held within every limit unless the committed holds already reach that
+total. Only the manifests change, as in that step: the snapshot, and the
 files later refresh steps derive from the manifests, stay as committed.
 `--files` sweeps those test files instead of the release suite. It resumes from
 OUT/holds.json, and only with the same files and routable rows.
@@ -770,7 +771,10 @@ def main() -> None:
         for model_id in filter(None, args.vanish.split(",")):
             print("vanished:", model_id, delist_model(model_id))
         if args.hold:
-            print("held:", hold_routes([route.split(":", 1) for route in args.hold.split(",")])["notes"])
+            held = hold_routes([route.split(":", 1) for route in args.hold.split(",")])
+            print("held:", held["notes"])
+            if held["total_route_cap_lifted"]:
+                print("total_route_cap_lifted: more rows than the refresh's step holds in total")
         failures, summary = run_pytest(args.files, args.workers, Path(tempfile.mkstemp(suffix=".log")[1]))
     finally:
         restore()

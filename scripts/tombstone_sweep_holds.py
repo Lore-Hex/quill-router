@@ -30,10 +30,6 @@ from typing import Any
 
 from scripts.pricing import unserved_route_holds as step
 from trusted_router import unserved_route_hold_plan as planner
-from trusted_router.provider_manifest_policy import (
-    UNSERVED_ROUTE_HELD_AT_FIELD,
-    UNSERVED_ROUTE_HOLD_REASON,
-)
 
 Route = tuple[str, str]
 
@@ -57,17 +53,14 @@ def _manifests(manifest_dir: Path) -> list[tuple[str, list[Any]]]:
     return manifests
 
 
-def _held(manifest_dir: Path) -> set[Route]:
-    """Every row carrying the hold as the step writes it."""
-    return {
-        (provider, row["id"])
-        for provider, rows in _manifests(manifest_dir)
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-        and row.get("routable") is False
-        and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
-        and row.get(UNSERVED_ROUTE_HELD_AT_FIELD)
-    }
+def _held(manifest_dir: Path, now: datetime) -> set[Route]:
+    """Every row on a hold that is live at ``now``, as the control plane reads it.
+
+    A hold outlives its hours in the committed manifest until the next refresh
+    lifts it. Such a row is not held here: the step lifts it first and may hold
+    it again, so it is a row this run can hold, and `plan` lists it as one.
+    """
+    return planner.applied_unserved_route_holds(manifest_dir=manifest_dir, now=now)
 
 
 def _most_held_at_once(provider: str, rows: list[Any], ids: list[str]) -> int:
@@ -116,19 +109,20 @@ def plan(manifest_dir: Path, *, now: datetime | None = None) -> dict[str, Any]:
 def hold(routes: list[Route], manifest_dir: Path, *, now: datetime | None = None) -> dict[str, Any]:
     """Hold these routes with the refresh's own step, or exit: a route the step
     will not hold was never tested, and must not be reported as tested."""
+    now = now or datetime.now(UTC)
     wanted = {(provider, model_id) for provider, model_id in routes}
-    before = _held(manifest_dir)
+    before = _held(manifest_dir, now)
     if wanted & before:
         raise SystemExit(f"already held before this run: {sorted(wanted & before)}")
     notes = step.apply_unserved_route_holds(wanted, manifest_dir=manifest_dir, now=now)
     lifted = False
-    if wanted and not wanted & _held(manifest_dir):
+    if wanted and not wanted & _held(manifest_dir, now):
         # Nothing held: more rows than the step's total. Hold them anyway (see
         # the module docstring); every other limit still applies.
         with _total_route_cap_lifted():
             notes = step.apply_unserved_route_holds(wanted, manifest_dir=manifest_dir, now=now)
         lifted = True
-    missing = wanted - _held(manifest_dir)
+    missing = wanted - _held(manifest_dir, now)
     if missing:
         raise SystemExit(f"the refresh's step would not hold {sorted(missing)}: {notes}")
     return {"held": sorted(wanted), "total_route_cap_lifted": lifted, "notes": notes}

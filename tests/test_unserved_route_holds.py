@@ -397,6 +397,8 @@ def test_release_tests_recognise_this_hold_and_no_other(tmp_path: Path) -> None:
         *[_row(f"vendor/{reason}", routable=False, routable_reason=reason, **stamp) for reason in other_reasons],
         _row("vendor/curated", routable=False, **stamp),
         _row("vendor/routes", routable=True, routable_reason=UNSERVED_ROUTE_HOLD_REASON, **stamp),
+        # A row with no "routable" key routes.
+        _row("vendor/routes-by-default", routable_reason=UNSERVED_ROUTE_HOLD_REASON, **stamp),
     ]
     assert not any(row_on_unserved_route_hold(row) for row in (*others, *never_written))
     phala = _manifest(tmp_path, "phala", [_row("z-ai/glm-5.1"), _row("z-ai/glm-5.2"), *others])

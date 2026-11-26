@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -109,14 +110,18 @@ def test_the_control_plane_starts_with_any_row_held_as_unserved(tmp_path: Path) 
     # where the step already holds rows). Planned here and not at collection:
     # a hold expiring between two xdist workers' collections would give them
     # different tests.
-    plan = tombstone_sweep_holds.plan(catalog_ingest._PROVIDER_MODELS_DIR)
+    # One clock for the plan and every hold: a committed hold that has run
+    # out, and that the next refresh has not lifted yet, is a row to hold in
+    # both or in neither.
+    now = datetime.now(UTC)
+    plan = tombstone_sweep_holds.plan(catalog_ingest._PROVIDER_MODELS_DIR, now=now)
     # Some row is routable; none can be held only once every provider is at
     # the step's limit, as inside a `holds` sweep's own slice.
     assert plan["slices"] or plan["never_held"]
     for index, routes in enumerate(plan["slices"]):
         manifests = tmp_path / f"slice{index}"
         shutil.copytree(catalog_ingest._PROVIDER_MODELS_DIR, manifests)
-        held = tombstone_sweep_holds.hold(routes, manifests)["held"]
+        held = tombstone_sweep_holds.hold(routes, manifests, now=now)["held"]
         result = _start(manifests, catalog_ingest._INGEST_PATH)
         assert result.returncode == 0, f"slice {index}, holding {held}: {result.stderr[-2000:]}"
         live, started = result.stdout.strip().splitlines()[-2:]
