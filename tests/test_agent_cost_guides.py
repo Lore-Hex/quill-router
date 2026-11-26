@@ -430,6 +430,41 @@ def _rates(endpoint: Any, inputs: int = 4000) -> Any:
     )
 
 
+def _price_date_label(stamp: str) -> str:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%B %-d, %Y, %H:%M UTC")
+
+
+def _assert_price_dates(block: Any, stamps: list[str]) -> None:
+    """A caption shows one <time> per displayed minute, carrying that minute's
+    earliest manifest stamp (#2948). One refresh writes the manifests a
+    second or so apart, so a manifest's own stamp is often not the one shown;
+    the 2026-11-26 12:24Z price refresh failed its snapshot CI on looking it up."""
+    labels = list(dict.fromkeys(_price_date_label(stamp) for stamp in sorted(stamps)))
+    nodes = block.select("time")
+    assert sorted(node.get_text() for node in nodes) == sorted(labels)
+    for label in labels:
+        (node,) = [node for node in nodes if node.get_text() == label]
+        assert node["datetime"] == min(stamp for stamp in stamps if _price_date_label(stamp) == label)
+
+
+def _skew_manifest_stamps(monkeypatch: pytest.MonkeyPatch, early: set[str], late_seconds: int) -> None:
+    """Stamp the providers in ``early`` at one time and every other provider
+    ``late_seconds`` later, as a refresh that writes manifests apart does."""
+    if not late_seconds:
+        return
+    original_manifest = guides._manifest
+    base = datetime(2026, 11, 26, 12, 29, 4, tzinfo=UTC)
+
+    def dated_manifest(provider: str) -> dict[str, Any] | None:
+        manifest = original_manifest(provider)
+        if manifest is not None:
+            stamp = base if provider in early else base + timedelta(seconds=late_seconds)
+            manifest["generated_at"] = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return manifest
+
+    monkeypatch.setattr(guides, "_manifest", dated_manifest)
+
+
 def test_worked_costs_match_catalog_and_rounding(client: TestClient) -> None:
     soup = BeautifulSoup(client.get(PAGES[1]).text, "html.parser")
     savings = BeautifulSoup(client.get(PAGES[3]).text, "html.parser")
@@ -444,6 +479,7 @@ def test_worked_costs_match_catalog_and_rounding(client: TestClient) -> None:
     ]
     totals = {}
     provider_totals = {}
+    stamps: list[str] = []
     for row in rows:
         model_id, provider = row["data-model"], row["data-provider"]
         manifest = guides._manifest(provider)
@@ -451,10 +487,7 @@ def test_worked_costs_match_catalog_and_rounding(client: TestClient) -> None:
         source = next((tier for tier in source.get("price_tiers", [])
                        if tier["max_prompt_tokens"] is None or inputs <= tier["max_prompt_tokens"]), source)
         assert row["data-as-of"] == manifest["generated_at"]
-        stamp = manifest["generated_at"]
-        date = soup.select_one(f'[data-price-dates] time[datetime="{stamp}"]')
-        assert date.get_text() == datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%B %-d, %Y, %H:%M UTC")
-        assert len(soup.select(f'[data-price-dates] time[datetime="{stamp}"]')) == 1
+        stamps.append(manifest["generated_at"])
         assert row.select_one("a").get_text() == guides.MODELS[model_id].name.split(": ", 1)[-1]
         assert f"on {PROVIDERS[provider].name}" in row.get_text()
         assert _decimal(row, "provider-input") == Decimal(source["input_token_price_per_m"]) / 1_000_000
@@ -501,6 +534,10 @@ def test_worked_costs_match_catalog_and_rounding(client: TestClient) -> None:
     assert _shown(soup, "hundred-total") == _cents(100 * (1 + fee))
     for number in ("10,000", "4,000", "1,000"):
         assert number in workload.get_text()
+    captions = soup.select("[data-price-dates]")
+    assert len(captions) == (1 if rows else 0)
+    for caption in captions:
+        _assert_price_dates(caption, stamps)
     for caption in soup.select("[data-price-dates]"):
         assert len(caption.select("a")) == 1
     scale_rows = soup.select("#fee-scale tbody tr")
@@ -513,7 +550,7 @@ def test_worked_costs_match_catalog_and_rounding(client: TestClient) -> None:
             assert f"${_decimal(row, field):,.2f}" in row.select_one(f'[data-value="{field}"]').get_text()
 
 
-def test_route_prices_and_cache_savings_follow_catalog(client: TestClient) -> None:
+def _deepseek_route_amounts() -> tuple[list[ModelEndpoint], list[tuple[Decimal, str, Decimal, Decimal]]]:
     endpoints = [e for e in guides.endpoints_for_model(DEEPSEEK_MODEL)
                  if e.usage_type == "Credits" and e.provider in PROVIDERS
                  and guides._source(guides._manifest(e.provider), DEEPSEEK_MODEL) is not None]
@@ -524,6 +561,11 @@ def test_route_prices_and_cache_savings_follow_catalog(client: TestClient) -> No
         o = Decimal(rates.completion_price_microdollars_per_million_tokens) / 1_000_000
         amounts.append((i + o, endpoint.provider, i, o))
     amounts.sort()
+    return endpoints, amounts
+
+
+def test_route_prices_and_cache_savings_follow_catalog(client: TestClient) -> None:
+    endpoints, amounts = _deepseek_route_amounts()
     for path in PAGES[1:]:
         soup = BeautifulSoup(client.get(path).text, "html.parser")
         for block in soup.select("[data-route-count]"):
@@ -534,11 +576,7 @@ def test_route_prices_and_cache_savings_follow_catalog(client: TestClient) -> No
                 assert _shown(soup, f"route-{which}-output") == route[3]
                 assert block[f"data-{which}-provider"] == route[1]
                 assert PROVIDERS[route[1]].name in block.get_text()
-                manifest = guides._manifest(route[1])
-                stamp = manifest["generated_at"]
-                dates = block.select(f'time[datetime="{stamp}"]')
-                assert len(dates) == 1
-                assert dates[0].get_text() == datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%B %-d, %Y, %H:%M UTC")
+            _assert_price_dates(block, [guides._manifest(route[1])["generated_at"] for route in (low, high)])
     savings = BeautifulSoup(client.get(PAGES[3]).text, "html.parser")
     for percent in savings.select("[data-route-saving-percent]"):
         lever = percent.find_parent("tr")
@@ -559,6 +597,33 @@ def test_route_prices_and_cache_savings_follow_catalog(client: TestClient) -> No
         assert _shown(savings, "cache-input") == prompt
         assert _shown(savings, "cache-saving-percent") == (1 - read / prompt) * 100
 
+
+# 1 second apart shares the shown minute (one <time>); 90 seconds does not (two).
+@pytest.mark.parametrize("late_seconds", [1, 90])
+def test_worked_costs_survive_manifests_written_seconds_apart(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, late_seconds: int,
+) -> None:
+    """2026-11-26 12:24Z: Anthropic's manifest was stamped 12:29:04 and
+    DeepInfra's and OpenAI's 12:29:05, so the caption carried only 12:29:04."""
+    _skew_manifest_stamps(monkeypatch, {"anthropic"}, late_seconds)
+    test_worked_costs_match_catalog_and_rounding(client)
+    soup = BeautifulSoup(client.get(PAGES[1]).text, "html.parser")
+    times = soup.select_one("[data-price-dates]").select("time")
+    assert "2026-11-26T12:29:04Z" in [node["datetime"] for node in times]
+    assert len(times) == (1 if late_seconds < 60 else 2)
+
+
+@pytest.mark.parametrize("late_seconds", [1, 90])
+def test_route_prices_survive_manifests_written_seconds_apart(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, late_seconds: int,
+) -> None:
+    _, amounts = _deepseek_route_amounts()
+    low, high = amounts[0][1], amounts[-1][1]
+    _skew_manifest_stamps(monkeypatch, {low}, late_seconds)
+    test_route_prices_and_cache_savings_follow_catalog(client)
+    soup = BeautifulSoup(client.get(PAGES[1]).text, "html.parser")
+    for block in soup.select("[data-route-count]"):
+        assert len(block.select("time")) == (1 if low == high or late_seconds < 60 else 2)
 
 def test_vendor_comparisons_have_sources_and_date(client: TestClient) -> None:
     soup = BeautifulSoup(client.get(PAGES[1]).text, "html.parser")
