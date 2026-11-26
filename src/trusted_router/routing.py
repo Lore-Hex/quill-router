@@ -20,6 +20,7 @@ from trusted_router.catalog import (
     FUSION_MODEL_ID,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
+    MODEL_ENDPOINTS,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_TRUSTED,
@@ -1215,6 +1216,13 @@ def resolve_model_alias(model_id: str) -> str:
         return ROUTING_MODEL_ALIAS_TARGETS[model_id]
     if model_id in MODELS:
         return model_id
+    resolved = _resolve_bare_or_dated(model_id)
+    if resolved != model_id or "/" in model_id:
+        return resolved
+    return native_model_id_targets().get(model_id, model_id)
+
+
+def _resolve_bare_or_dated(model_id: str) -> str:
     base = _DATED_SNAPSHOT_RE.sub("", model_id)
     for candidate in (model_id, base):
         if candidate in MODELS:
@@ -1223,6 +1231,57 @@ def resolve_model_alias(model_id: str) -> str:
         if prefixed in MODELS:
             return prefixed
     return model_id
+
+
+# The provider whose own model ids are accepted as written, and the undashed
+# date its ids may end with ("claude-haiku-4-5-20251001").
+NATIVE_ID_PROVIDER = "anthropic"
+_NATIVE_DATE_SUFFIX_RE = re.compile(r"-\d{8}$")
+
+
+def native_model_id_targets() -> dict[str, str]:
+    """Anthropic's own model ids, each mapped to the catalog model it names.
+
+    Claude Code and the Anthropic SDKs send Anthropic's ids (`claude-opus-5-5`);
+    catalog ids are vendor-prefixed and dotted (`anthropic/claude-opus-5.5`).
+    The map is read from the catalog, not derived by spelling: a key is the
+    upstream id of a model's direct Anthropic route, so the id the client
+    typed is the id that route sends upstream. A dated upstream id is also
+    reachable by its undated form, the alias Anthropic publishes for it.
+
+    A closed set by design. The routing snapshot lists these keys beside the
+    alias targets, so the Go evaluator hands such a request to this resolver
+    instead of answering for an id it does not know. A spelling an older rule
+    already resolves is left to that rule, and one that two models claim is
+    left out.
+    """
+    exact: dict[str, set[str]] = {}
+    undated: dict[str, set[str]] = {}
+    for endpoint in MODEL_ENDPOINTS.values():
+        if endpoint.provider != NATIVE_ID_PROVIDER:
+            continue
+        model = MODELS.get(endpoint.model_id)
+        native = endpoint.upstream_id
+        if model is None or not model.supports_messages or not native or "/" in native:
+            continue
+        exact.setdefault(native, set()).add(endpoint.model_id)
+        base = _NATIVE_DATE_SUFFIX_RE.sub("", native)
+        if base != native:
+            undated.setdefault(base, set()).add(endpoint.model_id)
+    out: dict[str, str] = {}
+    for spellings in (undated, exact):  # an exact id outranks an undated form
+        for spelling, model_ids in spellings.items():
+            if len(model_ids) != 1:
+                out.pop(spelling, None)
+                continue
+            out[spelling] = next(iter(model_ids))
+    return {
+        spelling: model_id
+        for spelling, model_id in sorted(out.items())
+        if canonical_router_model_id(spelling) == spelling
+        and spelling not in ROUTING_MODEL_ALIAS_TARGETS
+        and _resolve_bare_or_dated(spelling) == spelling
+    }
 
 
 def _requested_model_ids(
