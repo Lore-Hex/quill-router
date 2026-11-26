@@ -159,32 +159,16 @@ remains integer microdollars until the final display conversion.
 
 For Google reports, the command distinguishes a UTM-labeled visit from a real
 Google Ads click. It counts only visits carrying `gclid`, `gbraid`, or `wbraid`
-as eligible for server-side conversion delivery. The report holds scale when
-those identifiers are absent, a click-backed signup was not durably encrypted,
-native spend is unavailable, or paid traffic has spend but no settled purchase
-in the window. Click persistence is reported separately from click capture so
-KMS permission regressions cannot silently empty the conversion outbox.
-
-Native spend uses Google's aggregate reporting API. Configure the report with:
-
-```text
-TR_GOOGLE_ADS_REPORTING_CUSTOMER_ID=<Google Ads customer ID>
-TR_GOOGLE_ADS_REPORTING_LOGIN_CUSTOMER_ID=<manager ID, when applicable>
-TR_GOOGLE_ADS_DEVELOPER_TOKEN=<Google Ads API developer token>
-TR_GOOGLE_ADS_REPORTING_TIME_ZONE=America/Los_Angeles
-```
-
-The reporting identity needs read access to the Google Ads customer. The API
-returns campaign name, impressions, clicks, and `cost_micros`; TrustedRouter
-does not request search text, user identifiers, or audience data. Spend and
-revenue remain integer microdollars. Use `--google-ads-spend required` in a
-decision report so missing credentials or permissions fail closed.
+as eligible for server-side conversion delivery. Click persistence is reported
+separately from click capture so missing identifiers and KMS permission issues
+remain visible. The funnel uses first-party events only: it does not query Google
+Ads for campaign data or spend. It reports spend, CAC, and ROAS as unavailable,
+not zero, and does not recommend increasing Google ad spend.
 
 Landing engagements from the isolated public service are written as native
 Cloud Logging JSON with an explicit metadata allowlist. The report merges those
 rows with conversion events from Axiom. The public service receives no Axiom
-credential, and Google Ads reporting remains read-only: no TrustedRouter user,
-signup, activation, or purchase data is uploaded to Google.
+credential.
 
 One `utm_content` value is one measurable creative cell. Multiple headlines
 inside one responsive search ad share that cell, so create separately tagged

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sys
 
 import pytest
 
-from trusted_router.google_ads_reporting import GoogleAdsSpendReport, GoogleAdsSpendRow
 from trusted_router.marketing_funnel import (
     FunnelRow,
     aggregate_cohort_funnel_rows,
@@ -495,6 +495,38 @@ def test_invalid_counts_fail_closed(value: object) -> None:
         )
 
 
+def test_google_report_never_uses_ads_credentials_or_network(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    import google.auth
+    import httpx
+
+    from scripts import marketing_funnel_report as report
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        pytest.fail("The first-party report must not authenticate to or query Google Ads")
+
+    monkeypatch.setenv("TR_GOOGLE_ADS_REPORTING_CUSTOMER_ID", "1234567890")
+    monkeypatch.setenv("TR_GOOGLE_ADS_DEVELOPER_TOKEN", "synthetic-do-not-use")
+    monkeypatch.setattr(google.auth, "default", unexpected)
+    monkeypatch.setattr(httpx.Client, "send", unexpected)
+    monkeypatch.setattr(sys, "argv", [
+        "report", "--source", "google", "--format", "json", "--public-engagements", "off",
+        "--days", "10", "--cohort-lag-days", "3",
+    ])
+    monkeypatch.setattr(report.shutil, "which", lambda _: "/test/axiom")
+    monkeypatch.setattr(report, "fetch_axiom_cohort_records", lambda *args, **kwargs: [])
+    assert report.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["google_ads_spend"] == {"status": "unavailable", "reason": "native_spend_not_collected"}
+    assert result["measurement"]["spend_microdollars"] is None
+    assert result["measurement"]["decision"] == "hold"
+    cohort = result["cohort"]
+    end = dt.datetime.fromisoformat(cohort["end_at"])
+    assert end - dt.datetime.fromisoformat(cohort["start_at"]) == dt.timedelta(days=10)
+    assert dt.datetime.fromisoformat(cohort["observed_through"]) - end == dt.timedelta(days=3)
+
+
 def test_google_measurement_holds_when_utm_visits_have_no_click_ids_or_spend() -> None:
     rows = aggregate_funnel_rows(
         [
@@ -505,17 +537,12 @@ def test_google_measurement_holds_when_utm_visits_have_no_click_ids_or_spend() -
         ]
     )
 
-    summary = summarize_measurement(
-        rows,
-        source="google",
-        spend=None,
-        spend_error="native_spend_not_configured",
-    )
+    summary = summarize_measurement(rows, source="google")
 
     assert summary.hold_scale is True
     assert summary.blockers == (
         "google_click_ids_missing",
-        "native_spend_not_configured",
+        "native_spend_not_collected",
     )
     assert summary.as_dict()["purchase_cac_microdollars"] is None
     assert summary.as_dict()["roas"] is None
@@ -524,55 +551,7 @@ def test_google_measurement_holds_when_utm_visits_have_no_click_ids_or_spend() -
     assert "304 engaged -> 31 signup -> 7 first call -> 2 checkout" in rendered
 
 
-def test_google_measurement_uses_integer_spend_and_requires_a_purchase_to_scale() -> None:
-    rows = aggregate_funnel_rows(
-        [
-            _record(
-                "acquisition.landing_engaged",
-                people=20,
-                google_ads_click_people=18,
-            ),
-            _record(
-                "acquisition.signup_completed",
-                people=4,
-                google_ads_click_people=4,
-                google_ads_persisted_people=4,
-            ),
-            _record(
-                "acquisition.first_successful_api_call",
-                people=2,
-                google_ads_click_people=2,
-                google_ads_persisted_people=2,
-            ),
-        ]
-    )
-    spend = GoogleAdsSpendReport(
-        customer_id="1234567890",
-        currency_code="USD",
-        time_zone="America/Los_Angeles",
-        start_date="2026-08-17",
-        end_date="2026-08-23",
-        rows=(
-            GoogleAdsSpendRow(
-                date="2026-08-23",
-                campaign_id="42",
-                campaign_name="OpenRouter alternative",
-                impressions=100,
-                clicks=20,
-                spend_microdollars=12_345_679,
-            ),
-        ),
-    )
-
-    summary = summarize_measurement(rows, source="google", spend=spend)
-
-    assert summary.blockers == ("no_purchases_in_window",)
-    assert summary.spend_microdollars == 12_345_679
-    assert summary.as_dict()["signup_cac_microdollars"] == 3_086_420
-    assert isinstance(summary.as_dict()["signup_cac_microdollars"], int)
-
-
-def test_google_measurement_is_ready_only_with_click_evidence_spend_and_purchase() -> None:
+def test_google_purchase_is_measured_without_claiming_a_return_on_ad_spend() -> None:
     rows = aggregate_funnel_rows(
         [
             _record(
@@ -601,22 +580,14 @@ def test_google_measurement_is_ready_only_with_click_evidence_spend_and_purchase
             ),
         ]
     )
-    spend = GoogleAdsSpendReport(
-        customer_id="1234567890",
-        currency_code="USD",
-        time_zone="America/Los_Angeles",
-        start_date="2026-08-17",
-        end_date="2026-08-23",
-        rows=(GoogleAdsSpendRow("2026-08-23", "42", "Privacy", 100, 10, 5_000_000),),
-    )
-
-    summary = summarize_measurement(rows, source="google", spend=spend)
-
-    assert summary.hold_scale is False
-    assert summary.blockers == ()
-    assert summary.as_dict()["decision"] == "ready"
-    assert summary.as_dict()["purchase_cac_microdollars"] == 5_000_000
-    assert summary.as_dict()["roas"] == "4.0000"
+    summary = summarize_measurement(rows, source="google")
+    report = summary.as_dict()
+    assert report["revenue_microdollars"] == 20_000_000
+    assert report["purchasers"] == 1
+    assert report["decision"] == "hold"
+    assert summary.blockers == ("native_spend_not_collected",)
+    for key in ("spend_microdollars", "ad_clicks", "ad_impressions", "purchase_cac_microdollars", "roas"):
+        assert report[key] is None
 
 
 def test_google_measurement_holds_when_click_backed_signups_were_not_persisted() -> None:
@@ -636,18 +607,13 @@ def test_google_measurement_holds_when_click_backed_signups_were_not_persisted()
         ]
     )
 
-    summary = summarize_measurement(
-        rows,
-        source="google",
-        spend=None,
-        spend_error="native_spend_not_configured",
-    )
+    summary = summarize_measurement(rows, source="google")
 
     assert summary.google_ads_click_signups == 29
     assert summary.google_ads_persisted_signups == 0
     assert summary.blockers == (
         "google_click_ids_not_persisted",
-        "native_spend_not_configured",
+        "native_spend_not_collected",
     )
     assert "0 of 29 click-backed signups persisted" in render_measurement_markdown(summary)
 
@@ -655,12 +621,7 @@ def test_google_measurement_holds_when_click_backed_signups_were_not_persisted()
 def test_non_google_report_does_not_require_google_measurement() -> None:
     rows = aggregate_funnel_rows([_record("acquisition.landing_engaged", people=5, source="x")])
 
-    summary = summarize_measurement(
-        rows,
-        source="x",
-        spend=None,
-        spend_error="native_spend_disabled",
-    )
+    summary = summarize_measurement(rows, source="x")
 
     assert summary.hold_scale is False
     assert summary.blockers == ()
