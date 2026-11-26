@@ -1662,6 +1662,10 @@ def test_console_checkout_exposes_and_enforces_paypal_minimum(
     console_session: tuple[TestClient, str],
 ) -> None:
     client, _ = console_session
+    # A new workspace the PayPal guard admits: verified phone, one card top-up.
+    user = STORE.ensure_user("alice@example.com")
+    user.phone_verified = True
+    assert STORE.add_lifetime_topup(user.id, 10_000_000, f"card-topup-{user.id}")
     page = client.get("/console/credits")
 
     assert page.status_code == 200

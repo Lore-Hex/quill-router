@@ -52,10 +52,33 @@ def _settings(**overrides: Any) -> Settings:
     )
 
 
+def _ready(user_id: str) -> None:
+    """Verified phone and one small completed card top-up: still not
+    established, but clear of the phone and first-top-up rules (covered in
+    test_paypal_topup_guard_strict.py), so each test here sees only its rule."""
+    user = STORE.get_user(user_id)
+    assert user is not None
+    user.phone_verified = True
+    assert STORE.add_lifetime_topup(user_id, 10_000_000, f"card-topup-{user_id}")
+
+
 def _account(email: str = "owner@example.com") -> tuple[str, str]:
     result = STORE.signup(email=email)
     assert result is not None
+    _ready(result.user.id)
     return result.workspace.id, result.user.id
+
+
+@pytest.fixture(autouse=True)
+def verified_payer(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """The approved order PayPal returns before capture: a verified payer
+    whose email is the default owner's. A test with another owner sets it."""
+    wallet = {"email_address": "owner@example.com", "account_status": "VERIFIED"}
+    monkeypatch.setattr(
+        paypal_billing, "_paypal_get",
+        lambda *_a, **_k: {"payment_source": {"paypal": dict(wallet)}},
+    )
+    return wallet
 
 
 def _make_established(user_id: str) -> None:
@@ -150,15 +173,15 @@ def test_new_workspace_amount_cap_refuses_with_its_own_code() -> None:
     workspace_id, user_id = _account()
     check_paypal_checkout(  # exactly the cap is allowed
         STORE, workspace_id=workspace_id, initiating_user_id=user_id,
-        credit_amount_cents=10_000, settings=_settings(),
+        credit_amount_cents=2_500, settings=_settings(),
     )
     with pytest.raises(HTTPException) as raised:
         check_paypal_checkout(
             STORE, workspace_id=workspace_id, initiating_user_id=user_id,
-            credit_amount_cents=10_001, settings=_settings(),
+            credit_amount_cents=2_501, settings=_settings(),
         )
     assert _refusal(raised) == (403, GUARD_CODE_AMOUNT_CAP)
-    assert "$100" in raised.value.detail["error"]["message"]
+    assert "$25 " in raised.value.detail["error"]["message"]
 
 
 def test_established_workspace_has_no_amount_cap() -> None:
@@ -445,6 +468,10 @@ def test_api_checkout_over_cap_is_refused_before_an_order_exists(
     )
     app = create_app(_settings(), init_observability=False)
     with TestClient(app) as client:
+        workspace_id = str(client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"])
+        workspace = STORE.get_workspace(workspace_id)
+        assert workspace is not None
+        _ready(workspace.owner_user_id)
         response = client.post(
             "/v1/billing/checkout", headers=user_headers,
             json={"amount": 250, "payment_method": "paypal"},
@@ -468,6 +495,7 @@ def _console_client() -> tuple[TestClient, Any, Any]:
     app = create_app(Settings(environment="local"), init_observability=False)  # type: ignore[call-arg]
     client = TestClient(app)
     user = STORE.ensure_user("guard-console@example.com")
+    _ready(user.id)
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     raw_token, _ = STORE.create_auth_session(
         user_id=user.id, provider="email", label="guard-console@example.com",
@@ -487,7 +515,7 @@ def test_console_checkout_over_cap_redirects_with_the_cap_line() -> None:
     assert response.status_code == 303
     assert response.headers["location"] == f"/console/credits?error={GUARD_CODE_AMOUNT_CAP}"
     page = client.get(response.headers["location"]).text
-    assert "up to $100 per PayPal payment" in page
+    assert "up to $25 per PayPal payment" in page
 
 
 def test_console_capture_for_latched_workspace_redirects_without_capturing(
@@ -841,10 +869,11 @@ def test_paypal_capture_landing_on_latched_workspace_is_held_and_alerted(
 
 
 def test_capture_raced_by_a_latch_redirects_to_the_paused_line(
-    monkeypatch: pytest.MonkeyPatch, held_alerts: list[str],
+    monkeypatch: pytest.MonkeyPatch, held_alerts: list[str], verified_payer: dict[str, str],
 ) -> None:
     """The latch lands while PayPal is capturing: the credit is held, not shown as success."""
     client, user, workspace = _console_client()
+    verified_payer["email_address"] = user.email
 
     def paypal_post(_settings: Settings, path: str, **_kwargs: Any) -> dict[str, Any]:
         _latch(workspace.id, "ops-race")

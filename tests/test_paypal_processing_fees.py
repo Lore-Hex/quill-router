@@ -29,6 +29,18 @@ def _paypal_settings() -> Settings:
     )
 
 
+def _paypal_ready(client: TestClient, user_headers: dict[str, str]) -> None:
+    """The test user's owner gets a verified phone and one small completed
+    card top-up: a new workspace the PayPal top-up guard lets pay with PayPal."""
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    workspace = STORE.get_workspace(workspace_id)
+    assert workspace is not None
+    owner = STORE.get_user(workspace.owner_user_id)
+    assert owner is not None
+    owner.phone_verified = True
+    assert STORE.add_lifetime_topup(owner.id, 10_000_000, f"card-topup-{owner.id}")
+
+
 def _verified_paypal_settings() -> Settings:
     return Settings(
         environment="test",
@@ -105,6 +117,7 @@ def test_paypal_checkout_uses_the_existing_stripe_card_fee_schedule(
     )
 
     with TestClient(app) as client:
+        _paypal_ready(client, user_headers)
         response = client.post(
             "/v1/billing/checkout",
             headers=user_headers,
@@ -352,6 +365,7 @@ def test_mock_paypal_checkout_reports_same_fee_breakdown(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
+    _paypal_ready(client, user_headers)
     response = client.post(
         "/v1/billing/checkout",
         headers=user_headers,
@@ -387,6 +401,7 @@ def test_minimum_paypal_checkout_preserves_twenty_dollars_of_credits(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
+    _paypal_ready(client, user_headers)
     response = client.post(
         "/v1/billing/checkout",
         headers=user_headers,
@@ -469,9 +484,14 @@ def test_paypal_capture_classifies_paypal_failures(
         lambda **_kwargs: real_client(transport=httpx.MockTransport(paypal_handler)),
     )
 
+    # An established workspace: the guard does not read the order first, so
+    # the only PayPal call is the capture whose failure is classified here.
+    signup = STORE.signup(email="capture-classify@example.com")
+    assert signup is not None
+    signup.user.identity_status = "approved"
     with pytest.raises(HTTPException) as raised:
         capture_paypal_order_for_workspace(
-            order_id="ORDER-422", workspace_id="ws-paypal", settings=_paypal_settings(),
+            order_id="ORDER-422", workspace_id=signup.workspace.id, settings=_paypal_settings(),
         )
 
     assert seen == ["/v2/checkout/orders/ORDER-422/capture"]

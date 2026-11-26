@@ -1,4 +1,7 @@
-"""PayPal payer-email match: recorded as a boolean on the paying user, never blocking."""
+"""PayPal payer-email match: recorded as a boolean on the paying user after a
+capture, and never blocking the capture of an established workspace. (For a
+workspace not yet established the guard enforces the match before capture;
+see test_paypal_topup_guard_strict.py.)"""
 
 from __future__ import annotations
 
@@ -45,8 +48,11 @@ def _order(workspace_id: str, user_id: str | None, *, payer_email: str | None) -
 
 
 def _account(email: str) -> tuple[str, str]:
+    """An established (identity-verified) owner, so the recording is tested
+    on its own, past the pre-capture guard."""
     result = STORE.signup(email=email)
     assert result is not None
+    result.user.identity_status = "approved"
     return result.workspace.id, result.user.id
 
 

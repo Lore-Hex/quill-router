@@ -656,7 +656,22 @@ class Settings(BaseSettings):
     paypal_topup_guard_log_only_rules: str = ""
     # Largest single PayPal top-up (credit amount) for a workspace that is not
     # yet established.
-    paypal_new_workspace_max_topup_cents: int = 10_000
+    paypal_new_workspace_max_topup_cents: int = 2_500
+    # Per-rule switches for workspaces not yet established; off means the rule
+    # is not evaluated (an unverified phone is still logged). To log a rule
+    # without enforcing it, name it in paypal_topup_guard_log_only_rules.
+    # No PayPal until the workspace has a completed top-up on another rail.
+    paypal_require_prior_topup: bool = True
+    # Refuse a payer PayPal reports UNVERIFIED (checked before capture).
+    paypal_require_verified_payer: bool = True
+    # Refuse when the PayPal payer email is not the owner's or the payer's
+    # account email (checked before capture).
+    paypal_require_payer_email_match: bool = True
+    # Refuse when the owner has not verified a phone number.
+    paypal_require_phone_verified: bool = True
+    # Refuse account or payer emails at a typo TLD or misspelled big-provider
+    # domain (services/email_typos.py).
+    paypal_reject_impossible_email: bool = True
     # PayPal captures per rolling day for a workspace / owner not established.
     paypal_new_workspace_daily_captures: int = 2
     paypal_new_owner_daily_captures: int = 3
