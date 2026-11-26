@@ -103,7 +103,7 @@ print(response.choices[0].message.content)</code></pre>
 <p>Strict mode counts outstanding estimated costs and is not an absolute final-charge ceiling. See <a href="/docs/spend-controls">per-key controls</a>.</p>
 <p>For an existing provider account, register its credential through <a href="/docs/byok">BYOK</a>, then select that billing path:</p>
 {% if cost_guide.small %}<pre data-request="byok"><code>{"model":"{{ cost_guide.small.model_id }}","messages":[{"role":"user","content":"Reply with PONG."}],"provider":{"only":["{{ cost_guide.small.provider }}"],"allow_fallbacks":false,"usage":"byok"},"max_tokens":16}</code></pre>{% endif %}
-<p>BYOK re-bills inference to your provider account. Compare <a href="/llm-gateway-pricing">fees and request costs</a> and <a href="/docs/opencode">configure OpenCode</a>.</p>
+<p>BYOK re-bills inference to your provider account. Compare <a href="/llm-gateway-pricing">fees and request costs</a> and <a href="/docs/opencode">configure OpenCode</a> or <a href="/docs/claude-code">Claude Code</a>.</p>
 </section>
 </div>
 {% endblock %}

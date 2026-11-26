@@ -1,0 +1,50 @@
+{% extends "public/_base.html" %}
+{% from "public/_agent_guide_macros.html" import pong_check %}
+{% block body_attributes %}data-docs-code{% endblock %}
+{% block body %}
+{% set g = claude_guide %}
+<div class="content-document" data-content-toc>
+<p>This path serves Claude models only. For other models in a coding agent, use <a href="/docs/opencode">OpenCode</a>.</p>
+<section class="content-section" id="setup">
+<h2>Set it up</h2>
+<pre data-example="exports"><code>export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
+export ANTHROPIC_AUTH_TOKEN="$TRUSTEDROUTER_API_KEY"</code></pre>
+<p>Create a key in <a href="/console/api-keys">Console → API Keys</a> and set <code>TRUSTEDROUTER_API_KEY</code> before running these exports. The base URL has no <code>/v1</code>: Claude Code appends <code>/v1/messages</code>. See <a href="https://code.claude.com/docs/en/llm-gateway-connect">Claude Code's gateway documentation</a>.</p>
+<p>Then pin the models. TrustedRouter model IDs carry the <code>anthropic/</code> prefix, so the IDs Claude Code sends by default, such as <code>claude-sonnet-4-6</code>, are not accepted.</p>
+{% if g.pins %}<pre data-example="pins"><code>{% for pin in g.pins %}export {{ pin.variable }}="{{ pin.model_id }}"{% if not loop.last %}
+{% endif %}{% endfor %}</code></pre>
+<p>These set what Claude Code's model aliases resolve to, including the default model and background tasks. To choose the session's model, keep the pins and also set <code>ANTHROPIC_MODEL</code>, or start with <code>claude --model</code>, and a listed ID.</p>
+{% else %}<p>Set <code>ANTHROPIC_MODEL</code>, or start with <code>claude --model</code>, and a listed ID from the <a href="/models">model catalog</a>.</p>{% endif %}
+<p>Run <code>/status</code> in Claude Code to confirm the Anthropic base URL in use. To keep the setup across terminals, put the same variables in the <code>env</code> block of <code>~/.claude/settings.json</code>, with the key itself as the token value.</p>
+{% if g.cheapest %}{{ pong_check("https://api.trustedrouter.com/v1", g.cheapest.model, messages=true) }}
+<p>The response should contain <code>PONG</code>.</p>
+{% else %}<p>Check the <a href="/models">model catalog</a> for an available Claude model before sending a Messages request.</p>{% endif %}
+</section>
+<section class="content-section" id="models">
+<h2>Which Claude models</h2>
+{% if g.rows %}
+<div class="content-reference"><table class="reference-mobile-table reference-column-table"><thead><tr><th scope="col">Model ID</th><th scope="col">Input / 1M</th><th scope="col">Output / 1M</th><th scope="col">Context</th><th scope="col">Providers</th></tr></thead><tbody>
+{% for row in g.rows %}<tr data-model="{{ row.model.id }}"><td class="reference-key"><span class="reference-cell-label" aria-hidden="true">Model ID</span><a href="/models/{{ row.model.id }}"><code>{{ row.model.id }}</code></a></td><td><span class="reference-cell-label" aria-hidden="true">Input / 1M</span>${{ row.input }}</td><td><span class="reference-cell-label" aria-hidden="true">Output / 1M</span>${{ row.output }}</td><td><span class="reference-cell-label" aria-hidden="true">Context</span>{{ "{:,}".format(row.model.context_length) }} tokens</td><td><span class="reference-cell-label" aria-hidden="true">Providers</span>{{ row.providers }}</td></tr>{% endfor %}
+</tbody></table></div>
+<p>USD per million tokens, including the {{ g.fee_percent }}% fee. Each row uses the provider with the lowest cost for the example below, at {{ "{:,}".format(g.input_tokens) }} input tokens per request; provider choice and longer prompts can change the rate.</p>
+{% else %}<p>Current Claude prices are unavailable. Browse the <a href="/models">model catalog</a> for availability.</p>{% endif %}
+</section>
+<section class="content-section" id="session-cost">
+<h2>What a session costs</h2>
+{% if g.cheapest %}<p><strong>${{ g.cheapest.total }}</strong> for the cheapest listed Claude in this example: <code>{{ g.cheapest.model.id }}</code>{% if g.premium and g.premium.model.id != g.cheapest.model.id %}; <strong>${{ g.premium.total }}</strong> for the newest listed Opus, <code>{{ g.premium.model.id }}</code>{% endif %}.</p>
+<p>Assume {{ g.requests }} requests, each with {{ "{:,}".format(g.input_tokens) }} uncached input tokens and {{ "{:,}".format(g.output_tokens) }} output tokens: {{ g.input_millions }} million input and {{ g.output_millions }} million output tokens in total.</p>
+{% for row in [g.cheapest, g.premium] %}{% if row and (loop.first or row.model.id != g.cheapest.model.id) %}
+<p data-session-model="{{ row.model.id }}" data-session-cost="{{ row.total }}"><code>{{ row.model.id }}</code>: ({{ g.input_millions }} × ${{ row.input }}) + ({{ g.output_millions }} × ${{ row.output }}) = <strong>${{ row.total }}</strong>.</p>
+{% endif %}{% endfor %}
+<p>This is an illustrative session with no cached input, rounded to cents. A real session varies with how much context Claude Code re-sends, tool results and output; <a href="/docs/prompt-caching">cached input</a> settles at the route's cache price when the provider publishes one.</p>
+{% else %}<p>Multiply input and output token millions by the corresponding <a href="/models">current model prices</a>, then add the amounts across the session's requests.</p>{% endif %}
+</section>
+<section class="content-section" id="limits">
+<h2>Limits</h2>
+<p>Claude models only: <code>POST /v1/messages</code> accepts the listed Messages-compatible Claude models. For other models in a coding agent, use <a href="/docs/opencode">OpenCode</a>.</p>
+<p>Claude Code's own tools, such as reading and editing files and running commands, work as usual. Tools that run on the provider's side, such as web search, are not passed through on this path yet. The setup above is served on the default API host, <code>api.trustedrouter.com</code>.</p>
+<p><a href="/docs/spend-controls">Cap what an agent can spend</a> with a dedicated key and daily, weekly or monthly USD limits. Set <code>budget_strict: true</code> and <code>budget_alert_only: false</code> when creating the key to include outstanding estimates in enforcement; actual charges can exceed estimates.</p>
+<p><a href="/docs/prompt-caching">Prompt caching</a> preserves Anthropic content blocks and <code>cache_control</code> on <code>/v1/messages</code>. Read <a href="/who-can-see-your-data">who can see your data</a> for the data-access boundaries.</p>
+</section>
+</div>
+{% endblock %}

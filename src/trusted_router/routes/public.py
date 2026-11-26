@@ -1463,6 +1463,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def who_can_see_your_data() -> str:
         return public_page_html(settings, "who-can-see-your-data")
 
+    @public_html_route("/docs/claude-code")
+    def claude_code_docs() -> str:
+        return public_page_html(settings, "docs/claude-code")
+
     @public_html_route("/docs/opencode")
     def opencode_docs() -> str:
         return public_page_html(settings, "docs/opencode")

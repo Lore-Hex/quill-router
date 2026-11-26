@@ -22,7 +22,7 @@
           <tbody>
             <tr><td><a href="/docs/opencode">OpenCode</a></td><td><code>{{ api_base_url }}</code></td><td>Connect TrustedRouter with /connect, then select a model with /models. See the setup guide for specific models.</td></tr>
             <tr><td>OpenAI compatible</td><td><span class="mono">{{ api_base_url }}</span></td><td>Chat Completions, Responses, models, and most agents</td></tr>
-            <tr><td>Claude Code</td><td><span class="mono">https://api.trustedrouter.com</span></td><td>Set <span class="mono">ANTHROPIC_BASE_URL</span> to this URL and <span class="mono">ANTHROPIC_AUTH_TOKEN</span> to your TrustedRouter key.</td></tr>
+            <tr><td><a href="/docs/claude-code">Claude Code</a></td><td><span class="mono">https://api.trustedrouter.com</span></td><td>Set <span class="mono">ANTHROPIC_BASE_URL</span> to this URL and <span class="mono">ANTHROPIC_AUTH_TOKEN</span> to your TrustedRouter key.</td></tr>
             <tr><td>Anthropic compatible</td><td><span class="mono">https://api.trustedrouter.com</span></td><td>Anthropic SDK Messages calls</td></tr>
             <tr><td>EU regional</td><td><span class="mono">https://api-europe-west4.quillrouter.com/v1</span></td><td>Europe-focused gateway and routing</td></tr>
             <tr><td>Permanent alias</td><td><span class="mono">https://api.quillrouter.com/v1</span></td><td>Existing integrations using the original hostname</td></tr>
@@ -35,6 +35,7 @@ export OPENAI_BASE_URL="{{ api_base_url }}"</code></pre>
       <p>Claude Code:</p>
       <pre><code>export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
 export ANTHROPIC_AUTH_TOKEN="$TRUSTEDROUTER_API_KEY"</code></pre>
+      <p>Claude Code also needs its models pinned to listed IDs with the <span class="mono">anthropic/</span> prefix; the <a href="/docs/claude-code">Claude Code guide</a> has the lines to copy.</p>
       <p>Anthropic SDKs:</p>
       <pre><code># Anthropic SDKs use the non-/v1 base URL.
 export ANTHROPIC_API_KEY="$TRUSTEDROUTER_API_KEY"

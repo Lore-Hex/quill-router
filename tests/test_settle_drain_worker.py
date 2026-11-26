@@ -111,6 +111,7 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
                           ("/who-can-see-your-data", "who_can_see_your_data"),
                           ("/docs/simple-start", "simple_start_docs"),
                           ("/docs/opencode", "opencode_docs"),
+                          ("/docs/claude-code", "claude_code_docs"),
                           ("/docs/opencode-deepseek", "opencode_deepseek_docs"),
                           ("/docs/cut-llm-api-costs", "cut_llm_api_costs_docs"),
                           ("/llm-gateway-pricing", "llm_gateway_pricing"),
