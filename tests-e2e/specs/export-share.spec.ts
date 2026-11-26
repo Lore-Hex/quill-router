@@ -19,9 +19,15 @@ import {
     waitForStreamToFinish,
 } from "../fixtures/helpers";
 
+// Clipboard tests in this file must not overwrite one another's share URL.
+test.describe.configure({ mode: "default" });
+
 test.beforeEach(async ({ context, page, baseURL }) => {
     await mockExternalApis(page);
     await plantSignedInHint(context, baseURL!);
+    await page.route("**/auth/session", route => route.fulfill({
+        json: { data: { user: { id: "export-user" }, workspace: { id: "export-workspace" } } },
+    }));
 });
 
 async function seedConvo(page: any): Promise<void> {
@@ -35,6 +41,7 @@ async function seedConvo(page: any): Promise<void> {
     );
     await page.reload();
     await sendMessage(page, "Question for export");
+    await expect(page.locator(".chat-msg-md").last()).toContainText("Hello world!");
     await waitForStreamToFinish(page);
 }
 
@@ -74,7 +81,7 @@ test("export-json downloads a .json file with chat contents", async ({
 }) => {
     await seedConvo(page);
     const downloadPromise = page.waitForEvent("download");
-    await page.locator('[data-action="export-json"]').first().click();
+    await page.keyboard.press("Control+e");
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/\.json$/);
     const stream = await download.createReadStream();
@@ -126,18 +133,16 @@ test("opening a #share= URL imports the chat as a new entry", async ({
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await seedConvo(page);
     await page.locator('[data-action="share-link"]').first().click();
-    await page.waitForTimeout(150);
+    await expect(page.locator(".chat-toast")).toBeVisible();
     const url = await page.evaluate(() => navigator.clipboard.readText());
     expect(url).toContain("#share=");
 
     // Open in a fresh context so localStorage is empty
     const cleanCtx = await context.browser()!.newContext();
-    await mockExternalApis(await cleanCtx.newPage()); // no-op route stash
     const fresh = await cleanCtx.newPage();
     await mockExternalApis(fresh);
     await fresh.goto(url);
-    // Allow importSharedChatFromHash() to run
-    await fresh.waitForTimeout(400);
+    await expect(fresh.locator(".chat-header-chat-title")).toHaveText("Roundtrip-Test-Chat (shared)");
     const state = await fresh.evaluate(() =>
         JSON.parse(localStorage.getItem("tr_chat_state_v1") || "{}"),
     );
