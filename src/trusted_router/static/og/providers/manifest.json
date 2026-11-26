@@ -190,11 +190,11 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 0,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 16,
-    "route_mode": "Prepaid + BYOK",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "crusoe"
   },
   "darkbloom": {
@@ -235,10 +235,10 @@
   },
   "decisionmodelsio-eu": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 6,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio-eu"
   },
@@ -658,19 +658,19 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
   "openai": {
     "card_version": 2,
-    "model_count": 34,
+    "model_count": 40,
     "name": "OpenAI",
     "privacy": "TR-funded ZDR",
-    "route_count": 63,
+    "route_count": 69,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -721,10 +721,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 3,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 8,
+    "route_count": 6,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
