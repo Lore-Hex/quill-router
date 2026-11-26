@@ -1575,8 +1575,16 @@ PROVIDERS: dict[str, Provider] = {
             "Marked ZDR via TrustedRouter's arrangement — Nebius RETAINS inputs/"
             "outputs by default (for speculative decoding); zero retention is an "
             "opt-in control, which the deployed Nebius account has enabled. Nebius "
-            "does not train on customer data."
+            "does not train on customer data. In a rollout from 2026-11-27 to "
+            "2026-12-01, Nebius adds an invisible statistical watermark to text "
+            "from all its text-generation endpoints (EU AI Act marking); Nebius "
+            "says request and response formats are unchanged but output variety "
+            "and generation speed may be reduced."
         ),
+        # Output watermarking is disclosed in the policy text only. It changes
+        # what the model emits, not what Nebius retains, so it does not move
+        # stores_content / ZDR or the privacy tier. Source: Nebius Token
+        # Factory product notice dated 2026-11-26.
         provider_policy_url="https://docs.studio.nebius.com/legal/legal-quick-guide",
         # Nebius's own legal guide for Token Factory, the service whose
         # api.tokenfactory.nebius.com endpoint is routed to here, says the
