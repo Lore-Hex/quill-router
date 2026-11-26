@@ -88,6 +88,17 @@ def _write_manifest(directory: Path, *, held_at: str | None) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_route_here_retires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests replay real incidents under their real route names, some at
+    the wall clock. The hold's planner does not hold a route past its scheduled
+    retirement, so a retirement announced later for one of these routes would
+    turn them red at its cutover instant, on main, with nothing changed.
+    Retirement is covered in tests/test_unserved_hold_live_routes.py; here the
+    planner sees no retirement."""
+    monkeypatch.setattr(plan, "provider_model_retired", lambda *args, **kwargs: False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_operation_limits() -> Iterator[None]:
     from trusted_router.routes.internal import synthetic as synthetic_routes
 

@@ -38,6 +38,17 @@ ROUTE = (PROVIDER, MODEL)
 SIBLINGS = ["google/gemma-3-12b-it", "google/gemma-4-26b-a4b-it", "qwen/qwen3-14b"]
 
 
+@pytest.fixture(autouse=True)
+def _no_route_here_retires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests replay real incidents under their real route names, some at
+    the wall clock. The hold's planner does not hold a route past its scheduled
+    retirement, so a retirement announced later for one of these routes would
+    turn them red at its cutover instant, on main, with nothing changed.
+    Retirement is covered in tests/test_unserved_hold_live_routes.py; here the
+    planner sees no retirement."""
+    monkeypatch.setattr(plan, "provider_model_retired", lambda *args, **kwargs: False)
+
+
 def _iso(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
