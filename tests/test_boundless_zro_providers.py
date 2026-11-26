@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pricing.providers import boundless, zro
+from tests.provider_holds import row_on_unserved_route_hold
 
 
 def boundless_product(native="mimo-v2.6-pro"):
@@ -292,7 +293,7 @@ def _manifest_rows(slug: str) -> list[dict]:
     return [row for row in rows if isinstance(row, dict)]
 
 
-def _published_route_disagreements(module, endpoints, rows) -> list[str]:
+def _published_route_disagreements(module, endpoints, rows, *, settlement_only=False) -> list[str]:
     """The prepaid routes a discovered provider publishes, against its manifest.
 
     The hourly refresh withholds (canary failure) or delists (two fresh API
@@ -301,7 +302,12 @@ def _published_route_disagreements(module, endpoints, rows) -> list[str]:
     live model: every published route is a routable manifest row, served by
     that row's upstream ID, billed in Credits with a cached-input rate, and
     no withheld or retired row is ever published. At least one route must be
-    published, so the check cannot pass vacuously."""
+    published, so the check cannot pass vacuously.
+
+    `settlement_only` endpoints are a provider-held provider's retained
+    tariffs, never routed. They are built from the snapshot the refresh wrote
+    before its unserved-route step ran, so a row that step has just held still
+    has its tariff there; a row unroutable for any other reason must not."""
     slug = module.SLUG
     by_id = {row["id"]: row for row in rows if isinstance(row.get("id"), str)}
     published = [e for e in endpoints if e.provider == slug]
@@ -313,7 +319,7 @@ def _published_route_disagreements(module, endpoints, rows) -> list[str]:
         if row is None:
             problems.append(f"{slug}: {e.model_id} published without a manifest row")
             continue
-        if row.get("routable") is False:
+        if row.get("routable") is False and not (settlement_only and row_on_unserved_route_hold(row)):
             problems.append(f"{slug}: {e.model_id} published while {row.get('routable_reason')}")
         if e.upstream_id != row.get("upstream_id"):
             problems.append(f"{slug}: {e.model_id} upstream {e.upstream_id} != manifest {row.get('upstream_id')}")
@@ -345,8 +351,17 @@ def test_published_route_check_follows_the_manifest():
     assert not _published_route_disagreements(zro, both, rows)
     retired = [rows[0], dict(rows[1], routable=False, routable_reason="provider-retired")]
     assert not _published_route_disagreements(zro, both[:1], retired)
-    # A retired route that is still published.
+    # A retired route that is still published, as a route or a retained tariff.
     assert _published_route_disagreements(zro, both, retired)
+    assert _published_route_disagreements(zro, both, retired, settlement_only=True)
+    # A route the refresh has just held as unserved: never published as a
+    # route; its retained settlement tariff is still in that refresh's snapshot.
+    held_unserved = [rows[0], dict(
+        rows[1], routable=False, routable_reason="provider-route-unserved",
+        unserved_held_at="2026-11-26T07:32:00Z",
+    )]
+    assert _published_route_disagreements(zro, both, held_unserved)
+    assert not _published_route_disagreements(zro, both, held_unserved, settlement_only=True)
     # Nothing published at all.
     assert _published_route_disagreements(zro, [], rows)
     # A route with no manifest row, a different upstream, a prefixed upstream,
@@ -391,7 +406,9 @@ def test_registration_and_published_pricing(client):
             # tariffs must still agree with the manifest.
             assert not endpoints
             held = [e for key, e in HELD_PREPAID_SETTLEMENT_ENDPOINTS.items() if key.endswith(f"@{slug}/prepaid")]
-            assert not _published_route_disagreements(module, held, _manifest_rows(slug))
+            assert not _published_route_disagreements(
+                module, held, _manifest_rows(slug), settlement_only=True,
+            )
         else:
             assert not _published_route_disagreements(module, endpoints, _manifest_rows(slug))
         page = client.get(f"/providers/{slug}")
@@ -512,10 +529,12 @@ def test_boundless_gpt_oss_120b_is_held_while_the_provider_rejects_it():
     assert rows[GPT_OSS_120B]["upstream_id"] == GPT_OSS_120B
     assert rows[GPT_OSS_120B]["routable"] is False
     assert rows[GPT_OSS_120B]["routable_reason"] == "provider-access-unavailable"
-    assert rows[BOUNDLESS_CONTROL].get("routable") is not False
+    # The control serves, unless the refresh itself holds it as unserved.
+    control_held = row_on_unserved_route_hold(rows[BOUNDLESS_CONTROL])
+    assert rows[BOUNDLESS_CONTROL].get("routable") is not False or control_held
     built = catalog_vehicles.registry_endpoints()
     assert f"{GPT_OSS_120B}@boundless/prepaid" not in built
-    assert f"{BOUNDLESS_CONTROL}@boundless/prepaid" in built
+    assert f"{BOUNDLESS_CONTROL}@boundless/prepaid" in built or control_held
 
 
 def test_boundless_gpt_oss_hold_survives_refresh_canary_and_price_index(monkeypatch, tmp_path):

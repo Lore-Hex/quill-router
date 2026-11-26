@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from scripts.pricing.providers import deepinfra
+from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
 from trusted_router import provider_lifecycle
 from trusted_router.catalog_registry import MODEL_ENDPOINTS
 
@@ -73,10 +74,15 @@ def test_wandb_keeps_granite_8b() -> None:
     after = _live_providers(_GRANITE_8B[0], _CUTOFF + timedelta(days=1))
     assert "deepinfra" not in after
     assert after == before - {"deepinfra"}
-    assert "wandb" in after
+    # W&B keeps serving it, unless the refresh itself holds that row as unserved.
+    wandb = {row["id"]: row for row in manifest_rows("wandb")}
+    assert "wandb" in after or row_on_unserved_route_hold(wandb.get(_GRANITE_8B[0], {}))
 
 
 def test_replacement_is_in_the_catalog_and_deepinfra_keeps_serving_it() -> None:
     # The quoted replacement is the model DeepInfra redirects to; it stays
     # routable on DeepInfra and elsewhere after the cutoff.
-    assert "deepinfra" in _live_providers(_REPLACEMENT, _CUTOFF + timedelta(days=1))
+    # Unless the refresh itself holds DeepInfra's row for it as unserved.
+    assert "deepinfra" in _live_providers(
+        _REPLACEMENT, _CUTOFF + timedelta(days=1)
+    ) or row_on_unserved_route_hold(_manifest_rows().get(_REPLACEMENT, {}))

@@ -8,16 +8,13 @@ import pytest
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import chutes, cloudflare_workers_ai, digitalocean
 from tests import catalog_vehicles
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     PROVIDERS,
 )
 from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
-from trusted_router.provider_manifest_policy import (
-    UNSERVED_ROUTE_HELD_AT_FIELD,
-    UNSERVED_ROUTE_HOLD_REASON,
-)
 
 
 def test_digitalocean_official_pricing_uses_integer_microdollars() -> None:
@@ -87,11 +84,7 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
         row.get("routable") is True
         or row.get("routable_reason") == "awaiting-price"
         or (row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed")
-        or (
-            row.get("routable") is False
-            and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
-            and row.get(UNSERVED_ROUTE_HELD_AT_FIELD)
-        )
+        or row_on_unserved_route_hold(row)
         or (row.get("routable_reason") == "delisted-upstream" and row.get("missing_since"))
         for row in rows
     )
@@ -165,7 +158,17 @@ def test_new_provider_manifests_create_only_eligible_routes() -> None:
         manifest = json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))
         routable = {row["id"] for row in manifest["models"] if row.get("routable") is not False}
         routed = {endpoint.model_id for endpoint in endpoints if endpoint.provider == provider.SLUG}
-        assert routed <= routable, provider.SLUG
+        # The refresh's own unserved-route hold ends the route on TrustedRouter's
+        # credentials. The snapshot that refresh wrote before the hold still
+        # lists the route, so a customer's own key keeps it (BYOK), as for any
+        # Credits-only manifest hold.
+        held_unserved = {row["id"] for row in manifest["models"] if row_on_unserved_route_hold(row)}
+        on_credits = {
+            endpoint.model_id for endpoint in endpoints
+            if endpoint.provider == provider.SLUG and endpoint.usage_type == "Credits"
+        }
+        assert on_credits <= routable, provider.SLUG
+        assert routed <= routable | held_unserved, provider.SLUG
     cloudflare = [
         endpoint
         for endpoint in endpoints

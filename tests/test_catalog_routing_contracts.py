@@ -2544,10 +2544,16 @@ def test_makora_provider_models_follow_live_manifest() -> None:
     assert credits_model_ids == set(expected)
     # Our account's billing hold must not disable a customer's own Makora key.
     # Snapshot-backed BYOK routes may survive a Credits-only manifest hold.
+    # The refresh's own unserved-route hold is Credits-only in the same way:
+    # the snapshot it wrote before that step ran still lists the route.
+    from tests.provider_holds import row_on_unserved_route_hold
+
     account_held = {
         row["id"] for row in raw_models
-        if row.get("routable") is False
-        and row.get("routable_reason") == "provider-billing-unavailable"
+        if (
+            row.get("routable") is False
+            and row.get("routable_reason") == "provider-billing-unavailable"
+        ) or row_on_unserved_route_hold(row)
     }
     assert set(expected) <= byok_model_ids
     assert byok_model_ids - set(expected) <= account_held

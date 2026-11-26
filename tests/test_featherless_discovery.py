@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -12,6 +13,7 @@ import httpx
 import pytest
 
 from scripts.pricing.providers import featherless
+from trusted_router.unserved_route_hold_plan import lift_expired_unserved_holds
 
 AGED_OUT_NATIVE = "Qwen/Qwen3.5-9B"
 AGED_OUT_MODEL = "qwen/qwen3.5-9b"
@@ -20,6 +22,11 @@ AGED_OUT_MODEL = "qwen/qwen3.5-9b"
 @pytest.fixture
 def catalog(monkeypatch, tmp_path):
     committed = json.loads(featherless.MANIFEST_PATH.read_text())
+    # These tests replay Featherless's API from the committed routes. A route
+    # the hourly refresh holds as unserved is still listed by Featherless, so
+    # start from the manifest with that hold lifted, the way the refresh's own
+    # step lifts it. A row that is unroutable for any other reason stays so.
+    lift_expired_unserved_holds(committed["models"], now=datetime.max.replace(tzinfo=UTC))
     manifest = tmp_path / "featherless.json"
     manifest.write_text(json.dumps(committed))
     # Only curated models remain in the recent-model listing. All other

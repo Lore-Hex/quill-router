@@ -9,6 +9,7 @@ import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.providers import nscale
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router import provider_lifecycle, provider_manifest_policy
 
 _CUTOFF = datetime(2026, 12, 11, tzinfo=UTC)
@@ -132,12 +133,20 @@ def test_nscale_post_december_catalog_renews_and_tombstones_the_retired_rows(
 
     assert _valid_until(manifest) > committed_valid_until
     rows = _rows(manifest)
+    # A survivor keeps routing, unless the refresh itself holds the committed
+    # row as unserved: the writer carries that hold forward.
     for model_id in _SURVIVING:
-        assert rows[model_id].get("routable") is not False, model_id
+        assert rows[model_id].get("routable") is not False or row_on_unserved_route_hold(
+            rows[model_id]
+        ), model_id
         assert rows[model_id]["input_token_price_per_m"] > 0
+    # A retired row is dark: tombstoned, or still on the refresh's own
+    # unserved-route hold, which outranks the delisting until it lifts.
     for model_id in _RETIRING:
         assert rows[model_id]["routable"] is False, model_id
-        assert rows[model_id]["routable_reason"] == "delisted-upstream"
+        assert rows[model_id]["routable_reason"] == "delisted-upstream" or row_on_unserved_route_hold(
+            rows[model_id]
+        ), model_id
         assert rows[model_id]["missing_since"]
         assert rows[model_id]["retirement_at"] == _CUTOFF_STAMP
 

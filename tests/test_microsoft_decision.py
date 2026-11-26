@@ -9,6 +9,7 @@ import pytest
 from scripts.pricing.providers import azure
 from scripts.providers import sync_azure_foundry as sync
 from tests.lifecycle_clock import CATALOG_CLOCK
+from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
 from tests.test_azure_provider import _canary_candidate, _minimum_retail_rows, _model, _usage
 from tests.test_decide_models import _authorize
 from trusted_router import catalog_ingest, provider_lifecycle
@@ -19,6 +20,13 @@ from trusted_router.provider_lifecycle import provider_model_retired
 MODEL = azure.DECISION_MODEL_ID
 
 
+def _held_as_unserved() -> bool:
+    """The refresh itself holds the decision row as unserved: until that hold
+    lifts the route is dark, as it is once retired."""
+    rows = {row["id"]: row for row in manifest_rows("azure")}
+    return row_on_unserved_route_hold(rows.get(MODEL, {}))
+
+
 def test_microsoft_decision_catalog_and_price() -> None:
     model = catalog_ingest._decision_models()[MODEL]
     assert model.supports_decide and not model.supports_chat and not model.supports_messages
@@ -26,7 +34,7 @@ def test_microsoft_decision_catalog_and_price() -> None:
     assert model.prompt_price_microdollars_per_million_tokens == 44_310
     assert model.completion_price_microdollars_per_million_tokens == 0
     assert model.upstream_id == "tr-decision-1"
-    if provider_model_retired("azure", MODEL, at=CATALOG_CLOCK):
+    if provider_model_retired("azure", MODEL, at=CATALOG_CLOCK) or _held_as_unserved():
         assert not endpoints_for_model(MODEL)
         assert MODEL not in _authoritative_provider_model_ids("azure")
     else:
@@ -42,7 +50,7 @@ async def test_microsoft_decision_authorizes_exact_azure_deployment() -> None:
         "model": MODEL, "route_type": "decide",
         "estimated_input_tokens": 400, "max_output_tokens": 3,
     })
-    if provider_model_retired("azure", MODEL, at=CATALOG_CLOCK):
+    if provider_model_retired("azure", MODEL, at=CATALOG_CLOCK) or _held_as_unserved():
         assert response.status_code == 400
         return
     assert response.status_code == 200, response.text

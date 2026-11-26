@@ -10,6 +10,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS, parse
 from scripts.pricing.providers import thinkingmachines
 from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
@@ -642,11 +643,23 @@ def test_tinker_inkling_2_routes_are_held_out_of_routing_and_probes() -> None:
     assert "thinkingmachines/inkling-2-small" not in probed
     assert "thinkingmachines/inkling-2-mini" not in probed
     for sibling in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
-        assert "routable" not in rows[sibling]
+        # No operator hold on a sibling. The refresh's own unserved-route hold
+        # is a different, self-lifting decision.
+        held_unserved = row_on_unserved_route_hold(rows[sibling])
+        assert "routable" not in rows[sibling] or held_unserved
         if provider_lifecycle.provider_model_retired("thinkingmachines", sibling):
             # First-gen Inkling retires on 2026-12-14; it is neither probed nor routed.
             assert sibling not in probed
             assert not any(e.provider == "thinkingmachines" for e in endpoints_for_model(sibling))
+            continue
+        if held_unserved:
+            # While that hold lasts the sibling is not probed and has no route
+            # on TrustedRouter's Tinker access.
+            assert sibling not in probed
+            assert not any(
+                e.provider == "thinkingmachines" and e.usage_type == "Credits"
+                for e in endpoints_for_model(sibling)
+            )
             continue
         assert sibling in probed
         assert any(e.provider == "thinkingmachines" for e in endpoints_for_model(sibling))

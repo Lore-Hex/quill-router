@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from scripts.pricing.providers import baseten
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router import provider_lifecycle
 from trusted_router.catalog_registry import MODEL_ENDPOINTS
 
@@ -90,9 +91,13 @@ def test_only_like_for_like_replacements_are_quoted(display_name: str) -> None:
 
 def test_quoted_replacements_stay_on_baseten() -> None:
     later = _CUTOFF + timedelta(days=1)
+    rows = _manifest_rows()
     for replacement in {r for rs in _REPLACEMENTS.values() for r in rs}:
         assert replacement in _RETAINED
-        assert f"{replacement}@baseten/prepaid" in MODEL_ENDPOINTS
+        # Served, unless the refresh itself holds the row as unserved.
+        assert f"{replacement}@baseten/prepaid" in MODEL_ENDPOINTS or row_on_unserved_route_hold(
+            rows.get(replacement, {})
+        ), replacement
         assert not provider_lifecycle.provider_model_retired(
             "baseten", replacement, _RETAINED[replacement], at=later,
         )

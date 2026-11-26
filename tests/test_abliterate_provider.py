@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pricing.providers import _direct_openai, abliterate
+from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
 
 
 def docs_prices():
@@ -167,6 +168,8 @@ def test_estimated_billing_disclosed_without_changing_published_prices():
     assert ABLITERATE_ESTIMATED_USAGE_NOTICE in PROVIDER_BRANDS["abliterate"].description
     assert provider_usage_estimation_policy("sambanova") is None
     expected = set(abliterate.EXPLICIT_MODEL_MAP.values()) - abliterate.OPERATOR_HOLDS.keys()
+    # A route the refresh itself holds as unserved is dark until that hold lifts.
+    expected -= {row["id"] for row in manifest_rows("abliterate") if row_on_unserved_route_hold(row)}
     assert {endpoint.model_id for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "abliterate"} == expected
     prices = abliterate._parse_prices(docs_prices())
     for model in MODELS.values():
