@@ -2357,14 +2357,7 @@ class Settings(BaseSettings):
         settlement_tokens = parse_settlement_inbound_tokens(
             self.federation_settlement_inbound_tokens
         )
-        if self.managed_key_funding_token:
-            for name in operator_credential_setting_names(type(self)) - {"managed_key_funding_token"}:
-                value = getattr(self, name)
-                if isinstance(value, str) and value == self.managed_key_funding_token:
-                    raise ValueError(f"TR_MANAGED_KEY_FUNDING_TOKEN must differ from TR_{name.upper()}")
-            if self.managed_key_funding_token in settlement_tokens:
-                raise ValueError("TR_MANAGED_KEY_FUNDING_TOKEN must differ from settlement credentials")
-        if self.operator_token:
+        if self.operator_token or self.managed_key_funding_token:
             for field_name in sorted(operator_credential_setting_names(type(self))):
                 raw_value = getattr(self, field_name)
                 values: tuple[str, ...]
@@ -2374,11 +2367,16 @@ class Settings(BaseSettings):
                     values = (raw_value,) if raw_value else ()
                 else:
                     values = ()
-                if any(value and hmac.compare_digest(self.operator_token, value) for value in values):
+                if self.operator_token and any(value and hmac.compare_digest(self.operator_token, value) for value in values):
                     raise ValueError(
                         "TR_OPERATOR_TOKEN must differ from "
                         f"TR_{field_name.upper()}"
                     )
+                if (
+                    self.managed_key_funding_token and field_name != "managed_key_funding_token"
+                    and any(value and hmac.compare_digest(self.managed_key_funding_token, value) for value in values)
+                ):
+                    raise ValueError(f"TR_MANAGED_KEY_FUNDING_TOKEN must differ from TR_{field_name.upper()}")
         if self.federation_settlement_home_token and not self.federation_home_base_url:
             raise ValueError(
                 "TR_FEDERATION_SETTLEMENT_HOME_TOKEN is set but "
