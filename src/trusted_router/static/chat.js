@@ -31,13 +31,7 @@
     const KEY_STORAGE_PREFIX = "tr_chat_key";
     const KEY_COOKIE =
         CHAT_CONFIG.keyCookieName || "tr_chat_key";
-    // Inference endpoints (chat/completions, messages, responses) go
-    // through the same-origin chat-proxy because direct cross-origin
-    // fetch to api.trustedrouter.com is CORS-blocked by the attested
-    // gateway. Server-side template renders this as "/chat-proxy/v1".
-    const API_BASE =
-        CHAT_CONFIG.apiBaseUrl ||
-        "/chat-proxy/v1";
+    const API_BASE = CHAT_CONFIG.apiBaseUrl || "https://api.trustedrouter.com/v1";
     // Public catalog endpoint on the canonical API origin. The attested
     // gateway serves GET /v1/models anonymously with public CORS headers,
     // so the picker and SDKs use the same documented hostname.
@@ -1690,8 +1684,7 @@
                     : "";
                 // Routing provenance — TR's transparency story is that
                 // each request says exactly which provider served it.
-                // Populated from the x-trustedrouter-provider header
-                // when the gateway exposes it via CORS.
+                // Populated from gateway routing metadata or an exposed header.
                 const viaProvider = resp.selected_provider
                     ? "  ·  via " + resp.selected_provider
                     : "";
@@ -3066,9 +3059,12 @@
         async function _sendOnce(bearer) {
             return fetch(API_BASE + "/chat/completions", {
                 method: "POST",
+                credentials: "omit",
+                redirect: "error",
                 signal: abort.signal,
                 headers: {
                     "Content-Type": "application/json",
+                    "X-OpenRouter-Metadata": "enabled",
                     Authorization: "Bearer " + bearer,
                 },
                 body: JSON.stringify(body),
@@ -3093,11 +3089,8 @@
                 const errText = await resp.text();
                 throw new Error(errText.slice(0, 240));
             }
-            // Capture routing provenance from response headers when the
-            // gateway exposes them via Access-Control-Expose-Headers.
-            // Falls back gracefully if browsers don't see them (cross-
-            // origin without explicit expose) — meta line will just
-            // omit "via …" until the gateway is reconfigured.
+            // Cross-origin fetch may not expose the optional routing headers.
+            // The gateway also supplies the selected route in its final SSE metadata.
             const respSlot = assistantMsg.responses[respIdx] || assistantMsg.responses[0];
             const headerProvider = resp.headers.get("x-trustedrouter-provider");
             const headerServedModel = resp.headers.get("x-trustedrouter-served-model");
@@ -3149,6 +3142,15 @@
                             ? ev.error.message : "Upstream provider error");
                     }
                     try {
+                        const available = ev.openrouter_metadata?.endpoints?.available;
+                        const selected = Array.isArray(available)
+                            && available.find(route => route?.selected === true);
+                        if (selected && typeof selected.provider === "string") {
+                            respSlot.selected_provider = selected.provider;
+                        }
+                        if (selected && typeof selected.model === "string") {
+                            respSlot.selected_model_id = selected.model;
+                        }
                         const delta =
                             ev.choices && ev.choices[0] && ev.choices[0].delta;
                         if (delta && typeof delta.content === "string") {

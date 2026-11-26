@@ -1,5 +1,6 @@
 const { expect, test } = require("@playwright/test");
 const http = require("node:http");
+const { attachLocalChatStream } = require("./local-chat-stream");
 
 const MODEL = "deepseek/deepseek-v4-flash-0731";
 const LONG_NAME = "DeepSeek V4 Flash 0731 High Speed Extended Context Preview";
@@ -25,6 +26,24 @@ async function send(page) {
   await page.getByRole("textbox", { name: "Chat input" }).fill("Hello");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
 }
+
+test("direct stream shows the gateway-selected provider without exposed routing headers", async ({ page, context }) => {
+  await setup(page, context);
+  await page.route("**/v1/chat/completions", (route) => {
+    expect(route.request().url()).toBe("https://api.trustedrouter.com/v1/chat/completions");
+    expect(route.request().headers()["x-openrouter-metadata"]).toBe("enabled");
+    return route.fulfill({ contentType: "text/event-stream", body: sse(
+      { choices: [{ delta: { content: "Hello" } }] },
+      { choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } },
+      { choices: [], openrouter_metadata: { endpoints: { available: [
+        { selected: false, provider: "unused" }, { selected: true, provider: "fixture-gateway", model: MODEL },
+      ] } } },
+    ) });
+  });
+  await page.goto(`/chat?model=${MODEL}`);
+  await send(page);
+  await expect(page.getByText(/via fixture-gateway/)).toBeVisible();
+});
 
 for (const failure of ["error event", "truncated stream"]) {
   test(`chat reports ${failure} without retrying or accepting a partial answer`, async ({ page, context }) => {
@@ -147,11 +166,16 @@ test("signed-out send stays local and preserves the draft", async ({ page, conte
 
 test("failed request restores Send so the next request can run", async ({ page, context }) => {
   await setup(page, context);
-  await page.route("**/v1/chat/completions", (route) => route.fulfill({ status: 503, json: { error: { message: "upstream unavailable" } } }));
+  const destinations = [];
+  await page.route("**/v1/chat/completions", (route) => {
+    destinations.push(route.request().url());
+    return route.fulfill({ status: 503, json: { error: { message: "upstream unavailable" } } });
+  });
   await page.goto(`/chat?model=${MODEL}`);
   await send(page);
   await expect(page.locator(".chat-msg-error")).toBeVisible();
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
+  expect(destinations).toEqual(["https://api.trustedrouter.com/v1/chat/completions"]);
 });
 
 test("thinking and usage arrive before the stream completes", async ({ page, context }) => {
@@ -164,9 +188,9 @@ test("thinking and usage arrive before the stream completes", async ({ page, con
     finish = () => res.end(sse({ choices: [{ delta: { content: "Hello world" } }] }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  await page.route("**/v1/chat/completions", (route) => route.continue({ url: `http://127.0.0.1:${server.address().port}/stream` }));
   try {
     await page.goto(`/chat?model=${MODEL}`);
+    await attachLocalChatStream(page, server);
     await send(page);
     await expect(page.locator(".chat-msg-reasoning-body")).toBeVisible();
     await expect(page.locator("[data-chat-usage-cost]")).toHaveText("$0.000025");

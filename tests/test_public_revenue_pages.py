@@ -482,7 +482,8 @@ def test_synth_playground_is_public_and_uses_browser_key_proxy(client: TestClien
     assert response.status_code == 200
     assert "trustedrouter/synth" in response.text
     assert "Synthesize many models into one perfect frontier answer." in response.text
-    assert "/chat-proxy/v1" in response.text
+    assert 'apiBaseUrl: "https://api.trustedrouter.com/v1"' in response.text
+    assert "/chat-proxy/" not in response.text
     assert "/internal/chat/issue-browser-key" in response.text
     assert "/static/fusion.css" in response.text
     assert "/static/fusion.js" in response.text

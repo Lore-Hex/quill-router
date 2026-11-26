@@ -4708,16 +4708,7 @@ def public_chat_html(settings: Settings) -> str:
         _env()
         .get_template("public/chat.html")
         .render(
-            # CRITICAL: chat playground uses /chat-proxy/v1 (same-origin
-            # streaming pipe in routes/chat_proxy.py) to forward to
-            # api.trustedrouter.com. Direct browser fetch to api.trustedrouter.com
-            # is blocked by CORS (the attested gateway 401s preflight
-            # with no ACAO headers). The proxy pipes raw bytes without
-            # inspecting / logging them — privacy posture matches the
-            # attested gateway itself. Same-origin also means x-trustedrouter-
-            # provider response headers are visible without any CORS
-            # expose-headers work, so "via {provider}" lights up.
-            api_base_url="/chat-proxy/v1",
+            api_base_url=settings.api_base_url.rstrip("/"),
             # Catalog discovery is public control-plane metadata. Keep it
             # same-origin so browsers never depend on gateway CORS policy.
             catalog_base_url="/v1",
@@ -4741,7 +4732,7 @@ def public_fusion_html(settings: Settings) -> str:
         _env()
         .get_template("public/fusion_playground.html")
         .render(
-            api_base_url="/chat-proxy/v1",
+            api_base_url=settings.api_base_url.rstrip("/"),
             catalog_base_url="/v1",
             site_url=f"https://{settings.trusted_domain}/synth",
             title="Synth | TrustedRouter",

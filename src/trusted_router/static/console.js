@@ -231,6 +231,8 @@ async function runFirstActivationCall(button) {
   try {
     const response = await fetch(endpoint, {
       method: "POST",
+      credentials: "omit",
+      redirect: "error",
       signal: controller.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,

@@ -1,6 +1,7 @@
 const { expect, test } = require("@playwright/test");
 const controls = require("../../src/trusted_router/static/chat_controls.js");
 const http = require("node:http");
+const { attachLocalChatStream } = require("./local-chat-stream");
 
 const MODEL = "z-ai/glm-5.2";
 const endpoints = [
@@ -248,8 +249,8 @@ test("editing is blocked while a provider is streaming", async ({ page, context 
     finish = () => res.end("data: [DONE]\n\n");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  await page.route("**/v1/chat/completions", (route) => route.continue({ url: `http://127.0.0.1:${server.address().port}/stream` }));
   try {
+    await attachLocalChatStream(page, server);
     await page.getByRole("textbox", { name: "Chat input" }).fill("Hello");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator(".chat-msg-md")).toHaveText("Partial");
