@@ -92,8 +92,8 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 565500,
-      "output_token_price_per_m": 3060000,
+      "input_token_price_per_m": 826500,
+      "output_token_price_per_m": 4080000,
       "cached_input_token_price_per_m": 150000
     },
     {
@@ -369,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-26T01:49:01Z",
+  "generated_at": "2026-11-26T03:28:25Z",
   "model_count": 8
 }
