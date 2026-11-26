@@ -417,6 +417,8 @@ ENV_VARS=(
 # Preserve the federation and synthetic switches exactly as the legacy
 # revision carries them; an absent optional value is simply not rendered.
 for optional_plain_name in \
+  TR_MANAGED_KEY_GENERATIONS \
+  TR_FAL_PRIMARY_402_ENABLED \
   TR_FEDERATION_HOME_BASE_URL \
   TR_FEDERATION_CREDIT_PEER_BASE_URL \
   TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED \

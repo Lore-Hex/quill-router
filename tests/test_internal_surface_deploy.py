@@ -208,6 +208,30 @@ def test_settings_from_exact_emitted_internal_env_fail_closed(
                 Settings(**kwargs, **{name: value})
 
 
+def test_internal_inherits_fal_pair_and_disarmed_state_without_credentials(tmp_path, monkeypatch):
+    original = SCRIPT_FIXTURES[SCRIPT]
+    generation = json.dumps({"fal": "a" * 64}, separators=(",", ":"))
+    pins = {"TR_MANAGED_KEY_GENERATIONS": generation, "TR_FAL_PRIMARY_402_ENABLED": "false"}
+    responses = []
+    for pattern, response in original.responses:
+        if "revisions describe trusted-router-active" in pattern:
+            revision = json.loads(response)
+            revision["spec"]["containers"][0]["env"].extend(
+                {"name": name, "value": value} for name, value in pins.items()
+            )
+            response = json.dumps(revision, separators=(",", ":"))
+        responses.append((pattern, response))
+    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(original, responses=tuple(responses)))
+    run = DeployScriptHarness(tmp_path / "fal-enrollment").run(SCRIPT, args=("routed",))
+    assert run.returncode == 0, summarise(run)
+    calls = _deploy_calls(run)
+    assert len(calls) == 4
+    for call in calls:
+        env = _mapping(call, "--set-env-vars", "|")
+        assert {name: env[name] for name in pins} == pins
+        assert _mapping(call, "--set-secrets", ",") == EXPECTED_SECRETS
+
+
 def test_routed_authenticated_validate_smoke_precedes_promotion_and_restricts_ingress(
     harness: DeployScriptHarness,
 ) -> None:
