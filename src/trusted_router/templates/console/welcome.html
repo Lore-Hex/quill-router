@@ -6,7 +6,7 @@
 <div
   class="activation-flow"
   data-first-call-flow
-  data-endpoint="/chat-proxy/v1/chat/completions"
+  data-endpoint="{{ api_base_url.rstrip('/') }}/chat/completions"
   data-key-source="welcome-api-key"
   data-can-create-keys="{{ 'true' if can_manage else 'false' }}"
 >

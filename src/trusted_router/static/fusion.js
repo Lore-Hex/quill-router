@@ -2,7 +2,7 @@
 
 (function () {
   const CONFIG = window.__TR_FUSION__ || {};
-  const API_BASE = CONFIG.apiBaseUrl || "/chat-proxy/v1";
+  const API_BASE = CONFIG.apiBaseUrl || "https://api.trustedrouter.com/v1";
   const CATALOG_BASE = CONFIG.catalogBaseUrl || "https://api.trustedrouter.com/v1";
   const ISSUE_KEY_PATH = CONFIG.issueKeyPath || "/internal/chat/issue-browser-key";
   const AUTH_SESSION_PATH = CONFIG.authSessionPath || "/auth/session";
@@ -663,6 +663,8 @@
     if (isLocalDemo()) return demoFusionResponse(request);
     const resp = await fetch(`${API_BASE}/chat/completions`, {
       method: "POST",
+      credentials: "omit",
+      redirect: "error",
       headers: {
         "Authorization": `Bearer ${key}`,
         "Content-Type": "application/json",
@@ -687,6 +689,8 @@
     if (isLocalDemo()) return demoFusionStream(request, callbacks);
     const resp = await fetch(`${API_BASE}/chat/completions`, {
       method: "POST",
+      credentials: "omit",
+      redirect: "error",
       headers: {
         "Authorization": `Bearer ${key}`,
         "Content-Type": "application/json",

@@ -1176,7 +1176,7 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     # The live first call goes through the session-scoped chat proxy.
     flow = page.select_one("[data-first-call-flow]")
     assert flow is not None
-    assert flow["data-endpoint"] == "/chat-proxy/v1/chat/completions"
+    assert flow["data-endpoint"] == "https://api.trustedrouter.com/v1/chat/completions"
     assert flow["data-key-source"] == "welcome-api-key"
     assert page.select_one('button[data-action="run-first-call"]')
     # Each setup tab controls a panel whose copy button inserts this key, and

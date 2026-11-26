@@ -21,7 +21,7 @@ async function load(page, reply = {status: 200, json: {choices: [{message: {cont
     const url = new URL(route.request().url());
     if (url.pathname.startsWith('/static/')) return route.fulfill({path: path.join(root, 'src/trusted_router', url.pathname)});
     if (url.pathname === '/console/social-rewards') return route.fulfill({json: {enabled: false, eligible: false, actions: []}});
-    if (url.pathname === '/chat-proxy/v1/chat/completions') { inference.push(route.request()); return route.fulfill(reply); }
+    if (url.pathname.startsWith('/chat-proxy/')) throw new Error('Inference reached the control plane');
     if (url.pathname === '/analytics/events') { analytics.push(route.request().postDataJSON()); return route.fulfill({status: 204}); }
     return route.fulfill({contentType: 'text/html', body: welcome(canManage)});
   });

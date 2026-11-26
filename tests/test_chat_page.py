@@ -56,6 +56,8 @@ def test_chat_page_renders_without_auth() -> None:
 
     # Inline runtime config that chat.js reads
     assert "window.__TR_CHAT__" in body
+    assert f'apiBaseUrl: "{settings.api_base_url}"' in body
+    assert "/chat-proxy/" not in body
     assert "issueKeyPath" in body
     assert "authSessionPath" in body
     assert "/auth/session" in body

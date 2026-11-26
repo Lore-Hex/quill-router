@@ -7,13 +7,11 @@ the inference routes in production — `_control_plane_inference_enabled`
 in main.py restricts that to local/test, so prompts can only execute
 through the attested enclave at api.trustedrouter.com.
 
-That's the right policy for SDK / production traffic, but it breaks
-the browser chat playground at trustedrouter.com/chat: cross-origin
-fetch from trustedrouter.com → api.trustedrouter.com is hard-blocked by
-CORS (the attested gateway returns 401 to OPTIONS preflight with no
-ACAO headers).
+The gateway supports direct cross-origin bearer requests. First-party chat
+pages use that path. This legacy endpoint remains for older clients; it
+terminates TLS in the control plane and is not equivalent to direct inference.
 
-This module adds a minimal same-origin streaming pipe at the one browser-used
+This module provides a minimal same-origin streaming pipe at the legacy
 endpoint, ``POST /chat-proxy/v1/chat/completions``. A valid inference key is
 resolved locally before any body read or outbound allocation; the handler then
 forwards the request bytes-for-bytes to api.trustedrouter.com and streams the
@@ -98,7 +96,7 @@ def register_chat_proxy_routes(router: APIRouter | FastAPI) -> None:
     ) -> StreamingResponse:
         # The auth dependency runs before this function, so invalid traffic
         # cannot read a body, allocate an outbound client, or hold a 300-second
-        # upstream stream. Browser code currently uses this one exact path.
+        # upstream stream.
         return await _forward(request, "chat/completions", settings, principal)
 
 
