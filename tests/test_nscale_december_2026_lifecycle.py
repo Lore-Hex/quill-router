@@ -140,9 +140,13 @@ def test_nscale_post_december_catalog_renews_and_tombstones_the_retired_rows(
             rows[model_id]
         ), model_id
         assert rows[model_id]["input_token_price_per_m"] > 0
+    # A retired row is dark: tombstoned, or still on the refresh's own
+    # unserved-route hold, which outranks the delisting until it lifts.
     for model_id in _RETIRING:
         assert rows[model_id]["routable"] is False, model_id
-        assert rows[model_id]["routable_reason"] == "delisted-upstream"
+        assert rows[model_id]["routable_reason"] == "delisted-upstream" or row_on_unserved_route_hold(
+            rows[model_id]
+        ), model_id
         assert rows[model_id]["missing_since"]
         assert rows[model_id]["retirement_at"] == _CUTOFF_STAMP
 

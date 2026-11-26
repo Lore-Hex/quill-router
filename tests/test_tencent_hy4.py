@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import _direct_openai, tencent
 from tests import catalog_vehicles
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router.provider_lifecycle import (
     ProviderPrice,
     provider_price_microdollars,
@@ -43,9 +44,12 @@ def test_hy4_manifest_preserves_managed_canary_gate_and_privacy() -> None:
     assert row["upstream_id"] == "hy4"
     managed = [e for e in catalog_vehicles.registry_endpoints().values()
                if e.model_id == MODEL and e.provider == "tencent" and e.usage_type == "Credits"]
-    assert row["routable"] is True
-    assert "routable_reason" not in row
-    assert managed
+    # Routable with a managed route, unless the refresh itself holds the row
+    # as unserved; any other hold or reason on it is still a failure.
+    held = row_on_unserved_route_hold(row)
+    assert row["routable"] is True or held
+    assert "routable_reason" not in row or held
+    assert managed or held
     assert all(e.upstream_id == "hy4" for e in managed)
     preview = catalog_vehicles.registry_models()["tencent/hy4-preview"]
     assert model_open_weights(preview)

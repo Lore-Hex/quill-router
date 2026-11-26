@@ -110,7 +110,9 @@ def test_the_control_plane_starts_with_any_row_held_as_unserved(tmp_path: Path) 
     # a hold expiring between two xdist workers' collections would give them
     # different tests.
     plan = tombstone_sweep_holds.plan(catalog_ingest._PROVIDER_MODELS_DIR)
-    assert plan["slices"]
+    # Some row is routable; none can be held only once every provider is at
+    # the step's limit, as inside a `holds` sweep's own slice.
+    assert plan["slices"] or plan["never_held"]
     for index, routes in enumerate(plan["slices"]):
         manifests = tmp_path / f"slice{index}"
         shutil.copytree(catalog_ingest._PROVIDER_MODELS_DIR, manifests)

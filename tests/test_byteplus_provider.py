@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pricing.providers import byteplus
+from tests.provider_holds import row_on_unserved_route_hold
 
 # Exact cells from BytePlus's standard and video tables (2026-10-03).
 # Deliberately include a cheaper Flex section so it cannot become the tariff.
@@ -267,6 +268,11 @@ def test_deployed_native_video_catalog_uses_exact_token_tariffs():
     rows = {row["id"]: row for row in json.loads(byteplus.MANIFEST_PATH.read_text())["models"]}
     for native, model in byteplus.VIDEO_MODELS.items():
         row = rows[model]
+        if row_on_unserved_route_hold(row):
+            # Dark until the refresh lifts its own hold: there is no route to price.
+            assert row["upstream_id"] == native
+            assert model + "@byteplus/prepaid" not in endpoints
+            continue
         assert row.get("routable", True)
         assert row["upstream_id"] == native
         assert row["billing_unit"] == "output_tokens"

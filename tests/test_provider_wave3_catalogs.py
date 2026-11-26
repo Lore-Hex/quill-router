@@ -619,8 +619,10 @@ def test_arcee_access_holds_match_manifest_and_leave_other_routes_available() ->
         if endpoint.provider == "arcee"
     }
     assert not routed.intersection(holds)
-    assert "moonshotai/kimi-k3" in routed
-    assert "deepseek/deepseek-v4.1-flash" in routed
+    # The other routes serve, unless the refresh itself holds one as unserved.
+    by_id = {row["id"]: row for row in rows}
+    for model_id in ("moonshotai/kimi-k3", "deepseek/deepseek-v4.1-flash"):
+        assert model_id in routed or row_on_unserved_route_hold(by_id[model_id]), model_id
     assert any(
         endpoint.provider != "arcee"
         for endpoint in catalog_vehicles.registry_endpoints().values()

@@ -436,10 +436,12 @@ def test_databricks_kimi_k3_is_held_for_disabled_account_access() -> None:
     }
     assert committed[KIMI_K3]["routable"] is False
     assert committed[KIMI_K3]["routable_reason"] == "provider-access-unavailable"
-    assert committed[CONTROL].get("routable") is not False
+    # The control serves, unless the refresh itself holds it as unserved.
+    control_held = row_on_unserved_route_hold(committed[CONTROL])
+    assert committed[CONTROL].get("routable") is not False or control_held
     built = catalog_vehicles.registry_endpoints()
     assert f"{KIMI_K3}@databricks/prepaid" not in built
-    assert f"{CONTROL}@databricks/prepaid" in built
+    assert f"{CONTROL}@databricks/prepaid" in built or control_held
 
 
 def test_databricks_kimi_k3_hold_survives_refresh_and_passing_canary(
@@ -475,7 +477,9 @@ def test_databricks_kimi_k3_hold_survives_refresh_and_passing_canary(
     }
     assert by_id[KIMI_K3]["routable"] is False
     assert by_id[KIMI_K3]["routable_reason"] == "provider-access-unavailable"
-    assert "routable_reason" not in by_id[CONTROL]
+    # The control carries no hold, unless the refresh's own unserved-route
+    # hold was on the committed row this test starts from.
+    assert "routable_reason" not in by_id[CONTROL] or row_on_unserved_route_hold(by_id[CONTROL])
 
 
 def test_databricks_kimi_k3_hold_stays_out_of_price_index_and_snapshot(

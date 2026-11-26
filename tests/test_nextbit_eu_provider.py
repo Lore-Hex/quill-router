@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from scripts.pricing.providers import _direct_openai, nextbit, nextbit_eu
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
+from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router.catalog import PROVIDERS
 from trusted_router.catalog_data import EU_FOCUSED_PROVIDER_ORDER
 from trusted_router.catalog_privacy import (
@@ -164,10 +165,12 @@ def test_eu_gemma_3_27b_is_held_while_the_provider_rate_limits_it():
     assert rows[GEMMA_3_27B]["upstream_id"] == "gemma3:27b"
     assert rows[GEMMA_3_27B]["routable"] is False
     assert rows[GEMMA_3_27B]["routable_reason"] == "provider-access-unavailable"
-    assert rows[EU_CONTROL].get("routable") is not False
+    # The control serves, unless the refresh itself holds it as unserved.
+    control_held = row_on_unserved_route_hold(rows[EU_CONTROL])
+    assert rows[EU_CONTROL].get("routable") is not False or control_held
     built = catalog_vehicles.registry_endpoints()
     assert f"{GEMMA_3_27B}@nextbit-eu/prepaid" not in built
-    assert f"{EU_CONTROL}@nextbit-eu/prepaid" in built
+    assert f"{EU_CONTROL}@nextbit-eu/prepaid" in built or control_held
     assert not any(
         endpoint.provider == "nextbit-eu" and endpoint.model_id == GEMMA_3_27B
         for endpoint in MODEL_ENDPOINTS.values()

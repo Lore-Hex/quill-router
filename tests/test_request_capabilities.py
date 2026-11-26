@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
+from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
 from trusted_router import catalog, catalog_ingest, provider_lifecycle, request_capabilities
 from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL, Model, ModelEndpoint
 from trusted_router.request_capabilities import (
@@ -148,13 +149,17 @@ def test_gpt_55_verified_tools_keep_openai_with_require_parameters(client):
     model = catalog.MODELS["openai/gpt-5.5"]
     prefs = RoutePreferences(require_parameters=True, requested_parameters=frozenset({"tools"}))
     routes = catalog_endpoint_candidates(model, prefs)
-    assert {endpoint.id for _, endpoint in routes if endpoint.provider == "openai"} == {
-        "openai/gpt-5.5@openai/prepaid", "openai/gpt-5.5@openai/byok",
-    }
+    expected = {"openai/gpt-5.5@openai/prepaid", "openai/gpt-5.5@openai/byok"}
+    # The refresh's own unserved-route hold ends the prepaid route until it
+    # lifts; the customer's own key keeps the other.
+    committed = {row["id"]: row for row in manifest_rows("openai")}
+    if row_on_unserved_route_hold(committed.get(model.id, {})):
+        expected.discard("openai/gpt-5.5@openai/prepaid")
+    assert {endpoint.id for _, endpoint in routes if endpoint.provider == "openai"} == expected
     response = client.get(f"/v1/models/{model.id}/endpoints")
     assert response.status_code == 200
     openai = [row for row in response.json()["data"] if row["provider_name"] == "OpenAI"]
-    assert len(openai) == 2
+    assert len(openai) == len(expected)
     for row in openai:
         assert "tools" in row["supported_parameters"]
         assert row["trustedrouter"]["capabilities"]["tools"] is True
@@ -181,7 +186,9 @@ def test_reviewed_tools_contracts_publish_and_keep_provider_routes(client):
             endpoint for endpoint in rows[model_id]["trustedrouter"]["endpoints"]
             if endpoint["provider"] == provider
         ]
-        assert endpoints, (provider, model_id)
+        # A control the refresh itself holds as unserved has no route to read.
+        committed = {row["id"]: row for row in manifest_rows(provider)}
+        assert endpoints or row_on_unserved_route_hold(committed.get(model_id, {})), (provider, model_id)
         for endpoint in endpoints:
             assert endpoint["capabilities"]["tools"] is tools, endpoint["id"]
             assert ("tools" in endpoint["supported_parameters"]) is tools, endpoint["id"]

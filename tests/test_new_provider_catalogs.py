@@ -158,7 +158,17 @@ def test_new_provider_manifests_create_only_eligible_routes() -> None:
         manifest = json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))
         routable = {row["id"] for row in manifest["models"] if row.get("routable") is not False}
         routed = {endpoint.model_id for endpoint in endpoints if endpoint.provider == provider.SLUG}
-        assert routed <= routable, provider.SLUG
+        # The refresh's own unserved-route hold ends the route on TrustedRouter's
+        # credentials. The snapshot that refresh wrote before the hold still
+        # lists the route, so a customer's own key keeps it (BYOK), as for any
+        # Credits-only manifest hold.
+        held_unserved = {row["id"] for row in manifest["models"] if row_on_unserved_route_hold(row)}
+        on_credits = {
+            endpoint.model_id for endpoint in endpoints
+            if endpoint.provider == provider.SLUG and endpoint.usage_type == "Credits"
+        }
+        assert on_credits <= routable, provider.SLUG
+        assert routed <= routable | held_unserved, provider.SLUG
     cloudflare = [
         endpoint
         for endpoint in endpoints
