@@ -113,6 +113,9 @@ BASETEN_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 24, 1, 0, tzinfo=UTC)
 # Thinking Machines' Tinker newsletter of 25 November retires six models on
 # 14 December 2026 (date only, so 00:00 UTC conservatively).
 THINKINGMACHINES_DECEMBER_14_RETIREMENT_AT = datetime(2026, 12, 14, 0, 0, tzinfo=UTC)
+# Together's November 25 notice deprecates openai/gpt-oss-120b on its serverless
+# API on 9 December 2026 (date only, so 00:00 UTC conservatively).
+TOGETHER_DECEMBER_9_RETIREMENT_AT = datetime(2026, 12, 9, 0, 0, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -1843,6 +1846,19 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"thinkingmachines/Inkling"}),
         effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
         replacement_model_ids=("meta-models/muse-spark-open",),
+    ),
+    # Together's November 25 notice deprecates openai/gpt-oss-120b on its
+    # serverless API "on December 09, 2026" (date only; 00:00 UTC). Retire
+    # only Together's route: gpt-oss-120b stays on its many other providers.
+    # No replacement is quoted: Together's suggested GLM-5.3-Flash is a
+    # different model family, not a like-for-like or newer gpt-oss. Its
+    # same-day Inkling notice needs no entry: Together's Inkling route already
+    # retired on 2026-11-06 (above) and is no longer in the catalog.
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"openai/gpt-oss-120b"}),
+        upstream_ids=frozenset({"openai/gpt-oss-120b"}),
+        effective_at=TOGETHER_DECEMBER_9_RETIREMENT_AT,
     ),
     # DeepInfra's October 28 notice deprecates Step 5 Preview on 2026-11-04
     # and redirects later requests to the different GLM 5.3 Flash model.

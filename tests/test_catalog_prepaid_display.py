@@ -433,12 +433,10 @@ def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
             if endpoint.provider == provider
         ]
 
-    # Together's generated authoritative manifest supersedes the July 18
-    # route-health quarantine: GPT OSS 120B is routable while Together's
-    # serverless feed lists it. Quarantine is also provider-scoped: sibling
-    # routes survive while their providers list them.
+    # Quarantine is provider-scoped: sibling routes survive while their
+    # providers list them. (Together's GPT OSS 120B route, once checked here
+    # against the July 18 route-health quarantine, retires on 2026-12-09.)
     for endpoint_id in (
-        "openai/gpt-oss-120b@together/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
         "mistralai/mistral-small-24b-instruct-2501@deepinfra/prepaid",
     ):
@@ -605,7 +603,6 @@ def test_novita_supplemental_prices_apply_manifest_scale(
         "minimax/minimax-m3.1-flash@minimax/byok",
         "moonshotai/kimi-k2.6@kimi/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
-        "openai/gpt-oss-120b@together/prepaid",
         "mistralai/mistral-small-24b-instruct-2501@deepinfra/prepaid",
         "z-ai/glm-5.3-flash@wandb/prepaid",
         "z-ai/glm-5.3@tinfoil/prepaid",

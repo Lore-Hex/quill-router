@@ -93,7 +93,7 @@ def test_openai_authorship_does_not_create_a_hosted_gpt_oss_route(
                    for ep in MODEL_ENDPOINTS.values())
 
 
-@pytest.mark.parametrize("provider", ["cerebras", "together", "tinfoil"])
+@pytest.mark.parametrize("provider", ["cerebras", "deepinfra", "tinfoil"])
 @pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
 def test_gpt_oss_actual_hosts_keep_both_billing_modes(provider: str, usage_type: str) -> None:
     model_id = "openai/gpt-oss-120b"
