@@ -247,6 +247,9 @@ _CACHE_WRITE_PRICE_MULTIPLIER: dict[str, Decimal] = {
 _DEFAULT_CACHE_READ_MULTIPLIER = Decimal("1")
 
 _DEFAULT_CACHE_WRITE_MULTIPLIER = Decimal("1.25")
+# Anthropic publishes 1-hour cache writes at 2x base input, versus 1.25x
+# for 5-minute writes. Apply the same multiple to the customer input price.
+CACHE_WRITE_1H_MULTIPLIER = 2
 
 
 def cache_token_prices_microdollars(

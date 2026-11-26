@@ -30,7 +30,7 @@ def vectors() -> list[dict[str, Any]]:
 
     def add(name: str, *, selected_rates: dict[str, int] | None = None,
             fee: int = 0, tiers: list[dict[str, Any]] | None = None,
-            i: int = 0, o: int = 0, r: int = 0, w: int = 0, tier: int = 0) -> None:
+            i: int = 0, o: int = 0, r: int = 0, w: int = 0, tier: int = 0, h: int | None = None) -> None:
         candidate = {
             "endpoint_id": "fixture-endpoint",
             "price_history_version": PRICE_HISTORY_VERSION,
@@ -40,9 +40,13 @@ def vectors() -> list[dict[str, Any]]:
         }
         usage = {"input_tokens": i, "output_tokens": o, "cache_read_tokens": r,
                  "cache_creation_tokens": w, "price_tier_input_tokens": tier}
+        arguments = dict(usage)
+        if h is not None:
+            usage["cache_creation_1h_input_tokens"] = h
+            arguments["cache_creation_1h_tokens"] = h
         cases.append({"name": name, "candidate": candidate, "usage": usage,
                       "expected_microdollars": endpoint_cost_microdollars_from_candidate(
-                          candidate, **usage)})
+                          candidate, **arguments)})
 
     add("zero-usage")
     add("free-tokens", selected_rates=rates(0, 0, 0, 0), i=100, o=20, r=30, w=40)
@@ -65,6 +69,19 @@ def vectors() -> list[dict[str, Any]]:
     add("invalid-private-tier-basis", tiers=tiers, i=90, r=8, w=3, o=7, tier=102)
     add("last-bounded-tier", tiers=[tiers[0]], i=101, o=7,
         selected_rates=rates(9_000_000, 9_000_000, 0, 0))
+    add("cache-1h-zero", i=14, o=6, r=6081, w=2000, h=0)
+    add("cache-1h-all", i=14, o=6, r=6081, w=2000, h=2000)
+    add("cache-1h-mixed", i=14, o=6, r=6081, w=2000, h=800)
+    add("cache-1h-clamped", i=14, o=6, r=6081, w=2000, h=3000)
+    for count in (99, 100, 101):
+        add(f"cache-1h-tier-{count}", tiers=tiers, i=count - 20, w=20, h=10, o=7)
+    add("cache-1h-private-tier", tiers=tiers, i=90, r=8, w=3, h=2, o=7, tier=100)
+    add("cache-1h-rounding", selected_rates=rates(1, 1, 1, 1), w=500_000, h=1, fee=7)
+    # A one-hour write whose own term rounds to nothing is still a positive
+    # charge, at the minimum, even where five-minute writes are free.
+    add("cache-1h-minimum-charge", selected_rates=rates(1, 0, 0, 0), w=1, h=1)
+    # Twice this input rate does not fit in a signed 64-bit integer.
+    add("cache-1h-large-rate", selected_rates=rates(2**62 + 1, 0, 0, 0), w=3, h=3)
     return cases
 
 

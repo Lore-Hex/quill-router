@@ -956,9 +956,10 @@ them: availability
 fixture endpoint changes inside it), and the rank evidence's age bounds (the
 fixture's evidence spans the whole window).
 
-`tests/fixtures/usage_cost_vectors.json` holds `Cost` to Python on all 29
-vectors (cache reads and writes, tiers, the private tier basis, rounding
-before the sum, the one-microdollar minimum, a rate above 2^53).
+`tests/fixtures/usage_cost_vectors.json` holds `Cost` to Python on every
+vector (cache reads and writes, one-hour cache writes, tiers, the private
+tier basis, rounding before the sum, the one-microdollar minimum, a rate
+above 2^53).
 
 ## The edge's poll and shadow comparator
 

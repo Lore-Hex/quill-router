@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from trusted_router.catalog import cache_token_prices_microdollars
 from trusted_router.money import token_cost_microdollars
+from trusted_router.pricing import CACHE_WRITE_1H_MULTIPLIER
 
 if TYPE_CHECKING:
     from trusted_router.storage_models import GatewayAuthorization
@@ -202,6 +203,7 @@ def endpoint_cost_microdollars_from_candidate(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    cache_creation_1h_tokens: int = 0,
     price_tier_input_tokens: int | None = None,
 ) -> int:
     """Price usage using a frozen candidate as the only pricing input."""
@@ -238,19 +240,24 @@ def endpoint_cost_microdollars_from_candidate(
     output_rate = int(selected_rates["output_micro_per_million"])
     cached_rate = int(selected_rates["cached_input_micro_per_million"])
     creation_rate = int(selected_rates["cache_creation_micro_per_million"])
+    creation_1h = min(max(cache_creation_1h_tokens, 0), max(cache_creation_tokens, 0))
+    creation_5m = cache_creation_tokens - creation_1h
+    creation_1h_rate = CACHE_WRITE_1H_MULTIPLIER * input_rate
     cost = (
         request_fee
         + token_cost_microdollars(input_tokens, input_rate)
         + token_cost_microdollars(output_tokens, output_rate)
         + token_cost_microdollars(cache_read_tokens, cached_rate)
-        + token_cost_microdollars(cache_creation_tokens, creation_rate)
+        + token_cost_microdollars(creation_5m, creation_rate)
+        + token_cost_microdollars(creation_1h, creation_1h_rate)
     )
     positive = (
         request_fee > 0
         or (input_tokens > 0 and input_rate > 0)
         or (output_tokens > 0 and output_rate > 0)
         or (cache_read_tokens > 0 and cached_rate > 0)
-        or (cache_creation_tokens > 0 and creation_rate > 0)
+        or (creation_5m > 0 and creation_rate > 0)
+        or (creation_1h > 0 and creation_1h_rate > 0)
     )
     return max(cost, 1) if positive else 0
 
@@ -263,6 +270,7 @@ def endpoint_cost_microdollars_from_document(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    cache_creation_1h_tokens: int = 0,
     price_tier_input_tokens: int | None = None,
 ) -> int:
     return endpoint_cost_microdollars_from_candidate(
@@ -271,5 +279,6 @@ def endpoint_cost_microdollars_from_document(
         output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_creation_tokens=cache_creation_tokens,
+        cache_creation_1h_tokens=cache_creation_1h_tokens,
         price_tier_input_tokens=price_tier_input_tokens,
     )
