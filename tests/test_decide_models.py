@@ -92,7 +92,16 @@ def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch, model: Model | None = N
 
 
 def _expected_active_chain(model_id: str) -> tuple[str, ...]:
-    return NAMED_DECISION_MODEL_PROVIDERS[model_id]
+    """The name's chain without the hosts whose reviewed retirement of its
+    backing model has taken effect. A reviewed retirement removes one host,
+    not the named checkpoint (Together's Llama 3.3 70B on 2026-10-22;
+    SambaNova's, delisted, on 2026-11-26). A host missing without one must
+    still fail the provider_health contracts that read this."""
+    backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
+    return tuple(
+        host for host in NAMED_DECISION_MODEL_PROVIDERS[model_id]
+        if not provider_model_retired(host, backing)
+    )
 
 
 def _serving_chain(model_id: str) -> tuple[str, ...]:
@@ -1288,7 +1297,11 @@ def test_the_preferred_unretired_host_still_serves_the_backing_model(model_id: s
     # name, or not offering it without its backing model), which is why this is
     # a provider_health check and not a RuntimeError at import or a release gate.
     backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
-    preferred = _expected_active_chain(model_id)[0]
+    # A host whose reviewed retirement of the backing model has taken effect
+    # has left the chain on the record; the first host after it is preferred.
+    active = _expected_active_chain(model_id)
+    assert active, f"{model_id} has no unretired host left on its chain"
+    preferred = active[0]
     assert preferred in {
         endpoint.provider for endpoint in endpoints_for_model(backing) if not endpoint.is_byok
     }, f"{preferred} no longer serves {backing}, the model behind {model_id}"

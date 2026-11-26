@@ -87,6 +87,7 @@
       "status": 1,
       "id": "meta-llama/llama-3.3-70b-instruct",
       "upstream_id": "Meta-Llama-3.3-70B-Instruct",
+      "retirement_at": "2026-11-26T05:00:00Z",
       "context_length": 131072,
       "max_output_tokens": 3072,
       "routable": false,

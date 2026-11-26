@@ -69,7 +69,8 @@ _OPERATOR_HOLD_REASONS = {
     "mistralai/mistral-nemo": "provider-route-unavailable",
     # Listed (Qwen3.5-*-TEE) but every probe answers HTTP 502: the 397B on all
     # but one day from 2026-11-11 to 11-21, the 27B on every day since 11-18.
-    # Both stay served elsewhere (15 and 8 providers).
+    # Both stay served elsewhere (15 and 8 providers). Also recorded in
+    # provider_contracts.OPERATOR_HELD_PROVIDER_MODELS; lift both together.
     "qwen/qwen3.5-397b-a17b": "provider-route-unavailable",
     "qwen/qwen3.5-27b": "provider-route-unavailable",
 }

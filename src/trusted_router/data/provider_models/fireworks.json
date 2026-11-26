@@ -170,6 +170,7 @@
     {
       "id": "openai/gpt-oss-120b",
       "upstream_id": "accounts/fireworks/models/gpt-oss-120b",
+      "retirement_at": "2026-11-26T05:00:00Z",
       "display_name": "OpenAI GPT OSS 120B on Fireworks",
       "title": "accounts/fireworks/models/gpt-oss-120b",
       "context_length": 131072,

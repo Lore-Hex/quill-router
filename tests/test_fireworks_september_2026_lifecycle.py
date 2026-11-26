@@ -62,8 +62,10 @@ def test_fireworks_september_manifest_marks_only_announced_routes() -> None:
     for model_id, native_id in _RETIRING.items():
         assert rows[model_id]["upstream_id"] == native_id
         assert rows[model_id]["retirement_at"] == "2026-09-25T00:00:00Z"
+    # A route this notice kept may retire later under a date of its own, as
+    # gpt-oss-120b did on 2026-11-26; it never carries this cutoff.
     for model_id in _RETAINED:
-        assert not rows[model_id].get("retirement_at")
+        assert rows[model_id].get("retirement_at") != "2026-09-25T00:00:00Z"
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])
