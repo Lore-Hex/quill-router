@@ -46,6 +46,7 @@ ELSEWHERE = "anthropic/native-fixture-elsewhere"
 OWNED = "openai/nativefix-owned"
 OWNED_TWIN = "anthropic/native-fixture-owned"
 SLASHED = "anthropic/native-fixture-slashed"
+INTERNAL = "anthropic/native-fixture-internal"
 PREFIX = "claude-nativefix"
 
 
@@ -83,6 +84,15 @@ def rows(monkeypatch: pytest.MonkeyPatch) -> None:
     # A spelling the bare OpenAI rule already resolves stays with that rule.
     serve_on_fixture_route(monkeypatch, OWNED, "openai", author="openai")
     _serve(monkeypatch, OWNED_TWIN, "nativefix-owned")
+    # An internal-only model is asked for by its catalog id, which its admission rule reads.
+    internal = Model(
+        id=INTERNAL, name=INTERNAL, provider="anthropic", context_length=200_000,
+        supports_messages=True, prepaid_available=True, internal_only=True,
+    )
+    serve_on_fixture_route(
+        monkeypatch, INTERNAL, "anthropic", author="anthropic", model=internal,
+        upstream_id=f"{PREFIX}-internal",
+    )
     # An upstream id with a vendor prefix is not a bare id.
     _serve(monkeypatch, SLASHED, f"vendor/{PREFIX}-slashed")
 
@@ -118,6 +128,7 @@ def test_a_native_id_resolves_to_its_catalog_model(rows: None, requested: str, e
     f"{PREFIX}-6-5",              # two dated ids share the form
     f"{PREFIX}-5-5",              # six digits are not a date
     f"{PREFIX}-chat-only",        # the model is not a Messages model
+    f"{PREFIX}-internal",         # an internal-only model
     f"{PREFIX}-elsewhere",        # not the direct route's id
     f"{PREFIX}-9-5-20300101",     # a date the catalog does not list
     f"{PREFIX}-9-5-2030-01-01",   # the other vendor's dated form
@@ -220,16 +231,17 @@ def test_the_snapshot_lists_native_ids_beside_the_alias_targets(
     assert not {model.id for model in requested} & set(EXPECTED.values())
 
 
-def _authorize(client: TestClient, raw_key: str, model: str):
+def _authorize(client: TestClient, raw_key: str, model: str, route_type: str | None = "messages",
+               **fields):
     key = STORE.get_key_by_raw(raw_key)
     assert key is not None
-    return client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_lookup_hash": key.lookup_hash, "model": model, "route_type": "messages",
-            "estimated_input_tokens": 100, "max_output_tokens": 20,
-        },
-    )
+    body = {
+        "api_key_lookup_hash": key.lookup_hash, "model": model,
+        "estimated_input_tokens": 100, "max_output_tokens": 20, **fields,
+    }
+    if route_type is not None:
+        body["route_type"] = route_type
+    return client.post("/v1/internal/gateway/authorize", json=body)
 
 
 def test_authorize_selects_the_same_route_for_either_spelling(
@@ -263,3 +275,39 @@ def test_the_messages_route_takes_a_native_id(
     for model in (f"{PREFIX}-chat-only", f"{PREFIX}-9-5-20300101", f"{PREFIX}-shared"):
         refused = client.post("/v1/messages", headers=inference_headers, json={**body, "model": model})
         assert refused.status_code == 400 and refusal in refused.text, model
+
+
+NO_FALLBACKS = {"provider": {"allow_fallbacks": False}}
+
+
+@pytest.mark.parametrize("route_type", ["chat.completions", "responses", None])
+@pytest.mark.parametrize("spelling", [f"{PREFIX}-9-5", f"{PREFIX}-9-5:nitro", f"{PREFIX}-8-5"])
+def test_a_native_id_without_fallbacks_is_refused_off_the_messages_route(
+    rows: None, client: TestClient, inference_key: str, route_type: str | None, spelling: str,
+) -> None:
+    """The gateway's fallbacks-off check on these routes knows a catalog id
+    only; the refusal comes before any hold."""
+    key = STORE.get_key_by_raw(inference_key)
+    assert key is not None
+    before = STORE.get_credit_account(key.workspace_id)
+    refused = _authorize(client, inference_key, spelling, route_type, **NO_FALLBACKS)
+    assert refused.status_code == 400, refused.text
+    target = DATED if spelling.endswith("-8-5") else PLAIN
+    assert f"request {target} by its catalog id" in refused.text
+    assert STORE.get_credit_account(key.workspace_id) == before
+    # The positive controls differ in one fact each and are authorized.
+    assert _authorize(client, inference_key, spelling, route_type).status_code == 200
+    assert _authorize(client, inference_key, spelling, "messages", **NO_FALLBACKS).status_code == 200
+    by_catalog_id = spelling.replace(f"{PREFIX}-9-5", PLAIN).replace(f"{PREFIX}-8-5", DATED)
+    assert _authorize(client, inference_key, by_catalog_id, route_type, **NO_FALLBACKS).status_code == 200
+
+
+def test_native_model_id_target_names_only_a_native_resolution(rows: None) -> None:
+    from trusted_router.routing import native_model_id_target
+
+    assert native_model_id_target(f"{PREFIX}-9-5") == PLAIN
+    assert native_model_id_target(f"{PREFIX}-9-5:floor") == PLAIN
+    assert native_model_id_target(f"{PREFIX}-8-5-20300101") == DATED
+    for other in (PLAIN, PLAIN + ":nitro", "nativefix-owned", f"{PREFIX}-shared", f"{PREFIX}-internal",
+                  "totally-unknown", "trustedrouter/auto", ""):
+        assert native_model_id_target(other) is None, other

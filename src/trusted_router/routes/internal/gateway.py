@@ -174,6 +174,7 @@ from trusted_router.routing import (
     _required_privacy_postures,
     canonical_model_id,
     endpoint_supports_input_modalities,
+    native_model_id_target,
     provider_route_preferences,
     resolved_route_preferences,
 )
@@ -1248,6 +1249,21 @@ def _authorize_gateway_sync_impl(
                     400,
                     f"{catalog_id} must be requested by its exact id, "
                     "without a routing variant or dated suffix",
+                    ErrorType.BAD_REQUEST,
+                )
+        # With fallbacks disabled the gateway checks the authorized model
+        # against the request's own spelling on the chat and Responses routes,
+        # and it does not know a native id there. Refuse it here, before any
+        # hold, instead of authorizing a request the gateway then fails. The
+        # Messages route does not run that check.
+        if body.route_type != "messages":
+            native_target = native_model_id_target(requested_model_id)
+            if native_target is not None and not resolved_route_preferences(
+                body_dict, settings
+            ).allow_fallbacks:
+                raise api_error(
+                    400,
+                    f"With fallbacks disabled, request {native_target} by its catalog id",
                     ErrorType.BAD_REQUEST,
                 )
         if body.models and any(

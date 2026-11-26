@@ -51,7 +51,7 @@ from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slu
 from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
-from trusted_router.model_aliases import canonical_router_model_id
+from trusted_router.model_aliases import canonical_router_model_id, names_router_model
 from trusted_router.model_ranking import workload_ranks
 from trusted_router.provider_ranking import measured_provider_rank
 from trusted_router.routing_state import Thresholds, parse_thresholds
@@ -1233,6 +1233,16 @@ def _resolve_bare_or_dated(model_id: str) -> str:
     return model_id
 
 
+def native_model_id_target(model_id: str) -> str | None:
+    """The catalog model a request's id names through the native id map, or
+    None when it resolves any other way (or not at all)."""
+    stripped, _overrides = _strip_variant_suffix(model_id)
+    resolved = resolve_model_alias(stripped)
+    if resolved == stripped or native_model_id_targets().get(stripped) != resolved:
+        return None
+    return resolved
+
+
 # The provider whose own model ids are accepted as written, and the undashed
 # date its ids may end with ("claude-haiku-4-5-20251001").
 NATIVE_ID_PROVIDER = "anthropic"
@@ -1247,13 +1257,13 @@ def native_model_id_targets() -> dict[str, str]:
     The map is read from the catalog, not derived by spelling: a key is the
     upstream id of a model's direct Anthropic route, so the id the client
     typed is the id that route sends upstream. A dated upstream id is also
-    reachable by its undated form, the alias Anthropic publishes for it.
+    reachable by its undated form.
 
     A closed set by design. The routing snapshot lists these keys beside the
     alias targets, so the Go evaluator hands such a request to this resolver
     instead of answering for an id it does not know. A spelling an older rule
     already resolves is left to that rule, and one that two models claim is
-    left out.
+    left out, as is an internal-only model.
     """
     exact: dict[str, set[str]] = {}
     undated: dict[str, set[str]] = {}
@@ -1263,6 +1273,10 @@ def native_model_id_targets() -> dict[str, str]:
         model = MODELS.get(endpoint.model_id)
         native = endpoint.upstream_id
         if model is None or not model.supports_messages or not native or "/" in native:
+            continue
+        # A model with its own admission rule is asked for by its catalog id,
+        # which is the spelling that rule reads.
+        if model.internal_only or names_router_model(model.id):
             continue
         exact.setdefault(native, set()).add(endpoint.model_id)
         base = _NATIVE_DATE_SUFFIX_RE.sub("", native)
