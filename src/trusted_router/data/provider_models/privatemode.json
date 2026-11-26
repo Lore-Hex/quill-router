@@ -21,9 +21,9 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 229635,
-      "output_token_price_per_m": 746314,
-      "cached_input_token_price_per_m": 45927
+      "input_token_price_per_m": 230475,
+      "output_token_price_per_m": 749044,
+      "cached_input_token_price_per_m": 46095
     },
     {
       "display_name": "GLM-5.3",
@@ -45,9 +45,9 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 1779672,
-      "output_token_price_per_m": 6590525,
-      "cached_input_token_price_per_m": 172227
+      "input_token_price_per_m": 1786182,
+      "output_token_price_per_m": 6614633,
+      "cached_input_token_price_per_m": 172857
     },
     {
       "display_name": "GLM-5.3-Flash",
@@ -70,9 +70,9 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 229635,
-      "output_token_price_per_m": 746314,
-      "cached_input_token_price_per_m": 57409
+      "input_token_price_per_m": 230475,
+      "output_token_price_per_m": 749044,
+      "cached_input_token_price_per_m": 57619
     },
     {
       "display_name": "DeepSeek OCR 2",
@@ -95,9 +95,9 @@
       "supports_tools": false,
       "supports_reasoning": false,
       "routable": true,
-      "input_token_price_per_m": 884095,
-      "output_token_price_per_m": 1458183,
-      "cached_input_token_price_per_m": 91854
+      "input_token_price_per_m": 887329,
+      "output_token_price_per_m": 1463517,
+      "cached_input_token_price_per_m": 92190
     },
     {
       "display_name": "Qwen3-Embedding 4B",
@@ -119,7 +119,7 @@
       "supports_tools": false,
       "supports_reasoning": false,
       "routable": true,
-      "input_token_price_per_m": 149263,
+      "input_token_price_per_m": 149809,
       "output_token_price_per_m": 0
     },
     {
@@ -142,7 +142,7 @@
       "supports_reasoning": false,
       "routable": true,
       "billing_unit": "audio_minute",
-      "audio_minute_price_microdollars": 4593
+      "audio_minute_price_microdollars": 4610
     },
     {
       "display_name": "Whisper large-v3",
@@ -164,12 +164,12 @@
       "supports_reasoning": false,
       "routable": true,
       "billing_unit": "audio_minute",
-      "audio_minute_price_microdollars": 16075
+      "audio_minute_price_microdollars": 16134
     }
   ],
   "source": "https://docs.privatemode.ai/models/overview/",
   "pricing_source": "https://docs.privatemode.ai/pricing/",
-  "generated_at": "2026-11-26T13:09:25Z",
+  "generated_at": "2026-11-26T15:32:08Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

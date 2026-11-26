@@ -1040,6 +1040,12 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "inclusionai/lingsante-3.1-air-vl": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "kt/midm-k-3.0-pro": {
       "mandatory": false,
       "default_enabled": false,

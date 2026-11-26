@@ -31,8 +31,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 437400,
-      "output_token_price_per_m": 656100
+      "input_token_price_per_m": 439000,
+      "output_token_price_per_m": 658500
     },
     {
       "display_name": "Llama-3.3-70B-Instruct",
@@ -97,8 +97,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 218700,
-      "output_token_price_per_m": 765450
+      "input_token_price_per_m": 219500,
+      "output_token_price_per_m": 768250
     },
     {
       "display_name": "gpt-oss-120b",
@@ -129,8 +129,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 218700,
-      "output_token_price_per_m": 765450
+      "input_token_price_per_m": 219500,
+      "output_token_price_per_m": 768250
     },
     {
       "display_name": "gpt-oss-20b",
@@ -161,8 +161,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 109350,
-      "output_token_price_per_m": 218700
+      "input_token_price_per_m": 109750,
+      "output_token_price_per_m": 219500
     },
     {
       "display_name": "qwen3-coder-next",
@@ -227,8 +227,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 656100,
-      "output_token_price_per_m": 3717900
+      "input_token_price_per_m": 658500,
+      "output_token_price_per_m": 3731500
     },
     {
       "display_name": "qwen3.5-9b",
@@ -259,8 +259,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 109350,
-      "output_token_price_per_m": 218700
+      "input_token_price_per_m": 109750,
+      "output_token_price_per_m": 219500
     },
     {
       "display_name": "qwen3.8-27b",
@@ -292,8 +292,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 546750,
-      "output_token_price_per_m": 3717900
+      "input_token_price_per_m": 548750,
+      "output_token_price_per_m": 3731500
     },
     {
       "display_name": "apertus-70b",
@@ -323,8 +323,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1093500,
-      "output_token_price_per_m": 3717900
+      "input_token_price_per_m": 1097500,
+      "output_token_price_per_m": 3731500
     },
     {
       "display_name": "glm5.2",
@@ -355,8 +355,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 2515050,
-      "output_token_price_per_m": 7545150
+      "input_token_price_per_m": 2524250,
+      "output_token_price_per_m": 7572750
     },
     {
       "display_name": "Cloudflare Clef-Flash",
@@ -384,7 +384,7 @@
         "example_input": "{\"model\": \"cloudflare/clef-flash\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}"
       },
       "routable": true,
-      "input_token_price_per_m": 164025,
+      "input_token_price_per_m": 164625,
       "output_token_price_per_m": 0
     },
     {
@@ -417,13 +417,13 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 492075,
-      "output_token_price_per_m": 1968300
+      "input_token_price_per_m": 493875,
+      "output_token_price_per_m": 1975500
     }
   ],
   "source": "https://api.regolo.ai/model_group/info",
   "pricing_source": "https://docs.regolo.ai/models/catalog/",
-  "generated_at": "2026-11-26T13:09:25Z",
+  "generated_at": "2026-11-26T15:32:08Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13
 }
