@@ -2568,6 +2568,19 @@ def _gateway_key_info_sync(
     return {"data": self_key_shape(api_key)}
 
 
+def register_fal_primary_402_route(router: APIRouter) -> None:
+    @router.post("/internal/gateway/fal-primary-402")
+    def fal_primary_402(
+        request: Request, body: managed_key_cutovers.FalPaymentRequired, settings: SettingsDep,
+    ) -> dict[str, str | bool]:
+        require_internal_gateway(request, settings)
+        try:
+            managed_key_cutovers.record_fal_402(settings, STORE, body)
+        except ValueError:
+            raise api_error(403, "Not an enrolled fal primary attempt", ErrorType.FORBIDDEN) from None
+        return {"accepted": True, "generation": body.primary_generation}
+
+
 def register_managed_key_funding_routes(router: APIRouter) -> None:
     @router.post("/internal/gateway/managed-key-funding-event")
     async def managed_key_funding_event(

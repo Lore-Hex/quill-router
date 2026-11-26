@@ -11,7 +11,8 @@ from tests.route_inventory import route_paths
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.services import managed_key_cutovers as cut
-from trusted_router.storage import InMemoryStore
+from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.storage_models import GatewayAuthorization
 
 
 def b64(value: bytes) -> str:
@@ -32,10 +33,10 @@ def enrolled():
 def delivery(key, **changes):
     claims = {
         "audience": "test-finance",
-        "provider": "fal",
-        "generation": "a" * 64,
+        "provider": "minimax",
+        "generation": "b" * 64,
         "observed_at": int(time.time()),
-        "primary": "auto_refill_closed",
+        "primary": "subscription_finally_ended",
         "primary_remaining": "0",
         "standby_available_credit": "10.00",
         **changes,
@@ -49,21 +50,21 @@ def delivery(key, **changes):
 def test_scoped_irreversible_switch(enrolled):
     settings, store, key = enrolled
     data = {
-        "provider": "fal",
+        "provider": "minimax",
         "usage_type": "Credits",
         "route_candidates": [
-            {"provider": "minimax", "usage_type": "BYOK"},
+            {"provider": "fal", "usage_type": "BYOK"},
             {"provider": "other", "usage_type": "Credits"},
         ],
     }
-    assert cut.decisions(settings, store, data) == {"fal": "primary:" + "a" * 64}
+    assert cut.decisions(settings, store, data) == {"minimax": "primary:" + "b" * 64}
     event = delivery(key)
     for _ in range(2):
         cut.accept(settings, store, event)
-        assert cut.decisions(settings, store, data) == {"fal": "a" * 64}
+        assert cut.decisions(settings, store, data) == {"minimax": "b" * 64}
     with pytest.raises(ValueError):
         cut.accept(settings, store, delivery(key, primary="refill_disabled"))
-    assert cut.decisions(settings, store, data) == {"fal": "a" * 64}
+    assert cut.decisions(settings, store, data) == {"minimax": "b" * 64}
 
 
 @pytest.mark.parametrize(
@@ -82,21 +83,21 @@ def test_scoped_irreversible_switch(enrolled):
         {"audience": "staging"},
         {"observed_at": 0},
         {"observed_at": 4_000_000_000},
-        {"provider": "minimax"},
+        {"provider": "fal"},
     ],
 )
 def test_partial_or_stale_receipt_never_promotes(enrolled, changes):
     settings, store, key = enrolled
     with pytest.raises(ValueError):
         cut.accept(settings, store, delivery(key, **changes))
-    assert not store.managed_key_promoted("fal", "a" * 64)
+    assert not store.managed_key_promoted("minimax", "b" * 64)
 
 
 def test_wrong_signer_and_wrong_provider(enrolled):
     settings, store, _ = enrolled
     with pytest.raises(ValueError):
         cut.accept(settings, store, delivery(Ed25519PrivateKey.generate()))
-    assert not store.managed_key_promoted("fal", "a" * 64)
+    assert not store.managed_key_promoted("minimax", "b" * 64)
 
 
 def test_minimax_requires_final_entitlement_end(enrolled):
@@ -146,8 +147,8 @@ def test_internal_event_requires_dedicated_token_and_signature(test_settings, en
     assert client.post(url, json=forged, headers=headers).status_code == 403
     assert client.post(url, json=receipt, headers=headers).json() == {
         "accepted": True,
-        "provider": "fal",
-        "generation": "a" * 64,
+        "provider": "minimax",
+        "generation": "b" * 64,
     }
 
 
@@ -168,3 +169,38 @@ def test_funding_token_must_not_share_gateway_authority():
     token = secrets.token_hex(16)
     with pytest.raises(ValueError, match="TR_INTERNAL_GATEWAY_TOKEN"):
         Settings(internal_gateway_token=token, managed_key_funding_token=token)
+
+
+@pytest.mark.parametrize("as_candidate", [False, True])
+def test_only_authenticated_fal_primary_submit_402_switches(test_settings, monkeypatch, as_candidate):
+    endpoint = "fal/flux-1-schnell@fal/prepaid"
+    gen = "a" * 64
+    test_settings.managed_key_generations = {"fal": gen}
+    test_settings.internal_gateway_token = secrets.token_hex(16)
+    client = TestClient(create_app(test_settings, init_observability=False))
+    auth = GatewayAuthorization("auth-test", "w", "k", "m", "fal", "Credits", 1, endpoint_id=endpoint)
+    if as_candidate:
+        auth.endpoint_id = "other"
+        auth.candidate_endpoint_ids = [endpoint]
+    monkeypatch.setattr(InMemoryStore, "get_gateway_authorization", lambda self, id: auth if id == auth.id else None)
+    url = "/v1/internal/gateway/fal-primary-402"
+    headers = {"x-trustedrouter-internal-token": test_settings.internal_gateway_token}
+    body = {"authorization_id": auth.id, "endpoint_id": endpoint, "primary_generation": gen, "upstream_status": 402}
+    assert client.post(url, json=body).status_code == 401
+    for invalid in ({"primary_generation": "b" * 64}, {"authorization_id": "unissued"}, {"endpoint_id": "another"}):
+        assert client.post(url, json=body | invalid, headers=headers).status_code == 403
+    for status in (401, 403, 429, 503, "402"):
+        assert client.post(url, json=body | {"upstream_status": status}, headers=headers).status_code // 100 == 4
+    auth.settled = True
+    assert client.post(url, json=body, headers=headers).status_code == 403
+    auth.settled = False
+    for other in ("fal/flux-1-schnell@fal/byok", "minimax/h3-max@minimax/prepaid"):
+        auth.candidate_endpoint_ids.append(other)
+        assert client.post(url, json=body | {"endpoint_id": other}, headers=headers).status_code == 403
+    data = {"provider": "fal", "usage_type": "Credits"}
+    assert cut.decisions(test_settings, STORE, data) == {"fal": "primary:" + gen}
+    for _ in range(2):
+        assert client.post(url, json=body, headers=headers).json() == {"accepted": True, "generation": gen}
+        assert cut.decisions(test_settings, STORE, data) == {"fal": gen}
+    assert cut.decisions(test_settings, STORE, data | {"usage_type": "BYOK"}) == {}
+    assert not STORE.managed_key_promoted("minimax", gen)

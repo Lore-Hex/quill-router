@@ -4,11 +4,15 @@ Status: disabled unless explicitly enrolled. This is a TrustedRouter internal
 funding-event contract, **not** a webhook schema published by fal or MiniMax.
 There is no scheduled check, request replay, top-up, or transfer of funds.
 
-* fal: confirm auto-refill is closed for the enrolled primary and check its
-  exact credit balance is zero. Verify a positive balance on the separately
-  enrolled standby. Both reads must identify the expected billing accounts.
-  An inference key's `403` on the [billing endpoint](https://fal.ai/docs/platform-apis/v1/account/billing)
-  says nothing about its balance. Use readers with `billing:usage:read`.
+* fal: keep using the primary until fal itself returns HTTP 402 on a managed
+  image generation or video queue submission with that key. The gateway
+  reports the rejection to the control plane that issued the authorization.
+  Once it records the switch, new managed fal authorizations from that
+  authority use the standby. Other independent authorities switch on their
+  own first qualifying rejection. No billing reader, auto-refill event or
+  balance lookup is required. The rejected submission is not replayed.
+  Customer balance errors, BYOK calls, video polls, timeouts and other
+  HTTP statuses do not switch keys. Existing video jobs keep their original key.
 * MiniMax: verify the subscription has finally ended and any separately
   usable credit packs are exhausted. Require a successful primary entitlement
   observation with no remaining entitlements and positive standby PAYG funds.
@@ -16,7 +20,7 @@ There is no scheduled check, request replay, top-up, or transfer of funds.
   resetting windows. A window limit, frozen card, empty response or login error
   isn't proof the subscription ended.
 
-**Event source is a deployment prerequisite.** No provider lifecycle adapter
+**MiniMax only: a verified event source is a deployment prerequisite.** No provider lifecycle adapter
 is configured by this change. It must authenticate the actual account and
 current closure state for the exact ordered credentials. A funding rejection
 may wake the verifier to re-read that state; it cannot certify it. Re-evaluate
@@ -34,7 +38,7 @@ Fresh evidence is required after a receipt expires; transport redelivery
 does not submit another inference. Do not claim a fleet-wide cutover from
 one acknowledgement.
 
-The internal endpoint verifies the signature, audience, pair, age and funding
+The MiniMax funding endpoint verifies the signature, audience, pair, age and funding
 facts, then records an irreversible marker in the authority's own store.
 New managed authorizations read that marker by exact key. An unavailable
 marker store is not permission to use the old key. BYOK is unchanged.
@@ -42,10 +46,10 @@ Retain old slot material for existing queued video jobs until they are drained.
 
 Release all compatible control planes and gateways through normal CI and
 attestation before enrolling a pair. Pin the exact generation in
-`TR_MANAGED_KEY_GENERATIONS`, provision `TR_MANAGED_KEY_RECEIPT_PUBLIC_KEY`,
+`TR_MANAGED_KEY_GENERATIONS`. For MiniMax only, provision `TR_MANAGED_KEY_RECEIPT_PUBLIC_KEY`,
 `TR_MANAGED_KEY_RECEIPT_AUDIENCE` and a scoped `TR_MANAGED_KEY_FUNDING_TOKEN`
 through reviewed deployment configuration. Confirm all authorities issue the
-explicit primary decision before loading the standby. No producer, no
+explicit primary decision before loading the standby. For MiniMax, no producer, no
 verified final-funding source, a missing account binding or an unfunded
 standby means no activation. Never remove a promoted generation or roll a
 serving authority back to an incompatible version as a way to undo a cutover.

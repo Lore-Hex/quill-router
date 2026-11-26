@@ -1,4 +1,4 @@
-"""Consume authenticated billing events, never customer errors or timers."""
+"""One-way selection for managed keys; customer errors never select credentials."""
 
 from __future__ import annotations
 
@@ -12,14 +12,36 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from trusted_router.catalog import endpoint_for_id
 from trusted_router.config import Settings
 from trusted_router.store_protocol import Store
 
 _DOMAIN = b"tr.managed-key-exhaustion/1\0"
-_FINAL = {
-    "fal": "auto_refill_closed",
-    "minimax": "subscription_finally_ended",
-}
+_MANAGED = {"fal", "minimax"}
+
+
+class FalPaymentRequired(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    authorization_id: str = Field(min_length=1, max_length=256)
+    endpoint_id: str = Field(min_length=1, max_length=512)
+    primary_generation: str = Field(pattern=r"^[0-9a-f]{64}$")
+    upstream_status: Literal[402]
+
+
+def record_fal_402(settings: Settings, store: Store, report: FalPaymentRequired) -> None:
+    # A trusted gateway reports only a direct paid submit, before its normal refund.
+    # Check the issuer's durable authorization (by primary key), not a caller model name.
+    if report.primary_generation != settings.managed_key_generations.get("fal"):
+        raise ValueError("unrecognized fal pair")
+    auth = store.get_gateway_authorization(report.authorization_id)
+    if auth is None or auth.settled or report.endpoint_id not in (
+        auth.endpoint_id, *auth.candidate_endpoint_ids,
+    ):
+        raise ValueError("not a current authorized route")
+    endpoint = endpoint_for_id(report.endpoint_id)
+    if endpoint is None or endpoint.provider != "fal" or endpoint.is_byok:
+        raise ValueError("not a managed fal endpoint")
+    store.record_managed_key_promotion("fal", report.primary_generation)
 
 
 class Delivery(BaseModel):
@@ -31,12 +53,12 @@ class Delivery(BaseModel):
 class _Evidence(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     audience: str
-    provider: Literal["fal", "minimax"]
+    provider: Literal["minimax"]
     generation: str = Field(pattern=r"^[0-9a-f]{64}$")
     observed_at: int
     primary: str
     # Exact decimal strings avoid treating a small remaining credit as zero.
-    # fal: remaining credit; MiniMax: remaining active entitlements.
+    # MiniMax remaining active entitlements.
     primary_remaining: str = Field(max_length=48, pattern=r"^(0|[1-9][0-9]*)(\.[0-9]+)?$")
     standby_available_credit: str = Field(max_length=48, pattern=r"^(0|[1-9][0-9]*)(\.[0-9]+)?$")
 
@@ -58,7 +80,7 @@ def accept(settings: Settings, store: Store, delivery: Delivery) -> tuple[str, s
     if (
         e.audience != settings.managed_key_receipt_audience
         or e.generation != settings.managed_key_generations.get(e.provider)
-        or e.primary != _FINAL[e.provider]
+        or e.primary != "subscription_finally_ended"
         or Decimal(e.primary_remaining) != 0
         or Decimal(e.standby_available_credit) <= 0
         or not 0 <= int(time.time()) - e.observed_at <= 120
@@ -77,7 +99,7 @@ def decisions(settings: Settings, store: Store, data: dict[str, Any]) -> dict[st
     }
     result = {}
     for provider, generation in settings.managed_key_generations.items():
-        if provider not in providers or provider not in _FINAL:
+        if provider not in providers or provider not in _MANAGED:
             continue
         if not re.fullmatch("[0-9a-f]{64}", generation):
             result[provider] = "unavailable"

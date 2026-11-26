@@ -23,9 +23,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 @dataclass(frozen=True)
 class VerifiedClosure:
-    provider: Literal["fal", "minimax"]
+    provider: Literal["minimax"]
     generation: str
-    state: Literal["auto_refill_closed", "subscription_finally_ended"]
+    state: Literal["subscription_finally_ended"]
     observed_at: int
     # MiniMax packs may remain usable after an included quota window.
     # Absence of a model_remains row proves nothing about those packs.
@@ -36,11 +36,6 @@ class VerifiedClosure:
 class Pair:
     primary: str = field(repr=False)
     standby: str = field(repr=False)
-    # Independently enrolled fal billing accounts and least-privilege readers.
-    fal_primary_team: str = ""
-    fal_standby_team: str = ""
-    fal_primary_reader: str = field(default="", repr=False)
-    fal_standby_reader: str = field(default="", repr=False)
 
     def generation(self, provider: str) -> str:
         keys = (self.primary, self.standby)
@@ -56,7 +51,6 @@ class Pair:
 def _read(endpoint: str, key: str) -> dict[str, Any]:
     # Read-only, fixed origins, no redirects, no retries and no response logs.
     host, path, auth = {
-        "fal": ("api.fal.ai", "/v1/account/billing?expand=credits", "Key "),
         "plan": ("api.minimax.io", "/v1/token_plan/remains", "Bearer "),
         "wallet": ("api.minimax.io", "/account/query_balance", "Bearer "),
     }[endpoint]
@@ -91,18 +85,6 @@ def _amount(raw: object) -> Decimal:
     return amount
 
 
-def _fal_balance(data: dict[str, Any], team: str) -> Decimal:
-    credits = data.get("credits")
-    if (
-        not team
-        or data.get("username") != team
-        or not isinstance(credits, dict)
-        or credits.get("currency") != "USD"
-    ):
-        raise ValueError("billing identity or currency mismatch")
-    return _amount(credits.get("current_balance"))
-
-
 def _minimax_success(data: dict[str, Any]) -> bool:
     meta = data.get("base_resp")
     return (
@@ -122,18 +104,7 @@ def qualify(
         raise ValueError("stale or unbound closure")
     if closure.generation != pair.generation(closure.provider):
         raise ValueError("closure concerns a different credential pair")
-    if closure.provider == "fal" and closure.state == "auto_refill_closed":
-        if (
-            pair.fal_primary_team == pair.fal_standby_team
-            or not pair.fal_primary_reader
-            or not pair.fal_standby_reader
-            or pair.fal_primary_reader == pair.fal_standby_reader
-        ):
-            raise ValueError("distinct enrolled billing readers required")
-        if _fal_balance(read("fal", pair.fal_primary_reader), pair.fal_primary_team) != 0:
-            return None
-        standby = _fal_balance(read("fal", pair.fal_standby_reader), pair.fal_standby_team)
-    elif closure.provider == "minimax" and closure.state == "subscription_finally_ended":
+    if closure.provider == "minimax" and closure.state == "subscription_finally_ended":
         if closure.remaining_pack_credit is None or _amount(closure.remaining_pack_credit) != 0:
             return None
         plan = read("plan", pair.primary)
