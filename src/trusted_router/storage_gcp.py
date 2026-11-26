@@ -7323,8 +7323,10 @@ class SpannerStore(OperationalAnalyticsReads):
             raw_nonce=raw_nonce,
         )
 
-    def consume_wallet_challenge(self, raw_nonce: str) -> WalletChallenge | None:
-        return self.wallet_challenges.consume(raw_nonce)
+    def consume_wallet_challenge(
+        self, raw_nonce: str, *, accepts: Callable[[WalletChallenge], bool] | None = None,
+    ) -> WalletChallenge | None:
+        return self.wallet_challenges.consume(raw_nonce, accepts=accepts)
 
     def create_verification_token(
         self,

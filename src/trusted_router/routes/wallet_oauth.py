@@ -44,23 +44,33 @@ from trusted_router.auth import (
 )
 from trusted_router.billing_policy import WALLET_EMAIL_ATTACH_PATH
 from trusted_router.config import Settings
-from trusted_router.domains import request_control_domain
+from trusted_router.domains import request_control_domain, request_control_origin
 from trusted_router.errors import api_error
+from trusted_router.request_limits import (
+    UNTRUSTED_LOAD_BALANCER_SUBJECT,
+    fingerprint_subject,
+    normalized_client_identity,
+    rate_limit_headers,
+)
 from trusted_router.services.email import (
     build_email_in_use_notice,
     build_verification_email,
     get_email_service,
 )
 from trusted_router.signup_gate import (
+    is_disposable_email,
     require_wallet_account_creation,
-    wallet_account_creation_allowed,
 )
 from trusted_router.storage import STORE, AuthSession, User
 from trusted_router.storage_models import (
     EMAIL_ATTACH_ALREADY_VERIFIED,
     EMAIL_ATTACH_ATTACHED,
     EMAIL_ATTACH_TAKEN,
+    RateLimitHit,
+    WalletChallenge,
 )
+from trusted_router.storage_rate_limits import InMemoryRateLimits
+from trusted_router.storage_wallet_challenges import parse_siwe_challenge_scope
 from trusted_router.types import ErrorType
 from trusted_router.views import render_template
 from trusted_router.wallet_auth import (
@@ -92,11 +102,31 @@ class WalletChallengeRequest(BaseModel):
 class WalletVerifyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     address: str = Field(min_length=42, max_length=42)
-    signature: str = Field(min_length=1)
-    nonce: str = Field(min_length=1)
+    signature: str = Field(min_length=1, max_length=132)
+    nonce: str = Field(min_length=1, max_length=128)
 
 
 def register_wallet_oauth_routes(router: APIRouter) -> None:
+    challenges = InMemoryRateLimits(lock=threading.RLock())
+
+    def require_capacity(hit: RateLimitHit) -> None:
+        if not hit.allowed:
+            raise api_error(
+                429, "Too many wallet requests. Please try again later.",
+                ErrorType.RATE_LIMITED, headers=rate_limit_headers(hit),
+            )
+
+    def wallet_domain(request: Request, settings: Settings) -> str:
+        domain = request_control_domain(request, settings)
+        origin = request.headers.get("origin")
+        if origin and origin not in {f"https://{domain}", f"https://www.{domain}"} and not (
+            _inline_link_allowed(settings) and origin == str(request.base_url).rstrip("/")
+        ):
+            raise api_error(403, "Wallet sign-in requires a first-party origin", ErrorType.FORBIDDEN)
+        if domain == settings.trusted_domain and settings.siwe_domain:
+            return settings.siwe_domain
+        return domain
+
     @router.post("/auth/wallet/challenge")
     def wallet_challenge(
         request: Request,
@@ -105,22 +135,20 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         if not ADDRESS_RE.match(body.address):
             raise api_error(400, "Invalid Ethereum address", ErrorType.BAD_REQUEST)
-        if (
-            not wallet_account_creation_allowed(settings)
-            and STORE.find_user_by_wallet(body.address) is None
-        ):
-            # A closed signup switch must stop durable challenge growth as
-            # well as account creation. Returning wallets still receive a
-            # challenge; unknown addresses fail after one bounded read and
-            # before nonce generation or either challenge write.
+        domain = wallet_domain(request, settings)
+        if STORE.find_user_by_wallet(body.address) is None:
             require_wallet_account_creation(settings)
-        request_domain = request_control_domain(request, settings)
-        domain = (
-            settings.siwe_domain
-            if request_domain == settings.trusted_domain and settings.siwe_domain
-            else request_domain
-        )
-        nonce = secrets.token_urlsafe(32)
+            # Bound durable writes even when the edge supplies no usable IP.
+            source = normalized_client_identity(request, settings)
+            if source != UNTRUSTED_LOAD_BALANCER_SUBJECT:
+                require_capacity(challenges.hit(
+                    namespace="wallet_new_challenge", subject=fingerprint_subject(source),
+                    limit=6, window_seconds=60,
+                ))
+            require_capacity(challenges.hit(
+                namespace="wallet_new_challenge_all", subject="all", limit=30, window_seconds=60,
+            ))
+        nonce = secrets.token_hex(32)
         message, _ = build_siwe_message(
             domain=domain,
             address=body.address,
@@ -152,22 +180,34 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
     ) -> Response:
         if not ADDRESS_RE.match(body.address):
             raise api_error(400, "Invalid Ethereum address", ErrorType.BAD_REQUEST)
-        challenge = STORE.consume_wallet_challenge(body.nonce)
-        if challenge is None:
-            raise api_error(400, "Invalid or expired challenge", ErrorType.BAD_REQUEST)
-        if challenge.address != body.address.strip().lower():
-            raise api_error(400, "Address does not match challenge", ErrorType.BAD_REQUEST)
+        domain = wallet_domain(request, settings)
+        address = body.address.lower()
 
-        try:
-            recovered = recover_address(message=challenge.message, signature=body.signature)
-        except Exception as exc:  # noqa: BLE001 - eth-account raises various exceptions.
-            raise api_error(400, "Signature verification failed", ErrorType.BAD_REQUEST) from exc
-        if recovered != body.address.strip().lower():
-            raise api_error(400, "Signature does not match address", ErrorType.BAD_REQUEST)
+        def accepts(record: WalletChallenge) -> bool:
+            if record.address != address or parse_siwe_challenge_scope(record.message) != (domain, body.nonce):
+                return False
+            try:
+                return recover_address(message=record.message, signature=body.signature) == address
+            except Exception:  # eth-account raises several malformed-signature exceptions.
+                return False
+
+        challenge = STORE.consume_wallet_challenge(body.nonce, accepts=accepts)
+        if challenge is None:
+            raise api_error(400, "Invalid signature or expired challenge", ErrorType.BAD_REQUEST)
 
         existing_user = STORE.find_user_by_wallet(body.address)
         if existing_user is None:
             require_wallet_account_creation(settings)
+            # Count only proofs of possession. Store-backed quotas span replicas.
+            source = normalized_client_identity(request, settings)
+            if source != UNTRUSTED_LOAD_BALANCER_SUBJECT:
+                require_capacity(STORE.hit_rate_limit(
+                    namespace="wallet_enrollment", subject=fingerprint_subject(source),
+                    limit=3, window_seconds=3600,
+                ))
+            require_capacity(STORE.hit_rate_limit(
+                namespace="wallet_enrollment_all", subject="all", limit=12, window_seconds=600,
+            ))
         user = existing_user or STORE.create_wallet_user(body.address)
         if user.disabled:
             raise api_error(403, "This account is closed. Contact security@trustedrouter.com for assistance.", ErrorType.FORBIDDEN)
@@ -233,9 +273,9 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if _has_verified_email(user):
             return _already_verified_response(session)
         email_normalized = email.strip().lower()
-        if not _plausible_email(email_normalized):
+        if not _plausible_email(email_normalized) or is_disposable_email(email_normalized):
             return HTMLResponse(
-                _form_page(session=session, error="Enter a valid email address."),
+                _form_page(session=session, error="Enter a valid, non-disposable email address."),
                 status_code=400,
             )
         # Counted before the ownership check, so a taken address costs the
@@ -267,7 +307,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 purpose=_attach_purpose(email_normalized),
                 ttl_seconds=VERIFICATION_TTL_SECONDS,
             )
-            verify_url = _verify_url(request, raw_token, email_normalized)
+            verify_url = _verify_url(request, settings, raw_token, email_normalized)
             attribution = request_attribution(request)
             touch = attribution.last_touch if attribution is not None else {}
             message = build_verification_email(
@@ -306,7 +346,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         email_normalized = email.strip().lower()
         consumed = (
             STORE.consume_verification_token(token, purpose=_attach_purpose(email_normalized))
-            if token and email_normalized
+            if token and email_normalized and not is_disposable_email(email_normalized)
             else None
         )
         if consumed is None:
@@ -431,8 +471,8 @@ def reset_attach_send_limits() -> None:
         _attach_sends.clear()
 
 
-def _verify_url(request: Request, raw_token: str, email_normalized: str) -> str:
-    base = str(request.base_url).rstrip("/")
+def _verify_url(request: Request, settings: Settings, raw_token: str, email_normalized: str) -> str:
+    base = str(request.base_url).rstrip("/") if _inline_link_allowed(settings) else request_control_origin(request, settings)
     query = urlencode({"token": raw_token, "email": email_normalized})
     return f"{base}{WALLET_EMAIL_VERIFY_PATH}?{query}"
 

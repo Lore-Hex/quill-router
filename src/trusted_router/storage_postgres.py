@@ -2935,7 +2935,9 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(create)
 
-    def consume_wallet_challenge(self, raw_nonce: str) -> WalletChallenge | None:
+    def consume_wallet_challenge(
+        self, raw_nonce: str, *, accepts: Callable[[WalletChallenge], bool] | None = None,
+    ) -> WalletChallenge | None:
         lookup_hash = lookup_hash_api_key(raw_nonce)
 
         def consume(conn: Any) -> WalletChallenge | None:
@@ -2983,6 +2985,8 @@ class PostgresStore(OperationalAnalyticsReads):
                 raw_nonce=raw_nonce,
                 scope_id=scope_id,
             ):
+                return None
+            if accepts is not None and not accepts(record):
                 return None
             record.consumed_at = iso_now()
             self._write_entity_tx(

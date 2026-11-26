@@ -6,6 +6,7 @@ import datetime as dt
 import hmac
 import threading
 import uuid
+from collections.abc import Callable
 from typing import Any, cast
 
 from trusted_router import credit_transfer, phone_verification
@@ -3885,8 +3886,10 @@ class InMemoryStore:
             raw_nonce=raw_nonce,
         )
 
-    def consume_wallet_challenge(self, raw_nonce: str) -> WalletChallenge | None:
-        return self.wallet_challenges.consume(raw_nonce)
+    def consume_wallet_challenge(
+        self, raw_nonce: str, *, accepts: Callable[[WalletChallenge], bool] | None = None,
+    ) -> WalletChallenge | None:
+        return self.wallet_challenges.consume(raw_nonce, accepts=accepts)
 
     def create_verification_token(
         self,

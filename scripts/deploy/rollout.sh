@@ -488,6 +488,14 @@ if [ "${TR_TRUST_JOBS_DEPLOY}" = "1" ]; then
   require_trust_stripe_account_id
 fi
 
+# Preserve a live registration brake. Only the GCP issuer opts into new
+# wallet accounts; a previously explicit false must survive later releases.
+NEW_SIGNUPS_ENABLED="$(read_primary_revision_env TR_NEW_SIGNUPS_ENABLED true)"
+WALLET_SIGNUP_ENABLED="$(read_primary_revision_env TR_WALLET_SIGNUP_ENABLED true)"
+for gate in "$NEW_SIGNUPS_ENABLED" "$WALLET_SIGNUP_ENABLED"; do
+  case "$gate" in true|false) ;; *) echo "Invalid registration gate" >&2; exit 1 ;; esac
+done
+
 ENV_VARS=(
   "TR_RESALE_ENABLED=false"
   "TR_RESALE_FEE_BPS=500"
@@ -504,6 +512,8 @@ ENV_VARS=(
   'TR_SPECULATION_SHADOW_IMAGES=[]'
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=combined"
+  "TR_NEW_SIGNUPS_ENABLED=${NEW_SIGNUPS_ENABLED}"
+  "TR_WALLET_SIGNUP_ENABLED=${WALLET_SIGNUP_ENABLED}"
   "TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED=true"
   "TR_WORKSPACE_ORIGIN_CONTROLS_ENABLED=true"
   "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"

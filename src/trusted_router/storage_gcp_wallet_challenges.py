@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import secrets
+from collections.abc import Callable
 from typing import Any
 
 from trusted_router.security import (
@@ -122,7 +123,9 @@ class SpannerWalletChallenges:
 
         return self._io.database.run_in_transaction(txn)
 
-    def consume(self, raw_nonce: str) -> WalletChallenge | None:
+    def consume(
+        self, raw_nonce: str, *, accepts: Callable[[WalletChallenge], bool] | None = None,
+    ) -> WalletChallenge | None:
         lookup_hash = lookup_hash_api_key(raw_nonce)
 
         def txn(transaction: Any) -> WalletChallenge | None:
@@ -166,6 +169,8 @@ class SpannerWalletChallenges:
                 raw_nonce=raw_nonce,
                 scope_id=scope_id,
             ):
+                return None
+            if accepts is not None and not accepts(record):
                 return None
             record.consumed_at = iso_now()
             self._io.write_entity_tx(transaction, "wallet_challenge", record.hash, record)
