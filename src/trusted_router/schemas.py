@@ -651,6 +651,7 @@ class GatewaySettleRequest(_Lenient):
     # and Gemini prompt counts INCLUDE the cached subset.
     cache_read_input_tokens: int | None = Field(default=None, ge=0)
     cache_creation_input_tokens: int | None = Field(default=None, ge=0)
+    cache_creation_1h_input_tokens: int | None = Field(default=None, ge=0)
     # Provider-reported initial context used only to choose a context-priced
     # tier. actual_input_tokens remains the complete billable input count.
     price_tier_input_tokens: int | None = Field(default=None, ge=0)
@@ -706,6 +707,10 @@ class GatewaySettleRequest(_Lenient):
     @property
     def cache_creation_count(self) -> int:
         return self.cache_creation_input_tokens or 0
+
+    @property
+    def cache_creation_1h_count(self) -> int:
+        return min(self.cache_creation_1h_input_tokens or 0, self.cache_creation_count)
 
     @property
     def selected_model_id(self) -> str | None:

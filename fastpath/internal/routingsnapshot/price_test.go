@@ -25,11 +25,12 @@ func TestThePricingCoreComputesWhatPythonCharges(t *testing.T) {
 		Name      string          `json:"name"`
 		Candidate json.RawMessage `json:"candidate"`
 		Usage     struct {
-			InputTokens          int64 `json:"input_tokens"`
-			OutputTokens         int64 `json:"output_tokens"`
-			CacheReadTokens      int64 `json:"cache_read_tokens"`
-			CacheCreationTokens  int64 `json:"cache_creation_tokens"`
-			PriceTierInputTokens int64 `json:"price_tier_input_tokens"`
+			InputTokens           int64 `json:"input_tokens"`
+			OutputTokens          int64 `json:"output_tokens"`
+			CacheReadTokens       int64 `json:"cache_read_tokens"`
+			CacheCreationTokens   int64 `json:"cache_creation_tokens"`
+			PriceTierInputTokens  int64 `json:"price_tier_input_tokens"`
+			CacheCreation1hTokens int64 `json:"cache_creation_1h_input_tokens"`
 		} `json:"usage"`
 		Expected json.Number `json:"expected_microdollars"`
 	}
@@ -39,10 +40,10 @@ func TestThePricingCoreComputesWhatPythonCharges(t *testing.T) {
 	if err := decoder.Decode(&vectors); err != nil {
 		t.Fatal(err)
 	}
-	if len(vectors) != 29 {
+	if len(vectors) != 40 {
 		t.Fatalf("%d vectors", len(vectors))
 	}
-	tiered := 0
+	tiered, hourly := 0, 0
 	for _, v := range vectors {
 		var generic any
 		d := json.NewDecoder(bytes.NewReader(v.Candidate))
@@ -59,6 +60,9 @@ func TestThePricingCoreComputesWhatPythonCharges(t *testing.T) {
 			t.Fatal(err)
 		}
 		tiered += min(len(price.Tiers), 1)
+		if v.Usage.CacheCreation1hTokens > 0 {
+			hourly++
+		}
 		want, ok := new(big.Int).SetString(v.Expected.String(), 10)
 		if !ok {
 			t.Fatalf("%s: expected %s", v.Name, v.Expected)
@@ -70,6 +74,9 @@ func TestThePricingCoreComputesWhatPythonCharges(t *testing.T) {
 	}
 	if tiered == 0 {
 		t.Error("no vector exercises tiers")
+	}
+	if hourly == 0 {
+		t.Error("no vector exercises one-hour cache writes")
 	}
 }
 

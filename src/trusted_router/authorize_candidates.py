@@ -671,6 +671,7 @@ def endpoint_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    cache_creation_1h_tokens: int = 0,
     price_tier_input_tokens: int | None = None,
     effective_at: datetime | str | None = None,
     service_tier: str | None = None,
@@ -692,6 +693,7 @@ def endpoint_cost_microdollars(
             output_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_creation_tokens=cache_creation_tokens,
+            cache_creation_1h_tokens=cache_creation_1h_tokens,
             effective_at=effective_at,
         )
     document = endpoint_pricing_document((endpoint,))
@@ -702,6 +704,7 @@ def endpoint_cost_microdollars(
         output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_creation_tokens=cache_creation_tokens,
+        cache_creation_1h_tokens=cache_creation_1h_tokens,
         price_tier_input_tokens=price_tier_input_tokens,
     )
 
@@ -714,6 +717,7 @@ def endpoint_cost_microdollars_from_document(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    cache_creation_1h_tokens: int = 0,
     price_tier_input_tokens: int | None = None,
 ) -> int:
     """The Stage D cost path, with the frozen document as its sole price input."""
@@ -724,5 +728,6 @@ def endpoint_cost_microdollars_from_document(
         output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_creation_tokens=cache_creation_tokens,
+        cache_creation_1h_tokens=cache_creation_1h_tokens,
         price_tier_input_tokens=price_tier_input_tokens,
     )

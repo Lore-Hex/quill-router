@@ -403,6 +403,7 @@ _SETTLE_REPAIR_FIELDS = frozenset(
         "output_tokens",
         "cache_read_input_tokens",
         "cache_creation_input_tokens",
+        "cache_creation_1h_input_tokens",
         "service_tier",
         "request_id",
         "finish_reason",
@@ -4448,6 +4449,9 @@ def _settle_gateway_authorization(
     uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
         selected_endpoint.provider, body, model_id=selected_endpoint.model_id
     )
+    cache_creation_1h = body.cache_creation_1h_count
+    if (body.cache_creation_1h_input_tokens or 0) > cache_creation:
+        logger.warning("gateway.settle cache_creation_1h_input_tokens clamped to cache creation total")
     if user_model_pair is not None:
         uncached_input = total_input
     partner_mode = _partner_billing_mode_or_error(
@@ -4518,6 +4522,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            cache_creation_1h_tokens=cache_creation_1h,
             price_tier_input_tokens=price_tier_input_tokens,
         )
         if billing_snapshot is not None
@@ -4527,6 +4532,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            cache_creation_1h_tokens=cache_creation_1h,
             price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
@@ -4727,6 +4733,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            cache_creation_1h_tokens=cache_creation_1h,
             price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
@@ -5390,6 +5397,7 @@ def _settle_gateway_authorization(
         # caller-supplied root field become forgeable broadcast metadata.
         broadcast_settle_body.pop("app_id", None)
         broadcast_settle_body.pop("price_tier_input_tokens", None)
+        broadcast_settle_body.pop("cache_creation_1h_input_tokens", None)
         try:
             enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
             broadcast_enqueued = True

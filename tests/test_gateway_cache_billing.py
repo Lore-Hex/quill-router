@@ -357,3 +357,77 @@ def test_unknown_provider_still_bills_cache_reads_at_full_prompt_price() -> None
     """The conservative default must survive the fallback additions."""
     read_price, _ = cache_token_prices_microdollars("nebius", 1_000_000)
     assert read_price == 1_000_000
+
+
+@pytest.mark.parametrize("hour,write_cost", [(None, 2500), (0, 2500), (2000, 4000), (800, 3100), (3000, 4000)])
+@pytest.mark.parametrize("high_tier", [False, True])
+@pytest.mark.parametrize("provider", ["anthropic", "tinfoil"])
+def test_cache_lifetimes_use_selected_customer_tier(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    hour: int | None, write_cost: int, high_tier: bool, provider: str,
+) -> None:
+    model = "anthropic/claude-haiku-4.5"
+    tiers = (PriceTier(8096, 1_000_000, 5_000_000, 80_000),
+             PriceTier(None, 2_000_000, 10_000_000, 160_000))
+    drop_routes(monkeypatch, model)
+    serve_on_fixture_route(monkeypatch, model, provider, author="anthropic",
+                           price_tiers=tiers, published_price_tiers=tiers)
+    client, key = _client_and_key()
+    auth = _authorize(client, key, model)
+    uncached = 16 if high_tier else 14
+    body = dict(authorization_id=auth["authorization_id"], actual_output_tokens=6,
+                actual_input_tokens=uncached if provider == "anthropic" else uncached + 6081 + 2000,
+                cache_read_input_tokens=6081, cache_creation_input_tokens=2000)
+    if hour is not None:
+        body["cache_creation_1h_input_tokens"] = hour
+    response = client.post("/v1/internal/gateway/settle", json=body)
+    assert response.status_code == 200, response.text
+    expected = (32 + 60 + 973 + 2 * write_cost) if high_tier else (14 + 30 + 486 + write_cost)
+    if hour == 800 and not high_tier:
+        assert expected == (
+            14  # 14 uncached input at $1/M customer input.
+            + 30  # 6 output at $5/M.
+            + 486  # 6081 cache reads at $0.08/M, half up.
+            + 1500  # 1200 five-minute writes at $1.25/M.
+            + 1600  # 800 one-hour writes at twice $1/M.
+        )
+    assert response.json()["data"]["cost_microdollars"] == expected
+    generation = STORE.get_generation(response.json()["data"]["generation_id"])
+    assert generation is not None and generation.total_cost_microdollars == expected
+    assert generation.tokens_prompt == uncached + 6081 + 2000
+    warnings = [record for record in caplog.records if "cache_creation_1h_input_tokens clamped" in record.message]
+    assert len(warnings) == (1 if hour == 3000 else 0)
+    if warnings:
+        assert warnings[0].message == "gateway.settle cache_creation_1h_input_tokens clamped to cache creation total"
+    assert "cache_creation_1h" not in json.dumps(response.json())
+    assert not hasattr(generation, "cache_creation_1h_input_tokens")
+
+
+def test_hour_writes_are_in_partner_operator_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.partner_billing import (
+        PARASAIL_LIBERTY_2_0_IDEMPOTENCY_PREFIX,
+        PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX,
+    )
+
+    model = "anthropic/claude-haiku-4.5"
+    tier = PriceTier(None, 1_000_000, 5_000_000, 80_000)
+    drop_routes(monkeypatch, model)
+    serve_on_fixture_route(monkeypatch, model, "anthropic", author="anthropic",
+                           price_tiers=(tier,), published_price_tiers=(tier,))
+    client, key = _client_and_key()
+    route = PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX + "fixture"
+    response = client.post("/v1/internal/gateway/authorize", json=dict(
+        api_key_hash=key["hash"], model=model, estimated_input_tokens=9000, max_output_tokens=1000,
+        route_type=route, idempotency_key=PARASAIL_LIBERTY_2_0_IDEMPOTENCY_PREFIX + "fixture",
+    ))
+    assert response.status_code == 200, response.text
+    response = client.post("/v1/internal/gateway/settle", json=dict(
+        authorization_id=response.json()["data"]["authorization_id"], route_type=route,
+        actual_input_tokens=14, actual_output_tokens=6, cache_read_input_tokens=6081,
+        cache_creation_input_tokens=2000, cache_creation_1h_input_tokens=800,
+    ))
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["cost_microdollars"] == 0
+    generation = STORE.get_generation(response.json()["data"]["generation_id"])
+    assert generation is not None
+    assert generation.operator_cost_microdollars == 14 + 30 + 486 + 1500 + 1600
