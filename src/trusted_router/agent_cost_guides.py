@@ -235,17 +235,19 @@ def _newest_claude(rows: list[dict[str, Any]], family: str) -> dict[str, Any] | 
 def _native_id_example(model_ids: list[str]) -> dict[str, str] | None:
     """One of Anthropic's own ids the router accepts, with the listed model it names.
 
-    Read from the router's own map, so the page shows an id only while it
-    resolves. The first of `model_ids` with such an id is used, by its
-    shortest spelling.
+    `model_ids` are the models Claude Code's aliases stand for. The page says
+    the client works without model variables only while the router resolves
+    an Anthropic id for every one of them, so this is None unless all do. The
+    example is the first, by its shortest spelling, read from the router's
+    own map.
     """
     spellings: dict[str, list[str]] = {}
     for spelling, model_id in native_model_id_targets().items():
         spellings.setdefault(model_id, []).append(spelling)
-    for model_id in model_ids:
-        if model_id in spellings:
-            return {"native_id": min(spellings[model_id], key=lambda s: (len(s), s)), "model_id": model_id}
-    return None
+    if not model_ids or any(model_id not in spellings for model_id in model_ids):
+        return None
+    first = model_ids[0]
+    return {"native_id": min(spellings[first], key=lambda s: (len(s), s)), "model_id": first}
 
 
 def claude_code_context() -> dict[str, Any]:
@@ -291,8 +293,8 @@ def _claude_code_context(revision: tuple[tuple[int, str], int]) -> dict[str, Any
     # quality score.
     newest = {family: _newest_claude(rows, family) for family, _ in CLAUDE_CODE_ALIAS_VARIABLES}
     premium = newest["opus"]
-    # Claude Code sends Anthropic's own ids for its aliases. The router accepts
-    # one when it names a listed model, so the pins are a choice, not a step.
+    # Claude Code sends Anthropic's own ids for its aliases. While the router
+    # resolves one for every alias's model, the pins are a choice, not a step.
     pins = [{"variable": variable, "model_id": row["model"].id}
             for family, variable in CLAUDE_CODE_ALIAS_VARIABLES if (row := newest[family]) is not None]
     return {"claude_guide": {

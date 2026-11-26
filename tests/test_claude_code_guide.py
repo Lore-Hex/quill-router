@@ -157,43 +157,56 @@ def test_default_ids_are_shown_only_while_the_router_resolves_them(
         found = page(client).select_one("#setup p[data-native-ids]")
         return found.get_text(" ", strip=True) if found else None
 
-    # The example is the newest Opus, by the id the router itself resolves.
+    def requires_pins() -> None:
+        guides._claude_code_context.cache_clear()
+        setup = page(client).select_one("#setup")
+        assert not setup.select("p[data-native-ids]")
+        words = setup.get_text(" ", strip=True)
+        assert "Then pin the models to listed IDs, which carry the anthropic/ prefix" in words
+        assert "whole setup" not in words and "either form" not in words
+        assert "keep the pins and also set ANTHROPIC_MODEL , or start with claude --model , and a listed ID." in words
+        assert setup.select_one('pre[data-example="pins"]')
+
+    # Every alias's model resolves by Anthropic's id; the example is the newest Opus.
+    pinned = [OPUS, SONNET, CHEAP, FABLE]
+    assert all(routing.resolve_model_alias(native(model_id)) == model_id for model_id in pinned)
     text = note()
     assert text is not None and text.startswith("That is the whole setup.")
-    assert f"such as {native(OPUS)} ," in text and f"here {OPUS} ." in text
+    assert f"{native(OPUS)} is served as {OPUS} ." in text
+    assert "An ID that names no listed model is refused." in text
     assert "ANTHROPIC_MODEL and claude --model take either form" in text
-    assert "and a listed ID" not in page(client).select_one("#setup").get_text(" ", strip=True)
-    assert routing.resolve_model_alias(native(OPUS)) == OPUS
-    assert routing.resolve_model_alias(native(CHEAP)) == CHEAP
+    words = page(client).select_one("#setup").get_text(" ", strip=True)
+    assert "or start with claude --model , with either form of ID." in words
+    assert "and a listed ID" not in words and "keep the pins" not in words
+    assert "defaults to a model that is not listed, set the alias variables to listed IDs" in words
     # A model with a dated and an undated id is shown by the shorter one.
-    assert guides._native_id_example([CHEAP]) == {"native_id": native(CHEAP), "model_id": CHEAP}
-    assert guides._native_id_example([OTHER, HIDDEN]) is None
+    assert guides._native_id_example([CHEAP, OPUS]) == {"native_id": native(CHEAP), "model_id": CHEAP}
+    assert guides._native_id_example([]) is None
+    # One model without an Anthropic id withholds the claim, wherever it is in the list.
+    assert guides._native_id_example([OPUS, OTHER]) is None
+    assert guides._native_id_example([OTHER, OPUS]) is None
 
-    # Opus served only by another host has no Anthropic id; the next alias is shown.
-    key = OPUS + "@anthropic/credits"
+    # A last alias that is served only by another host has no Anthropic id.
+    key = FABLE + "@anthropic/credits"
     direct = controlled_claude_catalog[key]
     controlled_claude_catalog[key] = replace(direct, provider="amazon-bedrock")
-    text = note()
-    assert text is not None and f"such as {native(SONNET)} ," in text and native(OPUS) not in text
+    assert routing.resolve_model_alias(native(FABLE)) == native(FABLE)
+    requires_pins()
     controlled_claude_catalog[key] = direct
+    assert note() is not None
 
-    # Two models claiming one id: the router resolves neither, so neither is shown.
+    # Two models claiming the Opus id: the router resolves neither.
     older = OLDER + "@anthropic/credits"
-    controlled_claude_catalog[older] = replace(controlled_claude_catalog[older], upstream_id=native(OPUS))
-    text = note()
+    shared = controlled_claude_catalog[older]
+    controlled_claude_catalog[older] = replace(shared, upstream_id=native(OPUS))
     assert routing.resolve_model_alias(native(OPUS)) == native(OPUS)
-    assert text is not None and f"such as {native(SONNET)} ," in text and native(OPUS) not in text
+    requires_pins()
+    controlled_claude_catalog[older] = shared
+    assert note() is not None
 
-    # No resolving id at all: the page goes back to requiring the pins.
+    # No resolving id at all.
     monkeypatch.setattr(guides, "native_model_id_targets", lambda: {})
-    guides._claude_code_context.cache_clear()
-    setup = page(client).select_one("#setup")
-    assert not setup.select("p[data-native-ids]")
-    words = setup.get_text(" ", strip=True)
-    assert "Then pin the models to listed IDs, which carry the anthropic/ prefix" in words
-    assert "whole setup" not in words and "either form" not in words
-    assert "or start with claude --model , and a listed ID." in words
-    assert setup.select_one('pre[data-example="pins"]')
+    requires_pins()
 
 
 @pytest.mark.parametrize("missing", ["all", "price", "opus", "all-prices", "all-opus"])
@@ -268,7 +281,8 @@ def test_copy_and_links(client: TestClient) -> None:
     assert f'href="{PATH}"' in client.get("/docs").text
     setup_page = BeautifulSoup(client.get("/docs/agent-setup").text, "html.parser")
     note = next(p for p in setup_page.select("p") if "default model IDs" in p.get_text())
-    assert "are accepted as sent" in note.get_text() and "pinned" not in note.get_text()
+    assert "are accepted for listed models that Anthropic serves directly" in note.get_text()
+    assert "pinned" not in note.get_text() and "as sent" not in note.get_text()
     assert "anthropic/" in note.get_text() and note.select_one(f'a[href="{PATH}"]')
     for path in ("/docs/agent-setup", "/pricing", "/docs/opencode", "/docs/cut-llm-api-costs"):
         other = BeautifulSoup(client.get(path).text, "html.parser")
@@ -286,8 +300,10 @@ def test_copy_and_links(client: TestClient) -> None:
     assert "ANTHROPIC_BASE_URL=https://api.trustedrouter.com without /v1" in answers[1]
     assert all("anthropic/ prefix" in answer and "ANTHROPIC_MODEL" in answer for answer in answers[:2])
     assert all(variable in answers[0] for _, variable in guides.CLAUDE_CODE_ALIAS_VARIABLES)
-    assert "default model IDs are accepted as sent" in answers[0] and "pin the" not in answers[0]
-    assert "No model variable is required" in answers[1] and "pin the" not in answers[1]
+    # The answers are fixed text, so they state the condition and hold in either page state.
+    assert "default model IDs are accepted for listed models that Anthropic serves directly" in answers[0]
+    assert "Anthropic's own ID for a listed model that Anthropic serves directly" in answers[1]
+    assert not any("pin the" in answer or "as sent" in answer or "No model variable" in answer for answer in answers)
     assert [variable for _, variable in guides.CLAUDE_CODE_ALIAS_VARIABLES] == [
         "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL",
