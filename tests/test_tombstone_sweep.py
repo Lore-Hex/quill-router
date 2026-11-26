@@ -17,7 +17,7 @@ import pytest
 from scripts import tombstone_sweep as sweep
 from scripts import tombstone_sweep_holds as sweep_holds
 from scripts.pricing import unserved_route_holds
-from trusted_router import unserved_route_hold_plan
+from trusted_router import provider_lifecycle, unserved_route_hold_plan
 from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HELD_AT_FIELD,
     UNSERVED_ROUTE_HOLD_COUNT_FIELD,
@@ -632,6 +632,31 @@ def test_a_hold_that_ran_out_and_was_not_lifted_yet_is_a_row_to_hold(tmp_path: P
         for _provider, model_id in set(ran_out) - set(routes):
             # Lifted by the step, not left on the hold that ran out.
             assert "routable_reason" not in rows[model_id], model_id
+
+
+def test_a_retired_row_is_not_swept_and_does_not_count_as_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row past its scheduled retirement stays marked routable but serves
+    nothing. The step holds none of those and does not count them, so the
+    sweep plans from the planner's own list of routes."""
+    retired = provider_lifecycle._Retirement(
+        provider="even", model_ids=frozenset({"maker/even-0", "maker/even-1", "maker/even-2"}),
+        upstream_ids=frozenset(), effective_at=_HOLD_NOW - timedelta(days=1),
+    )
+    monkeypatch.setattr(provider_lifecycle, "_RETIREMENTS", (*provider_lifecycle._RETIREMENTS, retired))
+
+    plan = sweep_holds.plan(_hold_fixture(tmp_path / "plan"), now=_HOLD_NOW)
+
+    planned = {route for routes in plan["slices"] for route in routes}
+    assert not {route for route in planned if route[0] == "even"}
+    # Its one remaining route is the provider's last, which the step never holds.
+    assert plan["never_held"] == [("even", "maker/even-3"), ("single", "maker/only")]
+    with pytest.raises(SystemExit, match="would not hold"):
+        sweep_holds.hold([("even", "maker/even-3")], _hold_fixture(tmp_path / "last"), now=_HOLD_NOW)
+    for index, routes in enumerate(plan["slices"]):
+        copy = _hold_fixture(tmp_path / f"slice{index}")
+        assert sweep_holds.hold(routes, copy, now=_HOLD_NOW)["held"] == sorted(routes)
 
 
 @pytest.mark.parametrize("routes", [

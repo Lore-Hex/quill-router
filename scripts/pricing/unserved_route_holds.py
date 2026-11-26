@@ -181,6 +181,7 @@ def apply_unserved_route_holds(
         [(path.stem, raw["models"]) for path, raw, _ in manifests],
         manifest_stems=manifest_stems,
         extra_held=frozen_held,
+        now=now,
     )
     notes.extend(plan_notes)
 
