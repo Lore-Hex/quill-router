@@ -50,6 +50,8 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "ibm-granite/granite-4.2-8b", "ibm-granite/granite-4.2-8b",
+         datetime(2026, 12, 3, tzinfo=UTC), "qwen/qwen3.5-9b"),
     Case("deepinfra", "nvidia/nemotron-content-safety-3.5", "nvidia/Nemotron-Content-Safety-3.5",
          datetime(2026, 11, 30, tzinfo=UTC), None),
     Case("deepinfra", "tencent/hy4-preview", "tencent/Hy4-preview",
