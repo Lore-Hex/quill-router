@@ -31,6 +31,28 @@ def test_prompt_caching_docs_state_routing_and_retention_limits(client: TestClie
     assert "Cache hits are not guaranteed" in response.text
 
 
+def test_prompt_caching_docs_state_cache_write_prices(client: TestClient) -> None:
+    from bs4 import BeautifulSoup
+
+    from trusted_router.pricing import (
+        _CACHE_WRITE_PRICE_MULTIPLIER,
+        CACHE_WRITE_1H_MULTIPLIER,
+    )
+
+    page = BeautifulSoup(client.get("/docs/prompt-caching").text, "html.parser")
+    paragraph = page.select_one("#cache-write-pricing")
+    assert paragraph is not None
+    text = " ".join(paragraph.get_text(" ", strip=True).split())
+    # The published multiples are the ones settlement applies.
+    assert f"charged at {_CACHE_WRITE_PRICE_MULTIPLIER['anthropic']} times the route's input price" in text
+    assert f"one-hour writes are charged at {CACHE_WRITE_1H_MULTIPLIER} times the route's input price" in text
+    assert '"cache_control": {"type": "ephemeral", "ttl": "1h"}' in text
+    routes = " ".join(paragraph.find_next_sibling("p").get_text(" ", strip=True).split())
+    assert "served on the direct Anthropic route" in routes
+    assert "Amazon Bedrock and Google Vertex routes take only the five-minute lifetime" in routes
+    assert '"provider": {"only": ["anthropic"]}' in routes
+
+
 def test_prompt_caching_docs_are_discoverable(client: TestClient) -> None:
     assert 'href="/docs/prompt-caching"' in client.get("/docs").text
     assert "/docs/prompt-caching" in client.get("/llms.txt").text

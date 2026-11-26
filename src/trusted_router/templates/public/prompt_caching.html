@@ -64,6 +64,8 @@ print(details.cached_tokens if details else 0)</code></pre>
     <h2>Set an explicit cache breakpoint.</h2>
     <p>On <code>POST /v1/messages</code>, TrustedRouter preserves Anthropic content blocks and their <code>cache_control</code> values through the attested gateway. Put the breakpoint on the last block of the stable prefix.</p>
     <p>The first request can include a cache creation charge. Repeated reads are normally cheaper. Check the returned usage rather than assuming every request hit.</p>
+    <p id="cache-write-pricing">A cache write lasts five minutes by default and is charged at 1.25 times the route's input price. To keep a prefix for an hour, set <code>"cache_control": {"type": "ephemeral", "ttl": "1h"}</code> on the breakpoint; one-hour writes are charged at 2 times the route's input price. Cache reads are charged at the route's cache read price for either lifetime. On a model with long-prompt price tiers, the input price is the one for the request's tier.</p>
+    <p>The one-hour lifetime is served on the direct Anthropic route. The Amazon Bedrock and Google Vertex routes take only the five-minute lifetime and answer another <code>ttl</code> with a <code>400</code>, so send <code>"provider": {"only": ["anthropic"]}</code> with a request that needs it.</p>
     <p><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching" rel="nofollow">Anthropic prompt caching reference</a></p>
   </div>
   <div class="copy-terminal">
