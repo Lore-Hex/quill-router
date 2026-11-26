@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-26T10:04:45Z",
+  "generated_at": "2026-11-26T13:09:25Z",
   "model_count": 188,
   "models": [
     {
@@ -55,7 +55,9 @@
       ],
       "status": 1,
       "upstream_id": "baichuan/baichuan-m2-32b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "baidu/ernie-4.5-21B-a3b",
@@ -376,7 +378,8 @@
         "completions"
       ],
       "status": 1,
-      "upstream_id": "deepseek/deepseek-r1-0528-qwen3-8b"
+      "upstream_id": "deepseek/deepseek-r1-0528-qwen3-8b",
+      "missing_since": "2026-11-26"
     },
     {
       "id": "deepseek/deepseek-r1-distill-llama-70b",
@@ -489,7 +492,8 @@
         "completions"
       ],
       "status": 1,
-      "upstream_id": "deepseek/deepseek-r1-turbo"
+      "upstream_id": "deepseek/deepseek-r1-turbo",
+      "missing_since": "2026-11-26"
     },
     {
       "id": "deepseek/deepseek-v3-0324",
@@ -809,7 +813,9 @@
       ],
       "status": 1,
       "upstream_id": "google/gemma-3-12b-it",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "google/gemma-3-27b-it",
@@ -919,7 +925,9 @@
       ],
       "status": 1,
       "upstream_id": "gryphe/mythomax-l2-13b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "inclusionai/ling-2.6-1t",
@@ -1245,7 +1253,9 @@
       ],
       "status": 1,
       "upstream_id": "meta-llama/llama-4-scout-17b-16e-instruct",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "microsoft/wizardlm-2-8x22b",
@@ -1273,7 +1283,9 @@
       ],
       "status": 1,
       "upstream_id": "microsoft/wizardlm-2-8x22b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "minimax/minimax-m2",
@@ -1704,7 +1716,9 @@
       ],
       "status": 1,
       "upstream_id": "nousresearch/hermes-2-pro-llama-3-8b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -1793,7 +1807,9 @@
       ],
       "status": 1,
       "upstream_id": "paddlepaddle/paddleocr-vl",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen-2.5-72b-instruct",
@@ -2743,7 +2759,9 @@
       ],
       "status": 1,
       "upstream_id": "sao10k/l3-70b-euryale-v2.1",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "sao10k/l3-8b-lunaris",
