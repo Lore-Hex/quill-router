@@ -405,6 +405,24 @@ def _cents(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _shown_price_date(times: list[Any], stamp: str, stamps: set[str]) -> Any:
+    """The one ``<time>`` among ``times`` that shows a manifest stamp.
+
+    The page groups the stamps by the minute it displays and gives a group
+    its earliest stamp. One refresh writes the provider manifests a second or
+    so apart, so a manifest's own stamp is the element's ``datetime`` only
+    when no other manifest in ``stamps`` was written earlier in that minute.
+    """
+    def label(value: str) -> str:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%B %-d, %Y, %H:%M UTC")
+
+    assert stamp in stamps
+    shown = [node for node in times if node.get_text() == label(stamp)]
+    assert len(shown) == 1
+    assert shown[0]["datetime"] == min(other for other in stamps if label(other) == label(stamp))
+    return shown[0]
+
+
 def _shown(soup: Any, name: str) -> Decimal:
     node = soup.select_one(f"[data-{name}]")
     if name in {
@@ -444,6 +462,7 @@ def test_worked_costs_match_catalog_and_rounding(client: TestClient) -> None:
     ]
     totals = {}
     provider_totals = {}
+    stamps = {guides._manifest(row["data-provider"])["generated_at"] for row in rows}
     for row in rows:
         model_id, provider = row["data-model"], row["data-provider"]
         manifest = guides._manifest(provider)
@@ -451,10 +470,7 @@ def test_worked_costs_match_catalog_and_rounding(client: TestClient) -> None:
         source = next((tier for tier in source.get("price_tiers", [])
                        if tier["max_prompt_tokens"] is None or inputs <= tier["max_prompt_tokens"]), source)
         assert row["data-as-of"] == manifest["generated_at"]
-        stamp = manifest["generated_at"]
-        date = soup.select_one(f'[data-price-dates] time[datetime="{stamp}"]')
-        assert date.get_text() == datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%B %-d, %Y, %H:%M UTC")
-        assert len(soup.select(f'[data-price-dates] time[datetime="{stamp}"]')) == 1
+        _shown_price_date(soup.select("[data-price-dates] time"), manifest["generated_at"], stamps)
         assert row.select_one("a").get_text() == guides.MODELS[model_id].name.split(": ", 1)[-1]
         assert f"on {PROVIDERS[provider].name}" in row.get_text()
         assert _decimal(row, "provider-input") == Decimal(source["input_token_price_per_m"]) / 1_000_000
@@ -528,17 +544,14 @@ def test_route_prices_and_cache_savings_follow_catalog(client: TestClient) -> No
         soup = BeautifulSoup(client.get(path).text, "html.parser")
         for block in soup.select("[data-route-count]"):
             low, high = amounts[0], amounts[-1]
+            stamps = {guides._manifest(route[1])["generated_at"] for route in (low, high)}
             assert int(block["data-route-count"]) == len(endpoints)
             for which, route in (("low", low), ("high", high)):
                 assert _shown(soup, f"route-{which}-input") == route[2]
                 assert _shown(soup, f"route-{which}-output") == route[3]
                 assert block[f"data-{which}-provider"] == route[1]
                 assert PROVIDERS[route[1]].name in block.get_text()
-                manifest = guides._manifest(route[1])
-                stamp = manifest["generated_at"]
-                dates = block.select(f'time[datetime="{stamp}"]')
-                assert len(dates) == 1
-                assert dates[0].get_text() == datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%B %-d, %Y, %H:%M UTC")
+                _shown_price_date(block.select("time"), guides._manifest(route[1])["generated_at"], stamps)
     savings = BeautifulSoup(client.get(PAGES[3]).text, "html.parser")
     for percent in savings.select("[data-route-saving-percent]"):
         lever = percent.find_parent("tr")
@@ -688,6 +701,14 @@ def test_a_late_openai_manifest_never_reads_as_a_model_name(
     caption = soup.select_one("[data-price-dates]").get_text()
     assert not re.search(r"\b(?:Anthropic|OpenAI|DeepSeek): ", caption)
     assert ("OpenAI prices collected" in caption) == (seconds_later >= 60)
+    # What the catalog-following tests read: each manifest's stamp is shown
+    # once, by its own element only when it does not share an earlier one's minute.
+    times = soup.select("[data-price-dates] time")
+    stamps = {base.strftime("%Y-%m-%dT%H:%M:%SZ"), late}
+    assert len(times) == 1 + (seconds_later >= 60)
+    for stamp in stamps:
+        _shown_price_date(times, stamp, stamps)
+    assert bool(soup.select(f'[data-price-dates] time[datetime="{late}"]')) == (seconds_later >= 60)
 
 
 @pytest.mark.parametrize("path", [PAGES[0], PAGES[2]])
