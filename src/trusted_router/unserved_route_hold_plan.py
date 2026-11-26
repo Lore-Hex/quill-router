@@ -161,6 +161,15 @@ def _live(stem: str, row: dict[str, Any], now: datetime) -> bool:
     )
 
 
+def live_route_ids(stem: str, rows: Iterable[Any], *, now: datetime) -> list[str]:
+    """The provider's routes at ``now``, in manifest order: the rows the
+    planner may hold and counts as served."""
+    return list(dict.fromkeys(
+        row["id"] for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and _live(stem, row, now)
+    ))
+
+
 def _held(row: Any) -> bool:
     return isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
 

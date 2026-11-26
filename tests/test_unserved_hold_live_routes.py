@@ -180,6 +180,30 @@ def test_every_scheduled_retirement_is_seen_by_the_planner() -> None:
     assert checked
 
 
+def test_the_planners_route_list_is_what_it_holds_from(tmp_path: Path, retire) -> None:
+    rows = [
+        _row("vendor/old"), _row("vendor/a"), _row("vendor/dark", routable=False),
+        _row("vendor/b"), _row("vendor/a"), "not a row", {"no": "id"}, _row("vendor/c"), _row("vendor/d"),
+    ]
+    retire("vendor/old")
+
+    ids = planner.live_route_ids(PROVIDER, rows, now=NOW)
+
+    assert ids == ["vendor/a", "vendor/b", "vendor/c", "vendor/d"]
+    assert planner.live_route_ids(PROVIDER, rows, now=RETIRED_AT - timedelta(seconds=1))[0] == "vendor/old"
+    # Every listed route can be held, in halves; nothing outside the list can.
+    for half in (ids[:2], ids[2:]):
+        planned, _notes = planner.plan_unserved_route_holds(
+            {(PROVIDER, model) for model in half}, [(PROVIDER, rows)], manifest_stems=[PROVIDER], now=NOW,
+        )
+        assert sorted(row["id"] for _index, row in planned) == half
+    planned, _notes = planner.plan_unserved_route_holds(
+        {(PROVIDER, "vendor/old"), (PROVIDER, "vendor/dark")}, [(PROVIDER, rows)],
+        manifest_stems=[PROVIDER], now=NOW,
+    )
+    assert planned == []
+
+
 def test_a_row_that_is_not_routable_is_not_live_whatever_the_registry_says() -> None:
     assert not planner._live(PROVIDER, _row("vendor/dark", routable=False), NOW)
     assert planner._live(PROVIDER, _row("vendor/lit"), NOW)

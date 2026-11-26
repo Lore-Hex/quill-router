@@ -63,13 +63,13 @@ def _held(manifest_dir: Path, now: datetime) -> set[Route]:
     return planner.applied_unserved_route_holds(manifest_dir=manifest_dir, now=now)
 
 
-def _most_held_at_once(provider: str, rows: list[Any], ids: list[str]) -> int:
-    """How many of the provider's routable rows the step's planner will hold in
-    one run. The planner is asked; its rule is not repeated here."""
+def _most_held_at_once(provider: str, rows: list[Any], ids: list[str], now: datetime) -> int:
+    """How many of the provider's routes the step's planner will hold in one
+    run. The planner is asked; its rule is not repeated here."""
     for count in range(len(ids) - 1, 0, -1):
         evidence = {(provider, model_id) for model_id in ids[:count]}
         planned, _notes = planner.plan_unserved_route_holds(
-            evidence, [(provider, rows)], manifest_stems=[provider],
+            evidence, [(provider, rows)], manifest_stems=[provider], now=now,
         )
         if len(planned) == count:
             return count
@@ -82,7 +82,8 @@ def plan(manifest_dir: Path, *, now: datetime | None = None) -> dict[str, Any]:
     Each provider's routable rows are cut, in manifest order, into the fewest
     runs its planner accepts; slice k is every provider's k-th cut. A provider
     the step can hold nothing of (its last routable row) is listed apart. The
-    rows are judged as the step sees them, after it lifts its expired holds.
+    rows are judged as the step sees them: after it lifts its expired holds,
+    and without the rows a scheduled retirement has already stopped.
     """
     now = now or datetime.now(UTC)
     slices: list[list[Route]] = []
@@ -90,12 +91,11 @@ def plan(manifest_dir: Path, *, now: datetime | None = None) -> dict[str, Any]:
     with _total_route_cap_lifted():
         for provider, rows in _manifests(manifest_dir):
             planner.lift_expired_unserved_holds(rows, now=now)
-            ids = list(dict.fromkeys(
-                row["id"] for row in rows
-                if isinstance(row, dict) and isinstance(row.get("id"), str)
-                and row.get("routable") is not False
-            ))
-            size = _most_held_at_once(provider, rows, ids)
+            # The planner's own list: a row past its scheduled retirement is
+            # still marked routable but is not a route, so the step holds none
+            # of those and they are not rows to sweep.
+            ids = planner.live_route_ids(provider, rows, now=now)
+            size = _most_held_at_once(provider, rows, ids, now)
             if not size:
                 never.extend((provider, model_id) for model_id in ids)
                 continue
