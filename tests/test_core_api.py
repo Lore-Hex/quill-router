@@ -101,11 +101,15 @@ def _a_model_on_a_byok_route(monkeypatch: pytest.MonkeyPatch) -> None:
     was one host's; that host delisting it (2026-11-26) turned "limit reached"
     into "no route". The model here exists only in this fixture: $1/M input
     and $3/M output, 1 and 3 microdollars a token. Its route is priced apart
-    from it, so usage billed at the route's price would not add up."""
+    from it, so usage billed at the route's price would not add up. It is
+    marked as sold prepaid too, as Llama 3.1 8B is: a request for a model
+    with no prepaid side is bring-your-own-key whatever it asks for, and
+    these tests are about the request's own "usage": "byok" being honoured."""
     serve_on_fixture_route(
         monkeypatch, KEY_LIMIT_MODEL, "deepinfra", author="deepinfra", usage_type="BYOK",
         model=Model(
             id=KEY_LIMIT_MODEL, name="Fixture Key Limit", provider="deepinfra", context_length=131_072,
+            prepaid_available=True,
             prompt_price_microdollars_per_million_tokens=1_000_000,
             completion_price_microdollars_per_million_tokens=3_000_000,
             published_prompt_price_microdollars_per_million_tokens=1_000_000,
