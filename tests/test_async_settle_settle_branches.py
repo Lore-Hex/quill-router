@@ -72,10 +72,15 @@ ASYNC_ROUTES = ("chat.completions", "responses", "decide")
 # How a pricing statement or an input is covered, when not by a requested fact.
 PLAIN = "the plain endpoint formula, or an input every ordinary request has"
 REFUND = "a refund is free in both paths"
-# An input no async-v1 settlement can carry: the async usage contract
-# (billing_snapshot.RawUsage) refuses any field it does not name, so a request
-# that has this input can only be settled synchronously, where it is priced.
-# With the input absent or zero the statement is the plain formula.
+# An input no async-v1 settlement body can carry: the async usage contract
+# (billing_snapshot.RawUsage) refuses any field it does not name. That is a
+# fact about a settle body, not about a request. A gateway that settles a
+# request with one-hour cache writes asynchronously, leaving the count out,
+# is booked at the five-minute rate: an undercharge, as before this input
+# existed, and never an overcharge or a refusal. Nothing in this repository
+# enforces that the gateway settles such a request synchronously; the gateway
+# does (quill-cloud-proxy, buildAsyncSettlement). With the input absent or
+# zero the statement is the plain formula.
 SYNC_ONLY = "an input the async usage contract has no field for"
 IDENTITY = "identity or bookkeeping, never a price"
 

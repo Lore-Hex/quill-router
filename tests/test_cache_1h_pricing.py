@@ -132,6 +132,12 @@ def test_priority_uses_its_customer_input_rate(monkeypatch: pytest.MonkeyPatch) 
         cache_creation_tokens=2000, cache_creation_1h_tokens=800, service_tier="priority") == 28 + 36 + 20 + 3000 + 3200
     assert endpoint_cost_microdollars(endpoint, 14, 6, cache_read_tokens=100,
         cache_creation_tokens=2000, service_tier="priority") == 28 + 36 + 20 + 5000
+    # The priority formula bounds the count itself: above the total it is the
+    # total (all 2000 writes at twice the $2/M input rate), below zero it is zero.
+    assert endpoint_cost_microdollars(endpoint, 14, 6, cache_read_tokens=100,
+        cache_creation_tokens=2000, cache_creation_1h_tokens=3000, service_tier="priority") == 28 + 36 + 20 + 8000
+    assert endpoint_cost_microdollars(endpoint, 14, 6, cache_read_tokens=100,
+        cache_creation_tokens=2000, cache_creation_1h_tokens=-5, service_tier="priority") == 28 + 36 + 20 + 5000
 
 
 def test_async_usage_contract_stays_closed_to_hour_count() -> None:
