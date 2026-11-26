@@ -79,8 +79,9 @@ REFUND = "a refund is free in both paths"
 # is booked at the five-minute rate: an undercharge, as before this input
 # existed, and never an overcharge or a refusal. Nothing in this repository
 # enforces that the gateway settles such a request synchronously; the gateway
-# does (quill-cloud-proxy, buildAsyncSettlement). With the input absent or
-# zero the statement is the plain formula.
+# does once it sends the count at all (quill-cloud-proxy#904,
+# buildAsyncSettlement). With the input absent or zero the statement is the
+# plain formula.
 SYNC_ONLY = "an input the async usage contract has no field for"
 IDENTITY = "identity or bookkeeping, never a price"
 

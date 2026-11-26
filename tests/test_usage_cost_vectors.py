@@ -11,7 +11,7 @@ from trusted_router.stage_d import endpoint_cost_microdollars_from_candidate
 def test_reporting_vectors_are_generated_by_the_charge_implementation() -> None:
     assert DESTINATION.read_bytes() == render().encode()
     cases = json.loads(DESTINATION.read_text())
-    assert len(cases) == 38
+    assert len(cases) == 40
     for case in cases:
         usage = dict(case["usage"])
         if "cache_creation_1h_input_tokens" in usage:

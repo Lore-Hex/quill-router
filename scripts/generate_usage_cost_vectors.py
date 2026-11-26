@@ -77,6 +77,11 @@ def vectors() -> list[dict[str, Any]]:
         add(f"cache-1h-tier-{count}", tiers=tiers, i=count - 20, w=20, h=10, o=7)
     add("cache-1h-private-tier", tiers=tiers, i=90, r=8, w=3, h=2, o=7, tier=100)
     add("cache-1h-rounding", selected_rates=rates(1, 1, 1, 1), w=500_000, h=1, fee=7)
+    # A one-hour write whose own term rounds to nothing is still a positive
+    # charge, at the minimum, even where five-minute writes are free.
+    add("cache-1h-minimum-charge", selected_rates=rates(1, 0, 0, 0), w=1, h=1)
+    # Twice this input rate does not fit in a signed 64-bit integer.
+    add("cache-1h-large-rate", selected_rates=rates(2**62 + 1, 0, 0, 0), w=3, h=3)
     return cases
 
 

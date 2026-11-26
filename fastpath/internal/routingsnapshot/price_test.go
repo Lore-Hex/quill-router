@@ -40,7 +40,7 @@ func TestThePricingCoreComputesWhatPythonCharges(t *testing.T) {
 	if err := decoder.Decode(&vectors); err != nil {
 		t.Fatal(err)
 	}
-	if len(vectors) != 38 {
+	if len(vectors) != 40 {
 		t.Fatalf("%d vectors", len(vectors))
 	}
 	tiered, hourly := 0, 0

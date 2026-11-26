@@ -1119,5 +1119,55 @@
       "output_tokens": 0,
       "price_tier_input_tokens": 0
     }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 0,
+        "cached_input_micro_per_million": 0,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 0
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "cache-1h-minimum-charge",
+    "usage": {
+      "cache_creation_1h_input_tokens": 1,
+      "cache_creation_tokens": 1,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 0,
+        "cached_input_micro_per_million": 0,
+        "input_micro_per_million": 4611686018427387905,
+        "output_micro_per_million": 0
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 27670116110564,
+    "name": "cache-1h-large-rate",
+    "usage": {
+      "cache_creation_1h_input_tokens": 3,
+      "cache_creation_tokens": 3,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
   }
 ]
