@@ -77,8 +77,10 @@ def test_prompt_caching_docs_state_cache_write_prices(client: TestClient) -> Non
     scope = words("#cache-write-scope")
     assert "cache_control on Chat Completions content parts for Claude models" in scope
     assert "They apply on the GCP API hosts: the default https://api.trustedrouter.com/v1 and the EU regional host." in scope
-    assert ("The AWS and Azure hosts do not yet price or check the one-hour lifetime "
+    # Those hosts already refuse a longer ttl on Bedrock and Vertex; only the price differs.
+    assert ("The AWS and Azure hosts do not yet price the one-hour lifetime separately "
             "and charge every cache write at the five-minute rate.") in scope
+    assert "check" not in scope
 
 
 def test_prompt_caching_docs_are_discoverable(client: TestClient) -> None:
