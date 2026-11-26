@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-11-26T21:28:39Z",
+  "generated_at": "2026-11-26T23:28:43Z",
   "price_scale": "microdollars_per_million",
   "model_count": 42,
   "models": [
@@ -203,10 +203,13 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-11b-vision-instruct",
       "upstream_id": "@cf/meta/llama-3.2-11b-vision-instruct",
-      "routable": true,
+      "routable": false,
       "context_length": 128000,
       "input_token_price_per_m": 48500,
-      "output_token_price_per_m": 676000
+      "output_token_price_per_m": 676000,
+      "routable_reason": "provider-route-unserved",
+      "unserved_held_at": "2026-11-26T23:28:44Z",
+      "unserved_hold_count": 1
     },
     {
       "display_name": "@cf/meta/llama-3.2-1b-instruct",
