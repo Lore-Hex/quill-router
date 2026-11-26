@@ -172,6 +172,7 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "attribution_cookie_key": _ATTRIBUTION_KEY,
     "attribution_cookie_secret": _ATTRIBUTION_SECRET,
     "internal_gateway_token": _GATEWAY_SECRET,
+    "managed_key_funding_token": "test-funding-reader-only",
     "operator_token": _OPERATOR_SECRET,
     "observer_internal_token": "observer-only-" + "o" * 32,
     "stripe_webhook_secret": "whsec-test",
@@ -286,7 +287,7 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     ),
     (
         frozenset({"internal"}),
-        ("internal_gateway_token", "operator_token", "stage_d_probe_api_key", "async_settle_shadow_probe_api_key"),
+        ("internal_gateway_token", "managed_key_funding_token", "operator_token", "stage_d_probe_api_key", "async_settle_shadow_probe_api_key"),
     ),
     (
         frozenset({"internal", "observer"}),

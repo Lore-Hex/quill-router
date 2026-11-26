@@ -83,6 +83,7 @@ from trusted_router.routes.internal import (
     register_operator_internal_routes,
     register_routing_snapshot_routes,
 )
+from trusted_router.routes.internal.gateway import register_managed_key_funding_routes
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.mcp import register_mcp_routes
 from trusted_router.routes.mcp_advisor import register_advisor_mcp_routes
@@ -994,6 +995,14 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_observer_internal_routes(router)
     if surface in {"combined", "internal"} and settings.operator_token:
         register_operator_internal_routes(router)
+    if (
+        surface in {"combined", "internal"}
+        and settings.managed_key_generations
+        and settings.managed_key_receipt_public_key
+        and settings.managed_key_receipt_audience
+        and settings.managed_key_funding_token
+    ):
+        register_managed_key_funding_routes(router)
     if surface in {"combined", "internal"} and settings.routing_snapshot_publish_enabled:
         register_routing_snapshot_routes(router)
     if surface in {"combined", "internal"} and settings.edge_policy_publish_enabled:

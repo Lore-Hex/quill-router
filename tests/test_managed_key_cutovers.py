@@ -5,8 +5,11 @@ import time
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
 
+from tests.route_inventory import route_paths
 from trusted_router.config import Settings
+from trusted_router.main import create_app
 from trusted_router.services import managed_key_cutovers as cut
 from trusted_router.storage import InMemoryStore
 
@@ -121,13 +124,14 @@ def test_store_failure_never_means_primary(enrolled, monkeypatch):
     }
 
 
-def test_internal_event_requires_dedicated_token_and_signature(client, test_settings, enrolled):
+def test_internal_event_requires_dedicated_token_and_signature(test_settings, enrolled):
     cfg, _, key = enrolled
     test_settings.managed_key_generations = cfg.managed_key_generations
     test_settings.managed_key_receipt_public_key = cfg.managed_key_receipt_public_key
     test_settings.managed_key_receipt_audience = cfg.managed_key_receipt_audience
     test_settings.internal_gateway_token = secrets.token_hex(16)
     test_settings.managed_key_funding_token = secrets.token_hex(16)
+    client = TestClient(create_app(test_settings, init_observability=False))
     url = "/v1/internal/gateway/managed-key-funding-event"
     receipt = delivery(key).model_dump()
     assert client.post(url, json=receipt).status_code == 401
@@ -145,3 +149,22 @@ def test_internal_event_requires_dedicated_token_and_signature(client, test_sett
         "provider": "fal",
         "generation": "a" * 64,
     }
+
+
+@pytest.mark.parametrize("surface", ["combined", "internal", "public", "control", "observer"])
+def test_funding_route_only_on_enrolled_authorities(surface, enrolled):
+    cfg, _, _ = enrolled
+    cfg.service_surface = surface
+    path = "/v1/internal/gateway/managed-key-funding-event"
+    for configured in (False, True):
+        cfg.managed_key_funding_token = secrets.token_hex(16) if configured else None
+        app = create_app(cfg, configure_store_arg=False, init_observability=False)
+        assert (path in route_paths(app)) == (
+            configured and surface in {"combined", "internal"}
+        )
+
+
+def test_funding_token_must_not_share_gateway_authority():
+    token = secrets.token_hex(16)
+    with pytest.raises(ValueError, match="TR_INTERNAL_GATEWAY_TOKEN"):
+        Settings(internal_gateway_token=token, managed_key_funding_token=token)

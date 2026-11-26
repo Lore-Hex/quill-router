@@ -279,6 +279,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "attribution_cookie_key": frozenset({"public", "control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),
     "internal_gateway_token": frozenset({"internal"}),
+    "managed_key_funding_token": frozenset({"internal"}),
     "operator_token": frozenset({"internal"}),
     # Internal owns this only for synthetic/Sentry routes; its billing routes
     # still select internal_gateway_token by path.
@@ -2356,6 +2357,13 @@ class Settings(BaseSettings):
         settlement_tokens = parse_settlement_inbound_tokens(
             self.federation_settlement_inbound_tokens
         )
+        if self.managed_key_funding_token:
+            for name in operator_credential_setting_names(type(self)) - {"managed_key_funding_token"}:
+                value = getattr(self, name)
+                if isinstance(value, str) and value == self.managed_key_funding_token:
+                    raise ValueError(f"TR_MANAGED_KEY_FUNDING_TOKEN must differ from TR_{name.upper()}")
+            if self.managed_key_funding_token in settlement_tokens:
+                raise ValueError("TR_MANAGED_KEY_FUNDING_TOKEN must differ from settlement credentials")
         if self.operator_token:
             for field_name in sorted(operator_credential_setting_names(type(self))):
                 raw_value = getattr(self, field_name)

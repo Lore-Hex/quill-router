@@ -2567,6 +2567,19 @@ def _gateway_key_info_sync(
     return {"data": self_key_shape(api_key)}
 
 
+def register_managed_key_funding_routes(router: APIRouter) -> None:
+    @router.post("/internal/gateway/managed-key-funding-event")
+    async def managed_key_funding_event(
+        request: Request, body: managed_key_cutovers.Delivery, settings: SettingsDep,
+    ) -> dict[str, str | bool]:
+        require_internal_gateway(request, settings)
+        try:
+            provider, generation = await run_in_threadpool(managed_key_cutovers.accept, settings, STORE, body)
+        except ValueError:
+            raise api_error(403, "Funding event not accepted", ErrorType.FORBIDDEN) from None
+        return {"accepted": True, "provider": provider, "generation": generation}
+
+
 def register(router: APIRouter) -> None:
     # Every handler below does synchronous storage IO. They run it via
     # run_in_threadpool so a slow/contended transaction on one request never
@@ -2611,17 +2624,6 @@ def register(router: APIRouter) -> None:
             if cutovers:
                 reply = {**reply, "data": {**reply["data"], "managed_key_cutovers": cutovers}}
         return reply
-
-    @router.post("/internal/gateway/managed-key-funding-event")
-    async def managed_key_funding_event(
-        request: Request, body: managed_key_cutovers.Delivery, settings: SettingsDep,
-    ) -> dict[str, str | bool]:
-        require_internal_gateway(request, settings)
-        try:
-            provider, generation = await run_in_threadpool(managed_key_cutovers.accept, settings, STORE, body)
-        except ValueError:
-            raise api_error(403, "Funding event not accepted", ErrorType.FORBIDDEN) from None
-        return {"accepted": True, "provider": provider, "generation": generation}
 
     @router.post("/internal/gateway/heartbeat")
     async def gateway_heartbeat(
