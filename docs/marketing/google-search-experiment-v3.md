@@ -89,25 +89,10 @@ uv run python scripts/marketing_funnel_report.py \
 
 ## Spend And Revenue
 
-Google Ads reporting is queried at day, campaign, ad group, and ad ID. Static
-final URL attribution maps cost in integer microdollars to the exact experiment
-cell. Filtering a funnel report also filters native spend to matching campaign,
-creative, or experiment IDs. A server-side landing split cannot know the exact
-cost of each individual click, so it reports campaign spend rather than
-inventing per-cell cost.
-
-Native spend requires these operator settings:
-
-```text
-TR_GOOGLE_ADS_REPORTING_CUSTOMER_ID
-TR_GOOGLE_ADS_DEVELOPER_TOKEN
-TR_GOOGLE_ADS_REPORTING_LOGIN_CUSTOMER_ID  # only for a manager account
-TR_GOOGLE_ADS_REPORTING_TIME_ZONE
-```
-
-The current private key file does not contain the customer ID or developer
-token. Until they are configured, CAC and ROAS remain withheld. First-party
-activation and purchase attribution still works.
+The funnel measures activation, settled purchases, and revenue from first-party
+events. It does not fetch campaign spend or impressions from Google Ads. Use a
+separate cost source before making budget decisions; the funnel does not report
+CAC or ROAS.
 
 ## Decision Rules
 
@@ -115,9 +100,8 @@ activation and purchase attribution still works.
 - Primary business metric: settled purchasers and revenue per mature engaged visitor.
 - Report 95% Wilson intervals for activation and purchase rates; a point estimate
   from a small cell is never treated as a winner.
-- Cost metric: integer-microdollar CAC by exact ad cell when native spend is available.
 - Guardrails: page errors, signup completion, and first-request success.
-- Break ties by purchaser rate, activation rate, then activation CAC.
+- Compare purchaser rate and activation rate; do not use the funnel to break cost ties.
 - Never choose a winner from CTR alone.
 - Never compare an immature cohort with a mature cohort as if exposure were equal.
 - Never infer an individual headline winner from a mixed responsive-search ad.

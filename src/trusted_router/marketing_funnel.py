@@ -14,13 +14,9 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
 from trusted_router.ai_referrals import ai_referral_platform
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
-
-if TYPE_CHECKING:
-    from trusted_router.google_ads_reporting import GoogleAdsSpendReport
 
 FUNNEL_EVENTS = (
     "acquisition.landing_engaged",
@@ -182,10 +178,6 @@ class AcquisitionMeasurementSummary:
     google_ads_persisted_signups: int
     google_ads_persisted_activated_users: int
     google_ads_persisted_purchasers: int
-    spend_microdollars: int | None
-    spend_currency_code: str | None
-    ad_impressions: int | None
-    ad_clicks: int | None
     blockers: tuple[str, ...]
 
     @property
@@ -210,23 +202,15 @@ class AcquisitionMeasurementSummary:
             "google_ads_persisted_signups": self.google_ads_persisted_signups,
             "google_ads_persisted_activated_users": self.google_ads_persisted_activated_users,
             "google_ads_persisted_purchasers": self.google_ads_persisted_purchasers,
-            "spend_microdollars": self.spend_microdollars,
-            "spend_currency_code": self.spend_currency_code,
-            "ad_impressions": self.ad_impressions,
-            "ad_clicks": self.ad_clicks,
-            "signup_cac_microdollars": _cost_per_outcome(
-                self.spend_microdollars,
-                self.signups,
-            ),
-            "activation_cac_microdollars": _cost_per_outcome(
-                self.spend_microdollars,
-                self.activated_users,
-            ),
-            "purchase_cac_microdollars": _cost_per_outcome(
-                self.spend_microdollars,
-                self.purchasers,
-            ),
-            "roas": _ratio(self.revenue_microdollars, self.spend_microdollars),
+            # Keep the report schema stable. Unobserved spend is not zero.
+            "spend_microdollars": None,
+            "spend_currency_code": None,
+            "ad_impressions": None,
+            "ad_clicks": None,
+            "signup_cac_microdollars": None,
+            "activation_cac_microdollars": None,
+            "purchase_cac_microdollars": None,
+            "roas": None,
         }
 
 
@@ -636,8 +620,6 @@ def summarize_measurement(
     rows: Iterable[FunnelRow],
     *,
     source: str | None,
-    spend: GoogleAdsSpendReport | None,
-    spend_error: str | None = None,
 ) -> AcquisitionMeasurementSummary:
     materialized = tuple(rows)
     totals = {
@@ -666,29 +648,13 @@ def summarize_measurement(
             blockers.append("google_click_ids_missing")
         if totals["google_ads_click_signups"] > totals["google_ads_persisted_signups"]:
             blockers.append("google_click_ids_not_persisted")
-        if spend is None:
-            blockers.append(spend_error or "native_spend_unavailable")
-        elif spend.currency_code != "USD":
-            blockers.append("spend_currency_not_usd")
-        elif spend.spend_microdollars > 0 and totals["purchasers"] == 0:
-            blockers.append("no_purchases_in_window")
-    return AcquisitionMeasurementSummary(
-        **totals,
-        spend_microdollars=spend.spend_microdollars if spend else None,
-        spend_currency_code=spend.currency_code if spend else None,
-        ad_impressions=spend.impressions if spend else None,
-        ad_clicks=spend.clicks if spend else None,
-        blockers=tuple(dict.fromkeys(blockers)),
-    )
+    if is_google:
+        blockers.append("native_spend_not_collected")
+    return AcquisitionMeasurementSummary(**totals, blockers=tuple(blockers))
 
 
 def render_measurement_markdown(summary: AcquisitionMeasurementSummary) -> str:
     decision = "HOLD" if summary.hold_scale else "READY"
-    spend = (
-        f"${microdollars_to_usd(summary.spend_microdollars)}"
-        if summary.spend_microdollars is not None
-        else "unavailable"
-    )
     blockers = ", ".join(summary.blockers) if summary.blockers else "none"
     return (
         f"**Scale decision:** {decision}\n\n"
@@ -699,7 +665,7 @@ def render_measurement_markdown(summary: AcquisitionMeasurementSummary) -> str:
         f"**Google click evidence:** {summary.google_ads_click_engaged_visitors} of "
         f"{summary.engaged_visitors} engaged visitors; "
         f"{summary.google_ads_persisted_signups} of {summary.google_ads_click_signups} "
-        f"click-backed signups persisted | **Spend:** {spend} | "
+        f"click-backed signups persisted | **Spend:** not collected | "
         f"**Blockers:** {blockers}\n\n"
     )
 
@@ -793,18 +759,6 @@ def experiment_state(row: FunnelRow) -> str:
 def microdollars_to_usd(value: int) -> str:
     amount = Decimal(value) / Decimal(MICRODOLLARS_PER_DOLLAR)
     return f"{amount.quantize(Decimal('0.000001'))}"
-
-
-def _cost_per_outcome(spend_microdollars: int | None, outcomes: int) -> int | None:
-    if spend_microdollars is None or outcomes <= 0:
-        return None
-    return (spend_microdollars + outcomes // 2) // outcomes
-
-
-def _ratio(numerator: int, denominator: int | None) -> str | None:
-    if denominator is None or denominator <= 0:
-        return None
-    return str((Decimal(numerator) / Decimal(denominator)).quantize(Decimal("0.0001")))
 
 
 def _dimension(value: object, fallback: str) -> str:

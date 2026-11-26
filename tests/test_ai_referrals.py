@@ -65,7 +65,6 @@ def test_guides_have_reciprocal_discovery_links_and_qualified_offer(client: Test
 
 
 def test_ai_report_filters_sources_without_ad_queries(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    import datetime as dt
     import json
     import sys
 
@@ -74,13 +73,6 @@ def test_ai_report_filters_sources_without_ad_queries(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(sys, 'argv', ['report', '--ai-only', '--format', 'json'])
     monkeypatch.setattr(report.shutil, 'which', lambda _: '/test/axiom')
-    now = dt.datetime.now(dt.UTC)
-
-    def spend(args):
-        assert args.google_ads_spend == 'off'
-        return None, 'disabled', now - dt.timedelta(days=28), now
-
-    monkeypatch.setattr(report, '_google_ads_spend', spend)
     monkeypatch.setattr(report, 'fetch_axiom_cohort_records', lambda *a, **k: [])
     monkeypatch.setattr(report, '_cloud_acquisition_events', lambda *a, **k: ([], None))
     monkeypatch.setattr(report, 'aggregate_cohort_funnel_rows', lambda *a, **k: [

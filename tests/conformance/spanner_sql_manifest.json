@@ -5302,10 +5302,6 @@
       "fingerprint": "891e11509d98842fbee31ff1c54acc67cc2406d7abaa826497469a81555dc04c",
       "reason": "Operator-facing explanation, not executable SQL"
     },
-    "google_ads_reporting:build_google_ads_spend_query:1": {
-      "fingerprint": "48b93cbb83fcbf4c4f406e681ad3fb4463854883baf52870a526bfc0fe417c08",
-      "reason": "Google Ads Query Language, sent to Google Ads"
-    },
     "operational_analytics:benchmark_samples:1": {
       "fingerprint": "32e686b4f122a371d9f0d3d600a87eaa9f1e895c37bad41a3ef8f282b34e1108",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
