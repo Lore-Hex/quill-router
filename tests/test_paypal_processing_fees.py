@@ -446,18 +446,25 @@ def test_paypal_capture_rejects_cross_workspace_reference(
         (503, 502, "PayPal request failed"),
     ],
 )
+@pytest.mark.parametrize("failing_method", ["GET", "POST"])
 def test_paypal_capture_classifies_paypal_failures(
     monkeypatch: pytest.MonkeyPatch,
     paypal_status: int,
     expected_status: int,
     expected_message: str,
+    failing_method: str,
 ) -> None:
+    from tests.paypal_approved_order import approved_order
     from trusted_router.services.paypal_billing import capture_paypal_order_for_workspace
 
     seen: list[str] = []
 
     def paypal_handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.url.path)
+        if request.method == "GET":
+            assert request.url.params["fields"] == "payment_source"
+            if failing_method == "POST":
+                return httpx.Response(200, request=request, json=approved_order("ORDER-422", "ws-paypal"))
         return httpx.Response(paypal_status, request=request, json={"name": "UNPROCESSABLE_ENTITY"})
 
     real_client = httpx.Client
@@ -474,6 +481,7 @@ def test_paypal_capture_classifies_paypal_failures(
             order_id="ORDER-422", workspace_id="ws-paypal", settings=_paypal_settings(),
         )
 
-    assert seen == ["/v2/checkout/orders/ORDER-422/capture"]
+    lookup = "/v2/checkout/orders/ORDER-422"
+    assert seen == ([lookup] if failing_method == "GET" else [lookup, lookup + "/capture"])
     assert raised.value.status_code == expected_status
     assert raised.value.detail["error"]["message"] == expected_message

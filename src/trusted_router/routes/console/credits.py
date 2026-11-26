@@ -506,6 +506,11 @@ def register(app: FastAPI) -> None:
             )
         return RedirectResponse(url=str(data["url"]), status_code=303)
 
+    @app.get("/billing/paypal/cancel", include_in_schema=False)
+    def paypal_cancel_return() -> Response:
+        return RedirectResponse(url="/console/credits?checkout=cancel", status_code=303)
+
+    @app.get("/billing/paypal/success", include_in_schema=False)
     @app.get("/console/credits/paypal/capture")
     def console_paypal_capture(
         ctx: ConsoleDep,

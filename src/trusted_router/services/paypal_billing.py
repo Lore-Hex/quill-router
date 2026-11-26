@@ -30,6 +30,7 @@ from trusted_router.services.paused_topup import (
     refuse_topup_if_abuse_paused,
 )
 from trusted_router.services.paypal_topup_guard import (
+    check_approved_paypal_payer,
     check_paypal_capture,
     check_paypal_checkout,
     observe_paypal_capture,
@@ -204,7 +205,37 @@ def capture_paypal_order_for_workspace(
     # Capturing is the moment money moves. Refusing here leaves the approved
     # order uncaptured: PayPal never charges the buyer and it expires.
     refuse_topup_if_abuse_paused(STORE.get_workspace(workspace_id))
-    check_paypal_capture(STORE, workspace_id=workspace_id, settings=settings)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", order_id):
+        raise api_error(400, "Invalid PayPal order ID", ErrorType.BAD_REQUEST)
+    subject = check_paypal_capture(STORE, workspace_id=workspace_id, settings=settings)
+    if subject is not None:
+        approved = _paypal_get(settings, f"/v2/checkout/orders/{order_id}", order_lookup=True)
+        units = approved.get("purchase_units")
+        if (
+            approved.get("id") != order_id or approved.get("status") not in ("APPROVED", "COMPLETED")
+            or not isinstance(units, list) or len(units) != 1 or not isinstance(units[0], dict)
+        ):
+            raise api_error(400, "PayPal order could not be captured", ErrorType.BAD_REQUEST)
+        unit = units[0]
+        ref = _paypal_credit_reference(unit, fallback=unit)
+        if ref.workspace_id != workspace_id or unit.get("reference_id", workspace_id) != workspace_id:
+            raise api_error(403, "PayPal order belongs to another workspace", ErrorType.FORBIDDEN)
+        if approved.get("status") == "COMPLETED":
+            # A browser refresh or lost POST response: reconcile the existing capture, never charge again.
+            return credit_paypal_capture(approved, expected_workspace_id=workspace_id)
+        gross_cents = _paypal_amount_microdollars(unit.get("amount")) // 10_000
+        if ref.charge_amount_cents is not None and gross_cents != ref.charge_amount_cents:
+            raise api_error(400, "PayPal order amount does not match checkout", ErrorType.BAD_REQUEST)
+        sources = approved.get("payment_source")
+        wallet = sources.get("paypal") if isinstance(sources, dict) else None
+        wallet = wallet if isinstance(wallet, dict) else {}
+        legacy_payer = approved.get("payer")
+        fallback_email = legacy_payer.get("email_address") if isinstance(legacy_payer, dict) else None
+        check_approved_paypal_payer(
+            subject, account_status=wallet.get("account_status"),
+            payer_email=wallet.get("email_address", fallback_email),
+            credit_cents=ref.credit_amount_cents or gross_cents, settings=settings,
+        )
     order = _paypal_post(
         settings,
         f"/v2/checkout/orders/{order_id}/capture",
@@ -510,12 +541,13 @@ def fetch_paypal_capture(settings: Settings, capture_id: str) -> dict[str, Any]:
     return _paypal_get(settings, f"/v2/payments/captures/{capture_id}")
 
 
-def _paypal_get(settings: Settings, path: str) -> dict[str, Any]:
+def _paypal_get(settings: Settings, path: str, *, order_lookup: bool = False) -> dict[str, Any]:
     token = _access_token(settings)
     try:
         with httpx.Client(timeout=15.0) as client:
             response = client.get(
                 f"{_paypal_base_url(settings)}{path}",
+                params={"fields": "payment_source"} if order_lookup else None,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
@@ -523,6 +555,10 @@ def _paypal_get(settings: Settings, path: str) -> dict[str, Any]:
             )
             response.raise_for_status()
             data = response.json()
+    except httpx.HTTPStatusError as exc:
+        if order_lookup and exc.response.status_code in PAYPAL_CLIENT_ERROR_STATUSES:
+            raise api_error(400, "PayPal order could not be captured", ErrorType.BAD_REQUEST) from exc
+        raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
     if not isinstance(data, dict):

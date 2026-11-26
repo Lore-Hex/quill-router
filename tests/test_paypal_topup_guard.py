@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from tests.paypal_approved_order import approved_order, mock_approved_order
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.schemas import CheckoutRequest
@@ -150,15 +151,15 @@ def test_new_workspace_amount_cap_refuses_with_its_own_code() -> None:
     workspace_id, user_id = _account()
     check_paypal_checkout(  # exactly the cap is allowed
         STORE, workspace_id=workspace_id, initiating_user_id=user_id,
-        credit_amount_cents=10_000, settings=_settings(),
+        credit_amount_cents=2_500, settings=_settings(),
     )
     with pytest.raises(HTTPException) as raised:
         check_paypal_checkout(
             STORE, workspace_id=workspace_id, initiating_user_id=user_id,
-            credit_amount_cents=10_001, settings=_settings(),
+            credit_amount_cents=2_501, settings=_settings(),
         )
     assert _refusal(raised) == (403, GUARD_CODE_AMOUNT_CAP)
-    assert "$100" in raised.value.detail["error"]["message"]
+    assert "$25" in raised.value.detail["error"]["message"]
 
 
 def test_established_workspace_has_no_amount_cap() -> None:
@@ -378,6 +379,7 @@ def test_refused_capture_never_calls_paypal(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_third_capture_of_the_day_is_refused_before_paypal(monkeypatch: pytest.MonkeyPatch) -> None:
     workspace_id, user_id = _account()
+    mock_approved_order(monkeypatch, workspace_id)
     calls: list[str] = []
     counter = iter(range(100))
 
@@ -403,6 +405,7 @@ def test_capture_reports_seller_protection_and_logs_not_eligible(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     workspace_id, user_id = _account()
+    mock_approved_order(monkeypatch, workspace_id)
     monkeypatch.setattr(
         paypal_billing, "_paypal_post",
         lambda *_a, **_k: _order(workspace_id, user_id, seller_protection="NOT_ELIGIBLE"),
@@ -420,6 +423,7 @@ def test_capture_reports_seller_protection_and_logs_not_eligible(
 
 def test_pending_echeck_capture_is_not_spendable(monkeypatch: pytest.MonkeyPatch) -> None:
     workspace_id, user_id = _account()
+    mock_approved_order(monkeypatch, workspace_id)
     order = _order(workspace_id, user_id)
     capture = order["purchase_units"][0]["payments"]["captures"][0]
     capture["status"] = "PENDING"
@@ -477,6 +481,86 @@ def _console_client() -> tuple[TestClient, Any, Any]:
     return client, user, workspace
 
 
+@pytest.mark.parametrize(("path", "expected"), [
+    ("/billing/paypal/success", "error=paypal_missing_order"),
+    ("/billing/paypal/cancel?token=ignored", "checkout=cancel"),
+])
+def test_api_order_defaults_resolve_without_asserting_payment(path: str, expected: str) -> None:
+    client, _, _ = _console_client()
+    response = client.get(path, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/console/credits?{expected}"
+
+
+@pytest.mark.parametrize(("wallet", "established", "accepted"), [
+    ({"account_status": "VERIFIED", "email_address": "billing+ai@example.co.uk"}, False, True),
+    ({"account_status": "UNVERIFIED", "email_address": "valid@example.org"}, False, False),
+    ({"account_id": "KNOWN-ID", "email_address": "valid@example.org"}, False, False),
+    ({"account_status": "UNKNOWN", "email_address": "valid@example.org"}, False, False),
+    ({}, False, False),
+    ({"account_status": "VERIFIED"}, False, False),
+    ({"account_status": "VERIFIED", "email_address": "broken"}, False, False),
+    ({"account_status": "VERIFIED", "email_address": "valid@EXAMPLE.CON"}, False, False),
+    ({"account_status": "VERIFIED", "email_address": "valid@GMIAL.COM"}, False, False),
+    ({"account_status": "UNVERIFIED", "email_address": "valid@example.org"}, True, True),
+    ({"account_status": "VERIFIED", "email_address": "invalid"}, True, False),
+])
+def test_wallet_rules_gate_real_capture_call(
+    monkeypatch: pytest.MonkeyPatch, wallet: dict[str, str], established: bool, accepted: bool,
+) -> None:
+    ws, user = _account()
+    if established:
+        _make_established(user)
+    order = approved_order("ORDER-X", ws)
+    order["payment_source"] = {"paypal": wallet} if wallet else {"card": {}}
+    monkeypatch.setattr(paypal_billing, "_paypal_get", lambda *a, **kw: order)
+    posts: list[str] = []
+    monkeypatch.setattr(paypal_billing, "_paypal_post", lambda _s, p, **kw: posts.append(p) or _order(ws, user))
+    if accepted:
+        result = capture_paypal_order_for_workspace(order_id="ORDER-X", workspace_id=ws, settings=_settings())
+        assert result.credited and result.amount_microdollars == 25_000_000
+        assert posts == ["/v2/checkout/orders/ORDER-X/capture"]
+    else:
+        with pytest.raises(HTTPException) as exc:
+            capture_paypal_order_for_workspace(order_id="ORDER-X", workspace_id=ws, settings=_settings())
+        assert checkout_guard_code(exc.value) == GUARD_CODE_UNAVAILABLE
+        assert posts == []
+
+
+@pytest.mark.parametrize("problem", ["foreign", "old-cap", "gross-mismatch", "wrong-currency"])
+def test_preapproved_order_bound_before_charge(monkeypatch: pytest.MonkeyPatch, problem: str) -> None:
+    ws, user = _account()
+    if problem == "foreign":
+        _make_established(user)
+    order = approved_order("ORDER-X", "other-workspace" if problem == "foreign" else ws)
+    unit = order["purchase_units"][0]
+    if problem == "old-cap":
+        unit["custom_id"] = f"tr1|{ws}|2501|2606"
+    elif problem == "gross-mismatch":
+        unit["amount"]["value"] = "27.00"
+    elif problem == "wrong-currency":
+        unit["amount"]["currency_code"] = "EUR"
+    monkeypatch.setattr(paypal_billing, "_paypal_get", lambda *a, **kw: order)
+    monkeypatch.setattr(paypal_billing, "_paypal_post", lambda *a, **kw: pytest.fail("must not charge"))
+    with pytest.raises(HTTPException) as exc:
+        capture_paypal_order_for_workspace(order_id="ORDER-X", workspace_id=ws, settings=_settings())
+    if problem == "old-cap":
+        assert checkout_guard_code(exc.value) == GUARD_CODE_AMOUNT_CAP
+    else:
+        assert exc.value.status_code == (403 if problem == "foreign" else 400)
+
+
+def test_return_retry_reconciles_existing_capture_without_post(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws, user = _account()
+    paid = _order(ws, user)
+    monkeypatch.setattr(paypal_billing, "_paypal_get", lambda *a, **kw: paid)
+    monkeypatch.setattr(paypal_billing, "_paypal_post", lambda *a, **kw: pytest.fail("already captured"))
+    results = [capture_paypal_order_for_workspace(order_id=paid["id"], workspace_id=ws, settings=_settings())
+               for _ in range(2)]
+    assert [r.credited for r in results] == [True, False]
+    assert all(r.capture_id == "CAPTURE-G" for r in results)
+
+
 def test_console_checkout_over_cap_redirects_with_the_cap_line() -> None:
     client, _, _ = _console_client()
     response = client.post(
@@ -487,7 +571,7 @@ def test_console_checkout_over_cap_redirects_with_the_cap_line() -> None:
     assert response.status_code == 303
     assert response.headers["location"] == f"/console/credits?error={GUARD_CODE_AMOUNT_CAP}"
     page = client.get(response.headers["location"]).text
-    assert "up to $100 per PayPal payment" in page
+    assert "up to $25 per PayPal payment" in page
 
 
 def test_console_capture_for_latched_workspace_redirects_without_capturing(
@@ -851,6 +935,7 @@ def test_capture_raced_by_a_latch_redirects_to_the_paused_line(
         return _order(workspace.id, user.id, capture_id="CAPTURE-RACE")
 
     monkeypatch.setattr(paypal_billing, "_paypal_post", paypal_post)
+    mock_approved_order(monkeypatch, workspace.id)
     monkeypatch.setattr(Settings, "paypal_enabled", property(lambda _self: True))
     response = client.get("/console/credits/paypal/capture?token=ORDER-RACE", follow_redirects=False)
     assert response.status_code == 303
