@@ -356,6 +356,65 @@ def test_a_held_row_past_its_retirement_is_no_longer_one_of_the_providers_routes
     assert pending == {"vendor/a"} and held == {"vendor/a", "vendor/old"}
 
 
+# --- served routes belong to one provider ------------------------------------
+
+OTHER = "zeta"
+
+
+def _two_sides(
+    root: Path, evidence: set[tuple[str, str]], served: frozenset[tuple[str, str]],
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """(what route health expects held, what the step holds), as routes."""
+    pending = planner.pending_unserved_route_holds(evidence, manifest_dir=root, now=NOW, served=served)
+    step.apply_unserved_route_holds(evidence, manifest_dir=root, now=NOW, served=served)
+    held = {
+        (provider, model) for provider in (PROVIDER, OTHER)
+        for model in _held_ids(root / f"{provider}.json")
+    }
+    return pending, held
+
+
+def test_a_model_one_provider_serves_is_not_served_by_another_that_lists_it(tmp_path: Path) -> None:
+    # Both list the same seven models. One serves all seven, the other two.
+    models = [f"vendor/m-{index}" for index in range(7)]
+    for provider in (PROVIDER, OTHER):
+        _manifest(tmp_path, provider, [_row(model) for model in models])
+    served = _routes(*models) | {(OTHER, models[0]), (OTHER, models[1])}
+
+    # Both routes the second provider serves: all of it, though two of seven
+    # by the models the first one serves.
+    pending, held = _two_sides(tmp_path, {(OTHER, models[0]), (OTHER, models[1])}, served)
+    assert pending == held == set()
+
+    # One of its two may be held; a model it only lists may not.
+    pending, held = _two_sides(tmp_path, {(OTHER, models[0]), (OTHER, models[5])}, served)
+    assert pending == held == {(OTHER, models[0])}
+
+
+@pytest.mark.parametrize(("holder", "lister"), [(OTHER, PROVIDER), (PROVIDER, OTHER)],
+                         ids=["holds-in-the-last-manifest", "holds-in-the-first-manifest"])
+def test_a_lifted_hold_counts_for_its_own_provider_only(tmp_path: Path, holder: str, lister: str) -> None:
+    # One manifest has two holds that ran out; the other lists one of those
+    # models without serving it. The lifted routes are the first provider's
+    # again and nobody else's, whichever manifest is read first.
+    ran_out = NOW - timedelta(hours=planner.HOLD_HOURS + 1)
+    _manifest(tmp_path, lister, [_row("vendor/back-1"), _row("vendor/x"), _row("vendor/y")])
+    _manifest(tmp_path, holder, [
+        _held_row("vendor/back-1", ran_out), _held_row("vendor/back-2", ran_out),
+        _row("vendor/a"), _row("vendor/b"), _row("vendor/c"),
+    ])
+    served = frozenset(
+        {(lister, model) for model in ("vendor/x", "vendor/y")}
+        | {(holder, model) for model in ("vendor/a", "vendor/b", "vendor/c")}
+    )
+    evidence = {(holder, "vendor/a"), (holder, "vendor/b"), (lister, "vendor/back-1")}
+
+    pending, held = _two_sides(tmp_path, evidence, served)
+
+    # Two of the holding provider's five routes; nothing of the other's.
+    assert pending == held == {(holder, "vendor/a"), (holder, "vendor/b")}
+
+
 # --- the refresh's own run ---------------------------------------------------
 
 
@@ -412,9 +471,12 @@ def test_the_refresh_holds_nothing_when_it_cannot_tell_what_is_served(
 
     # Nothing new is held, and the hold that ran out still lifts.
     assert _held_ids(path) == set()
-    captured = capsys.readouterr()
-    assert "served routes unavailable (RuntimeError); holding nothing" in captured.err
-    assert "lifted expired unserved-route hold on vendor/back" in captured.out
+    # The run's summary is its stdout: it names this cause, and does not
+    # blame the evidence, which in this run was read.
+    summary = capsys.readouterr().out
+    assert "served routes unavailable (RuntimeError); holding nothing" in summary
+    assert "evidence unavailable" not in summary
+    assert "lifted expired unserved-route hold on vendor/back" in summary
 
 
 def test_a_run_on_other_manifests_does_not_read_this_checkouts_catalog(
