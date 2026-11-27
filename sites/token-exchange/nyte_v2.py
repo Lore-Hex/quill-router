@@ -134,6 +134,15 @@ PAGES = {
         "group": "buy",
         "menu_description": "",
     },
+    # Missing-URL routing is configured separately on the New York host matcher.
+    "not-found": {
+        "route": "/404",
+        "label": None,
+        "title": "Page not found | New York Token Exchange",
+        "description": "This page doesn’t exist. Start from the New York Token Exchange home page.",
+        "group": "exchange",
+        "menu_description": "",
+    },
     "media-kit": {
         "route": "/media-kit",
         "label": None,
@@ -457,6 +466,10 @@ def render_nyte(
     if page == "accelerator" and not v3_body:
         accelerator_version = hashlib.sha256((SOURCE / "accelerator.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/accelerator.css?v={accelerator_version}">'
+    if page == "not-found":
+        not_found_version = hashlib.sha256((SOURCE / "not-found.css").read_bytes()).hexdigest()[:12]
+        extra_head += '<meta name="robots" content="noindex">'
+        late_head += f'<link rel="stylesheet" href="/assets/nyte-v2/not-found.css?v={not_found_version}">'
     if page == "manage":
         manage_version = hashlib.sha256((SOURCE / "manage.js").read_bytes()).hexdigest()[:12]
         extra_head += f'<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex"><script src="/assets/nyte-v2/manage.js?v={manage_version}" defer></script>'
@@ -497,6 +510,8 @@ def render_nyte(
     if content is None:
         body = f"{V3_BODIES[page]}.html" if v3_body else f"{page}.html"
         content = (SOURCE / body).read_text().replace("{{index_panel}}", index_panel())
+    if page == "not-found":
+        content = content.replace("{{band_ink}}", band_svg("band-ink.svg"))
     if v3_body:
         content = (content.replace("{{band_purple}}", band_svg("band-purple.svg"))
                    .replace("{{band_ink}}", band_svg("band-ink.svg"))
@@ -608,7 +623,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css", "buy-v3.css", "sell-v3.css", "badge-v3.css", "badge-v3.js", "maple-v3.css", "maple-v3.js"):
+    for name in ("not-found.css", "styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css", "buy-v3.css", "sell-v3.css", "badge-v3.css", "badge-v3.js", "maple-v3.css", "maple-v3.js"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):

@@ -230,7 +230,7 @@ def build(output: Path) -> None:
         if market["slug"] == "new-york":
             provider_page = "".join(
                 f'<url><loc>https://{canonical_domain}{entry["route"]}</loc></url>'
-                for key, entry in PAGES.items() if key != "home" and entry.get("builder") != "anchor"
+                for key, entry in PAGES.items() if key not in ("home", "not-found") and entry.get("builder") != "anchor"
             )
         (folder / "sitemap.xml").write_text(
             f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{canonical_domain}/</loc></url>{provider_page}</urlset>'
