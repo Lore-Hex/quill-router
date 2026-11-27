@@ -245,29 +245,32 @@ def debit_credit_shard(
     It moves only headroom — never booked usage, never a live reservation — so
     a debit can no more strand an in-flight hold than it can overdraw.
 
-    Extracted from `transfer_credit_budget`, whose donor half this is verbatim,
-    so cross-plane escrow debits the sharded balance through the SAME statement
-    the shard rebalancer has been running in production rather than a second
-    hand-written one that could drift from it.
+    Cross-plane escrow and the shard rebalancer share the same donor predicate.
     """
+    sql, params, types = debit_credit_shard_statement(param_types, workspace_id, amount, shard=shard)
+    return transaction.execute_update(sql, params=params, param_types=types) == 1
+
+
+def debit_credit_shard_statement(
+    param_types: Any, workspace_id: str, amount: int, *, shard: int,
+) -> DmlStatement:
     if amount <= 0:
         raise ValueError("credit shard debit amount must be positive")
-    count = transaction.execute_update(
+    return (
         "UPDATE tr_credit_balance SET total_credits=total_credits-@move "
         "WHERE workspace_id=@ws AND shard=@donor "
         "AND (total_credits-total_usage-reserved)>=@move",
-        params={
+        {
             "move": int(amount),
             "ws": workspace_id,
             "donor": shard,
         },
-        param_types={
+        {
             "move": param_types.INT64,
             "ws": param_types.STRING,
             "donor": param_types.INT64,
         },
     )
-    return count == 1
 
 
 def credit_credit_shard(
@@ -306,16 +309,15 @@ def credit_credit_shard(
     )
 
 
-def transfer_credit_budget(
-    transaction: Any,
+def transfer_credit_budget_statements(
     param_types: Any,
     workspace_id: str,
     amount: int,
     *,
     donor_shard: int,
     target_shard: int,
-) -> bool:
-    """Atomically move idle sub-budget from one credit shard to another.
+) -> list[DmlStatement]:
+    """Ordered donor and target writes for one transfer in a checked batch.
 
     The donor predicate permits moving only current headroom, never usage or a
     live reservation. Both DML statements run in the caller's transaction; a
@@ -326,25 +328,22 @@ def transfer_credit_budget(
         raise ValueError("credit budget transfer amount must be positive")
     if donor_shard == target_shard:
         raise ValueError("credit budget donor and target must differ")
-    if not debit_credit_shard(
-        transaction, param_types, workspace_id, amount, shard=donor_shard
-    ):
-        return False
-    target_count = transaction.execute_update(
+    debit = debit_credit_shard_statement(param_types, workspace_id, amount, shard=donor_shard)
+    credit: DmlStatement = (
         "UPDATE tr_credit_balance SET total_credits=total_credits+@move "
         "WHERE workspace_id=@ws AND shard=@target",
-        params={
+        {
             "move": int(amount),
             "ws": workspace_id,
             "target": target_shard,
         },
-        param_types={
+        {
             "move": param_types.INT64,
             "ws": param_types.STRING,
             "target": param_types.INT64,
         },
     )
-    return target_count == 1
+    return [debit, credit]
 
 
 def release_credit(

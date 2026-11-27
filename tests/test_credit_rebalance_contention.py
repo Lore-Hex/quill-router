@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from google.api_core.exceptions import FailedPrecondition
 
-from tests.fakes.spanner import make_fake_store
+from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.storage_errors import StoreUnavailable
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -299,11 +300,15 @@ def test_needed_only_preserves_money_and_ignores_negative_donor() -> None:
         [20, 80, 65, 10], usage=[10, 40, 30, 20], reserved=[5, 10, 10, 0],
     )
     before = _typed_rows(database)
+    batches = database.transaction_batch_update_calls
+    individual_writes = database.transaction_execute_update_calls
     result = rebalance_credit_for_estimate(
         database, store._param_types, workspace_id=WORKSPACE_ID,
         shard_count=4, target_shard=0, estimate=40,
     )
     after = _typed_rows(database)
+    assert database.transaction_batch_update_calls - batches == 1
+    assert database.transaction_execute_update_calls == individual_writes
     assert result == {
         "outcome": RebalanceOutcome.MOVED, "mode": "topped_up",
         "moved_micro": 35, "target_shard": 0,
@@ -317,6 +322,29 @@ def test_needed_only_preserves_money_and_ignores_negative_donor() -> None:
         assert row["total_usage"] == before[(WORKSPACE_ID, shard)]["total_usage"]
         assert row["reserved"] == before[(WORKSPACE_ID, shard)]["reserved"]
     assert after[(WORKSPACE_ID, 3)] == before[(WORKSPACE_ID, 3)]
+
+
+@pytest.mark.parametrize("miss", range(4))
+def test_rebalance_rolls_back_all_donors_on_any_guard_miss(
+    monkeypatch: pytest.MonkeyPatch, miss: int,
+) -> None:
+    store, database, _key = _seed([0, 6, 7])
+    before = _typed_rows(database)
+    original = _FakeTransaction.execute_update
+    positions = iter(range(4))
+
+    def miss_one(tx: Any, sql: str, **kwargs: Any) -> int:
+        if next(positions) == miss:
+            return 0
+        return original(tx, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "execute_update", miss_one)
+    with pytest.raises(FailedPrecondition, match="row counts"):
+        rebalance_credit_for_estimate(
+            database, store._param_types, workspace_id=WORKSPACE_ID,
+            shard_count=3, target_shard=0, estimate=10,
+        )
+    assert _typed_rows(database) == before
 
 
 def test_needed_only_repeated_authorization_rejects_debt(

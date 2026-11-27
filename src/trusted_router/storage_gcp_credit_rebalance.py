@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from trusted_router.credit_refusal_read import HEADROOM, CreditRefusalRead
-from trusted_router.storage_gcp_counter_dml import transfer_credit_budget
+from trusted_router.storage_gcp_batch_dml import DmlStatement, execute_batch_dml
+from trusted_router.storage_gcp_counter_dml import transfer_credit_budget_statements
 from trusted_router.storage_gcp_counters import credit_shard_count
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 
@@ -220,25 +221,25 @@ def rebalance_credit_for_estimate(
             ),
             reverse=True,
         )
+        statements: list[DmlStatement] = []
         for available, donor_shard in donors:
             amount = min(available, needed)
-            if not transfer_credit_budget(
-                transaction,
+            statements.extend(transfer_credit_budget_statements(
                 pt,
                 workspace_id,
                 amount,
                 donor_shard=donor_shard,
                 target_shard=target_shard,
-            ):
-                raise _RebalanceInvariantError(
-                    "credit shard changed or disappeared during rebalance"
-                )
+            ))
             moved += amount
             needed -= amount
             if needed == 0:
                 break
         if needed != 0:  # pragma: no cover - guarded by global headroom check.
             raise _RebalanceInvariantError("rebalance plan did not satisfy estimate")
+        # Keep the same write order and guards, but do not hold the workspace's
+        # read locks across two client/server round trips per donor.
+        execute_batch_dml(transaction, statements, [(1,)] * len(statements))
         return {
             "outcome": RebalanceOutcome.MOVED,
             "mode": "topped_up",
