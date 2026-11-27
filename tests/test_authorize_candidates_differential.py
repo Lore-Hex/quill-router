@@ -49,6 +49,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.requests import Request
 
+from tests.lifecycle_clock import CATALOG_CLOCK
 from tests.pinned_manifests import serve_committed_route
 from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_store
 from trusted_router.catalog import META_MODEL_IDS, MODELS, NAMED_DECISION_MODEL_PROVIDERS
@@ -70,7 +71,12 @@ from trusted_router.web_fetch import FETCH_ROUTE_TYPE
 FROZEN = Path(__file__).parent / "fakes" / "authorize_candidates_main_gateway.py.txt"
 FROZEN_SHA256 = "58df13a794c5b22f7aa02daa89168f0bcb688b1db56119d5bfaeade9c89ca0ec"
 FROZEN_NAME = "tests_frozen_authorize_candidates_main_gateway"
-INSTANT = real_dt.datetime(2026, 10, 21, 9, 30, 15, 123456, tzinfo=real_dt.UTC)
+# Both legs run at the lifecycle clock's instant (tests/lifecycle_clock.py):
+# authorization prices lock at authorization time, which in production is the
+# lifecycle clock's now. A fixed date apart from it priced GPT-5.6 Sol's Fast
+# tier in the promotion on one leg and Standard on the other once the clock
+# was past 2026-12-01 (the 2026-11-27 08:24Z price refresh, post-cutover).
+INSTANT = CATALOG_CLOCK.astimezone(real_dt.UTC)
 DURATIONS = frozenset({"key_lookup_ms", "routing_ms", "store_ms", "post_commit_ms", "total_ms"})
 GATEWAY_LOGGERS = ("trusted_router.routes.internal.gateway", FROZEN_NAME)
 
