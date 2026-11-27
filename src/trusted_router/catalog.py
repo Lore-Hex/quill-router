@@ -1029,6 +1029,16 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     if model.hidden_public_metadata:
         route_kind = "private_proxy" if model.id in PRIVATE_PROXY_MODEL_TARGETS else "private_orchestration"
 
+    # A catalog candidate is not evidence of which model saw a prompt. In
+    # particular an advisor, judge or nested panel may require other hops.
+    composite = route_kind.endswith("_orchestration") or route_kind in {"fusion_panel", "private_proxy"}
+    documented = not composite or model.id in WEAKEST_MEMBER_PRIVACY_MODEL_IDS
+    available_tier = _model_max_privacy_tier(model, endpoints) if documented else None
+    display_tier = PRIVACY_TIER_STANDARD if available_tier is None else available_tier
+    default_floor = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(
+        ROUTING_MODEL_ALIAS_TARGETS.get(model.id, model.id), PRIVACY_TIER_STANDARD,
+    )
+
     documentation = (
         model.documentation.to_dict()
         if model.documentation is not None
@@ -1061,12 +1071,12 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "required_provider_jurisdiction": (
             PROVIDER_JURISDICTION_US if model.id in US_PROVIDER_ONLY_MODEL_IDS else None
         ),
-        # Highest privacy tier reachable for this model — the max across
-        # every provider that serves it (a request can route to the best
-        # one). Lets the picker / SEO pages show "this model can run
-        # confidential" without re-deriving from raw posture flags.
-        "privacy_tier": _model_max_privacy_tier(model, endpoints),
-        "privacy_tier_label": PRIVACY_TIER_LABELS[_model_max_privacy_tier(model, endpoints)],
+        "privacy_tier": display_tier,
+        "privacy_tier_label": PRIVACY_TIER_LABELS[display_tier],
+        "privacy_tier_scope": "available_route" if documented else "not_established",
+        "available_privacy_tier": available_tier,
+        "default_min_privacy_tier": default_floor,
+        "default_min_privacy_tier_label": PRIVACY_TIER_LABELS[default_floor],
         **({
             "routing_tier": "Trusted",
             "required_provider_slugs": list(TRUSTED_PROVIDER_ORDER),

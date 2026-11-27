@@ -126,6 +126,8 @@ def test_maple_checkpoint_names_its_weights_author_not_host():
 ])
 @pytest.mark.parametrize("privacy", ["confidential", "trusted"])
 def test_maple_authorization_does_not_infer_the_gateways_origin(origin, admitted, privacy):
+    from fastapi import HTTPException
+
     from trusted_router.authorize_candidates import CandidateRequest, plan_route, resolve_candidates
     from trusted_router.config import Settings
 
@@ -137,6 +139,12 @@ def test_maple_authorization_does_not_infer_the_gateways_origin(origin, admitted
         body_region=origin,
     )
     plan = plan_route(request, Settings(environment="test"), region="us-central1")
+    if privacy == "trusted":
+        with pytest.raises(HTTPException) as rejected:
+            resolve_candidates(plan, request, region="us-central1", at=datetime(2026, 10, 29, tzinfo=UTC))
+        assert rejected.value.status_code == 400
+        assert rejected.value.detail["error"]["type"] == "model_not_supported"
+        return
     resolved = resolve_candidates(
         plan, request, region="us-central1", at=datetime(2026, 10, 29, tzinfo=UTC),
     )
