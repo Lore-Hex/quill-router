@@ -43,7 +43,7 @@
 
   <nav class="model-filter-row" aria-label="Model filters">
     {% for item in model_filters %}
-    <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
+    <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}" data-catalog-filter="{{ item.id }}">{{ item.label }}</a>
     {% endfor %}
   </nav>
   <div class="catalog-privacy-legend">

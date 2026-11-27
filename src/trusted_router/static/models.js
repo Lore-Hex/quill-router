@@ -2,6 +2,16 @@
   const explorer = document.querySelector("[data-model-explorer]");
   if (!explorer) return;
 
+  // Same attributed endpoint as homepage telemetry; never send the search URL.
+  function track(event, catalog) {
+    if (navigator.globalPrivacyControl || navigator.doNotTrack === "1") return;
+    Promise.resolve().then(() => fetch("/analytics/events", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, ...(catalog ? { catalog } : {}) }),
+      credentials: "same-origin", keepalive: true, referrerPolicy: "no-referrer",
+    })).catch(() => {});
+  }
+
   const results = explorer.querySelector("[data-model-results]");
   const search = document.querySelector("[data-model-search]");
   const sort = explorer.querySelector("[data-model-sort]");
@@ -15,6 +25,29 @@
   const pageSize = Number.parseInt(explorer.dataset.pageSize || "24", 10);
   const params = new URLSearchParams(window.location.search);
   let visibleLimit = pageSize;
+  let searchTimer;
+  let pendingSearch;
+  let lastSearch = "";
+  let resultCount = 0;
+
+  function flushSearch() {
+    clearTimeout(searchTimer);
+    if (!pendingSearch) return;
+    const { query, zero } = pendingSearch;
+    pendingSearch = null;
+    if (query === lastSearch) return;
+    lastSearch = query;
+    if (!query) return;
+    track("models.search_used");
+    if (zero) track("models.search_zero_results");
+  }
+
+  function scheduleSearch() {
+    clearTimeout(searchTimer);
+    // Query exists only in page memory for deduplication, never in telemetry.
+    pendingSearch = { query: normalize(search.value), zero: resultCount === 0 };
+    searchTimer = setTimeout(flushSearch, 500);
+  }
 
   const normalize = (value) => value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
   const numberValue = (card, key, fallback = Number.POSITIVE_INFINITY) => {
@@ -57,6 +90,7 @@
     const query = normalize(search.value);
     const matches = sortCards(cards.filter((card) => window.TRModelSearch.matches(card.dataset.searchText || "", query)));
 
+    resultCount = matches.length;
     matches.forEach((card) => results.append(card));
     const visible = matches.slice(0, visibleLimit);
     const visibleSet = new Set(visible);
@@ -82,10 +116,15 @@
   search.addEventListener("input", () => {
     visibleLimit = pageSize;
     render();
+    scheduleSearch();
     // Keep the response to typing visible while the input stays in the sticky header.
     count.scrollIntoView({ block: "start", behavior: "instant" });
   });
+  search.addEventListener("blur", flushSearch);
+  window.addEventListener("pagehide", flushSearch);
   sort.addEventListener("change", () => {
+    flushSearch();
+    track("models.sort_changed", { sort: sort.value });
     visibleLimit = pageSize;
     render();
   });
@@ -94,6 +133,9 @@
     render();
   });
   clearButtons.forEach((button) => button.addEventListener("click", () => {
+    flushSearch();
+    lastSearch = "";
+    if (sort.value !== "featured") track("models.sort_changed", { sort: "featured" });
     search.value = "";
     sort.value = "featured";
     visibleLimit = pageSize;
@@ -102,12 +144,38 @@
   }));
   explorer.querySelectorAll("[data-model-query]").forEach((button) => {
     button.addEventListener("click", () => {
+      flushSearch();
+      lastSearch = "";
+      track("models.popular_pick_clicked", { pick: button.dataset.modelQuery });
       search.value = button.dataset.modelQuery || "";
       visibleLimit = pageSize;
       render();
       search.focus();
     });
   });
+
+  // Delegate provider clicks so asynchronously loaded comparisons are covered too.
+  function trackLink(event) {
+    if (event.type === "auxclick" && event.button !== 1) return;
+    const link = event.target.closest("a[href]");
+    if (!link) return;
+    const filter = link.dataset.catalogFilter;
+    if (filter !== undefined) {
+      if (!link.classList.contains("good")) track("models.filter_changed", { filter });
+      return;
+    }
+    const card = link.closest("[data-model-card]");
+    if (!card) return;
+    const href = link.getAttribute("href");
+    const model_id = card.dataset.modelId;
+    if (href.startsWith("/providers/")) {
+      track("models.provider_clicked", { model_id, provider_id: decodeURIComponent(href.slice(11)) });
+    } else if (link.closest(".model-card-title, .model-card-footer")) {
+      track("models.model_clicked", { model_id });
+    }
+  }
+  explorer.addEventListener("click", trackLink);
+  explorer.addEventListener("auxclick", trackLink);
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -209,7 +277,12 @@
   }
 
   explorer.querySelectorAll("[data-endpoints-url]").forEach((details) => {
+    let wasOpen = details.open;
     details.addEventListener("toggle", async () => {
+      if (details.open && !wasOpen) {
+        track("models.comparison_expanded", { model_id: details.closest("[data-model-card]").dataset.modelId });
+      }
+      wasOpen = details.open;
       if (!details.open || details.dataset.loaded === "true" || details.dataset.loading === "true") return;
       const container = details.querySelector("[data-route-results]");
       details.dataset.loading = "true";
