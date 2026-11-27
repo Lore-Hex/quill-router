@@ -4,12 +4,14 @@ from __future__ import annotations
 import ast
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
+from tests.pinned_manifests import serve_committed_route
 from tests.test_catalog_count_claims import invalid_claims
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.config import Settings
@@ -67,6 +69,7 @@ def _python_body(code: str) -> dict[str, Any]:
 @pytest.mark.parametrize("path", PAGES)
 def test_documented_requests_use_real_schema_and_pin_one_candidate(
     client: TestClient, test_settings: Settings, path: str,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     soup = BeautifulSoup(client.get(path).text, "html.parser")
     documented_controls = set(re.findall(
@@ -92,6 +95,10 @@ def test_documented_requests_use_real_schema_and_pin_one_candidate(
         prefs = provider_route_preferences(body)
         assert prefs.allow_fallbacks is False
         assert len(prefs.only) == 1
+        # The documented pair is the maker's own route; it is the vehicle
+        # here whether or not the hourly refresh has it down this hour.
+        (only,) = prefs.only
+        serve_committed_route(monkeypatch, tmp_path, f"{body['model']}@{only}/prepaid")
         candidates = chat_route_endpoint_candidates(body, test_settings)
         assert len(candidates) == 1
         model, endpoint = candidates[0]

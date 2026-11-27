@@ -253,9 +253,14 @@ def test_resolution_authorize_settle_differential(client, inference_key, monkeyp
 
 
 @pytest.mark.parametrize("model,expected_rate", [("2.5", 12_343_500), ("2.0", 8_123_500)])
-def test_both_full_seedance_models_authorize_1080p(client, inference_key, model, expected_rate):
+def test_both_full_seedance_models_authorize_1080p(client, inference_key, model, expected_rate, monkeypatch, tmp_path):
     import json
 
+    from tests.pinned_manifests import serve_committed_route
+
+    # The 1080p tariff is BytePlus's committed table, whether or not the hourly
+    # refresh has the route down this hour.
+    serve_committed_route(monkeypatch, tmp_path, f"bytedance/seedance-{model}@byteplus/prepaid")
     response = resolution_authorize(client, inference_key, model=f"bytedance/seedance-{model}")
     assert response.status_code == 200, response.text
     auth = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])

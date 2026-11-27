@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from scripts.pricing.providers import thinkingmachines
-from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
+from tests.provider_holds import manifest_rows, row_taken_down_by_refresh
 from trusted_router import provider_lifecycle
 from trusted_router.catalog_registry import MODEL_ENDPOINTS
 
@@ -130,7 +130,7 @@ def test_inkling_2_small_keeps_its_liberty_hosts() -> None:
     }
     # Cloudflare keeps serving it, unless the refresh itself holds that row as unserved.
     cloudflare = {row["id"]: row for row in manifest_rows("cloudflare-workers-ai")}
-    assert "cloudflare-workers-ai" in live or row_on_unserved_route_hold(
+    assert "cloudflare-workers-ai" in live or row_taken_down_by_refresh(
         cloudflare.get("thinkingmachines/inkling-2-small", {})
     )
 

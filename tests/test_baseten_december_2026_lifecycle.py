@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from scripts.pricing.providers import baseten
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router import provider_lifecycle
 from trusted_router.catalog_registry import MODEL_ENDPOINTS
 
@@ -95,7 +95,7 @@ def test_quoted_replacements_stay_on_baseten() -> None:
     for replacement in {r for rs in _REPLACEMENTS.values() for r in rs}:
         assert replacement in _RETAINED
         # Served, unless the refresh itself holds the row as unserved.
-        assert f"{replacement}@baseten/prepaid" in MODEL_ENDPOINTS or row_on_unserved_route_hold(
+        assert f"{replacement}@baseten/prepaid" in MODEL_ENDPOINTS or row_taken_down_by_refresh(
             rows.get(replacement, {})
         ), replacement
         assert not provider_lifecycle.provider_model_retired(

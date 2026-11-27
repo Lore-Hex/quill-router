@@ -23,6 +23,7 @@ from typing import Any
 from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.provider_contracts import provider_route_reviewed_hold
 from trusted_router.provider_manifest_policy import (
+    _CANARY_QUARANTINE_REASONS,
     UNSERVED_ROUTE_HELD_AT_FIELD,
     UNSERVED_ROUTE_HOLD_REASON,
 )
@@ -75,3 +76,45 @@ def vendor_prefixes_on_reviewed_hold() -> set[str]:
             if "/" in row["id"] and row_on_reviewed_hold(provider, row)
         )
     return prefixes
+
+
+# What scripts/pricing/base.py reconcile_manifest_tombstones writes on a
+# provider's second miss: the row stays listed, unroutable, with the day it
+# went missing.
+DELISTED_REASON = "delisted-upstream"
+
+
+def row_delisted_by_refresh(row: dict[str, Any]) -> bool:
+    """The refresh's tombstone for a model the provider stopped listing."""
+    return (
+        row.get("routable") is False
+        and row.get("routable_reason") == DELISTED_REASON
+        and bool(row.get("missing_since"))
+    )
+
+
+def row_taken_down_by_refresh(row: dict[str, Any]) -> bool:
+    """Every state the hourly refresh can put a routable row in on its own,
+    with no review: delisted, held as unserved, or quarantined after a failed
+    canary (the reasons provider_manifest_policy accepts for a quarantine).
+    A release test that expects a committed row to route accepts these; a row
+    unroutable for any other reason (an operator hold, a missing price) still
+    fails it."""
+    return (
+        row_on_unserved_route_hold(row)
+        or row_delisted_by_refresh(row)
+        or (row.get("routable") is False and row.get("routable_reason") in _CANARY_QUARANTINE_REASONS)
+    )
+
+
+def committed_row(provider: str, model_id: str) -> dict[str, Any] | None:
+    """The provider's committed manifest row for the model, if it lists one."""
+    return next((row for row in manifest_rows(provider) if row["id"] == model_id), None)
+
+
+def committed_route_taken_down(endpoint_id: str) -> bool:
+    """The committed row behind a route id ("model@provider/kind") is in a
+    state the refresh puts rows in on its own (row_taken_down_by_refresh)."""
+    model_id, _, rest = endpoint_id.rpartition("@")
+    row = committed_row(rest.split("/", 1)[0], model_id)
+    return row is not None and row_taken_down_by_refresh(row)

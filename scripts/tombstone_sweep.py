@@ -360,11 +360,28 @@ def skew_stamps() -> dict[str, Any]:
             "last": raws[fresh[-1]]["generated_at"] if fresh else None}
 
 
+def _refreshed_manifests() -> list[Path]:
+    """The manifests the hourly refresh rewrites: stamped within
+    FRESH_MANIFEST_WINDOW of the newest. A held provider's manifest keeps its
+    old stamp, and the refresh does not delist or rename its rows."""
+    paths = sorted(MANIFESTS.glob("*.json"))
+    stamps = {}
+    for path in paths:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        stamps[path] = _stamp(raw.get("generated_at")) if isinstance(raw, dict) else None
+    known = [stamp for stamp in stamps.values() if stamp is not None]
+    if not known:
+        return []
+    newest = max(known)
+    return [path for path in paths if (stamp := stamps[path]) is not None and newest - stamp <= FRESH_MANIFEST_WINDOW]
+
+
 def routable_rows() -> list[tuple[str, str]]:
-    """Every (provider, model id) row a refresh could delist or rename: listed
-    and not already unroutable, in a stable order."""
+    """Every (provider, model id) row a refresh could delist or rename: listed,
+    not already unroutable, in a manifest the refresh rewrites, in a stable
+    order."""
     rows = []
-    for path in sorted(MANIFESTS.glob("*.json")):
+    for path in _refreshed_manifests():
         raw = json.loads(path.read_text(encoding="utf-8"))
         for row in raw.get("models", []) if isinstance(raw, dict) else []:
             if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("routable") is not False:
@@ -382,20 +399,26 @@ def sample_rows(seed: int, fraction: float) -> dict[str, list[list[str]]]:
             "rename": [list(row) for row in sorted(chosen[count:])]}
 
 
-def _edit_rows(routes: list[list[str]], edit: Any) -> int:
+def _edit_rows(routes: list[list[str]], edit: Any) -> list[list[str]]:
+    """Apply `edit` to each chosen row and to every other listed row of the
+    same provider with the same upstream id (a provider's own alias row): the
+    provider stops listing, or renames, the upstream model, not one alias of
+    it. Returns every (provider, model id) edited."""
     by_provider: dict[str, set[str]] = defaultdict(set)
     for provider, model_id in routes:
         by_provider[provider].add(model_id)
-    changed = 0
+    edited = []
     for provider, model_ids in by_provider.items():
         path = MANIFESTS / f"{provider}.json"
         raw = json.loads(path.read_text(encoding="utf-8"))
-        for row in raw.get("models", []):
-            if isinstance(row, dict) and row.get("id") in model_ids and row.get("routable") is not False:
+        rows = [row for row in raw.get("models", []) if isinstance(row, dict) and row.get("routable") is not False]
+        upstreams = {row.get("upstream_id") or row.get("id") for row in rows if row.get("id") in model_ids}
+        for row in rows:
+            if row.get("id") in model_ids or (row.get("upstream_id") or row.get("id")) in upstreams:
                 edit(row)
-                changed += 1
+                edited.append([provider, row["id"]])
         path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
-    return changed
+    return edited
 
 
 def delist_rows(routes: list[list[str]]) -> dict[str, int]:
@@ -407,8 +430,9 @@ def delist_rows(routes: list[list[str]]) -> dict[str, int]:
         row.update(routable=False, routable_reason="delisted-upstream")
         row.setdefault("missing_since", time.strftime("%Y-%m-%d"))
 
-    counts = {"rows": _edit_rows(routes, tombstone), "endpoints": 0, "models_dropped": 0}
-    gone = {(provider, model_id) for provider, model_id in routes}
+    edited = _edit_rows(routes, tombstone)
+    counts = {"rows": len(edited), "endpoints": 0, "models_dropped": 0}
+    gone = {(provider, model_id) for provider, model_id in edited}
     snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     kept = []
     for model in snapshot.get("models", []):
@@ -432,7 +456,7 @@ def rename_upstreams(routes: list[list[str]]) -> dict[str, int]:
     def rename(row: dict[str, Any]) -> None:
         row["upstream_id"] = f"{row.get('upstream_id') or row['id']}{RENAMED_UPSTREAM_SUFFIX}"
 
-    return {"rows": _edit_rows(routes, rename)}
+    return {"rows": len(_edit_rows(routes, rename))}
 
 
 def _holds_step(command: str, **request: Any) -> dict[str, Any]:

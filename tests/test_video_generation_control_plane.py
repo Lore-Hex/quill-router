@@ -6,6 +6,7 @@ from dataclasses import asdict
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.provider_holds import committed_route_taken_down
 from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.catalog import (
     MODELS,
@@ -179,8 +180,12 @@ def test_closed_video_models_route_only_through_their_makers() -> None:
     # Seedance routes only through BytePlus, Runway only through Runway, and
     # MiniMax Hailuo (Venice, Atlas Cloud, fal) has no first-party route.
     # An operator hold on BytePlus leaves Seedance with no route at all.
-    seedance_hosts = [] if "byteplus" in PREPAID_PROVIDER_HOLD_REASONS else ["byteplus"]
+    # So does the hourly refresh taking BytePlus's row for the model down.
     for model_id in ("bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast"):
+        seedance_hosts = [] if (
+            "byteplus" in PREPAID_PROVIDER_HOLD_REASONS
+            or committed_route_taken_down(f"{model_id}@byteplus/prepaid")
+        ) else ["byteplus"]
         assert [endpoint.provider for endpoint in endpoints_for_model(model_id)] == seedance_hosts
         assert MODELS[model_id].prepaid_available is bool(seedance_hosts)
     assert [endpoint.provider for endpoint in endpoints_for_model("runway/gen-4.5")] == ["runway"]

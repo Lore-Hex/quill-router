@@ -8,10 +8,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests import lifecycle_clock
+from tests.pinned_manifests import serve_committed_media_routes
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.speech import SPEECH_MODELS
 from trusted_router.storage import STORE
+
+
+@pytest.fixture(autouse=True)
+def _committed_media_routes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """These rules ride each model's one host, whatever the refresh holds."""
+    serve_committed_media_routes(monkeypatch, tmp_path / "media-routes")
+
 
 # Speech routes the catalog clock has not retired (Mistral's Voxtral TTS 26.03
 # retires 2027-04-30; the post-cutover CI clock runs past it).

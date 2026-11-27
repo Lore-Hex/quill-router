@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 
+from tests.provider_holds import committed_route_taken_down
 from trusted_router import catalog_ingest
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_open_weights
 from trusted_router.catalog_ingest import _filter_unserved_provider_endpoints
@@ -201,15 +202,23 @@ def test_known_reseller_routes_are_absent(endpoint_id: str) -> None:
 ])
 def test_direct_and_open_weight_routes_remain(endpoint_id: str) -> None:
     from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
+    from trusted_router.closed_weight_routes import closed_weight_route_disallowed
     from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 
-    provider = endpoint_id.rsplit("@", 1)[1].split("/", 1)[0]
+    model_id, _, rest = endpoint_id.rpartition("@")
+    provider = rest.split("/", 1)[0]
+    # The policy admits the maker, its clouds and open weights, whatever the
+    # catalog lists today.
+    assert not closed_weight_route_disallowed(provider, model_id)
     if endpoint_id.endswith("/prepaid") and provider in PREPAID_PROVIDER_HOLD_REASONS:
         # An operator hold keeps the authorized route dark, settlement-only.
         assert endpoint_id in HELD_PREPAID_SETTLEMENT_ENDPOINTS
         assert endpoint_id not in MODEL_ENDPOINTS
     else:
-        assert endpoint_id in MODEL_ENDPOINTS
+        # The route is in the catalog unless the hourly refresh took its row
+        # down (delisted, held as unserved, canary quarantine), which is not
+        # this policy's doing and must not freeze the refresh.
+        assert endpoint_id in MODEL_ENDPOINTS or committed_route_taken_down(endpoint_id)
 
 
 def test_open_weight_badge_and_route_policy_agree() -> None:

@@ -3,9 +3,17 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.pinned_manifests import serve_committed_media_routes
 from tests.test_transcription import authorize, settle
 from trusted_router import catalog
 from trusted_router.transcription import MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS
+
+
+@pytest.fixture(autouse=True)
+def _committed_media_routes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """These rules ride each model's one host, whatever the refresh holds."""
+    serve_committed_media_routes(monkeypatch, tmp_path / "media-routes")
+
 
 MODEL = "mistralai/voxtral-small-24b"
 

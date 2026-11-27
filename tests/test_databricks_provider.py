@@ -12,7 +12,7 @@ from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.providers import databricks
 from scripts.pricing.refresh import PROVIDER_SLUGS
 from tests import catalog_vehicles
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router.catalog import PROVIDERS
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS, ProviderClient
@@ -359,7 +359,7 @@ def test_databricks_manifest_activates_only_models_with_passing_canaries(
     # unserved-route hold, which the writer carries forward from the committed
     # row this test starts from.
     for model_id in healthy:
-        assert "routable_reason" not in by_id[model_id] or row_on_unserved_route_hold(
+        assert "routable_reason" not in by_id[model_id] or row_taken_down_by_refresh(
             by_id[model_id]
         )
     held = set(databricks._OPERATOR_HOLD_REASONS)
@@ -437,7 +437,7 @@ def test_databricks_kimi_k3_is_held_for_disabled_account_access() -> None:
     assert committed[KIMI_K3]["routable"] is False
     assert committed[KIMI_K3]["routable_reason"] == "provider-access-unavailable"
     # The control serves, unless the refresh itself holds it as unserved.
-    control_held = row_on_unserved_route_hold(committed[CONTROL])
+    control_held = row_taken_down_by_refresh(committed[CONTROL])
     assert committed[CONTROL].get("routable") is not False or control_held
     built = catalog_vehicles.registry_endpoints()
     assert f"{KIMI_K3}@databricks/prepaid" not in built
@@ -479,7 +479,7 @@ def test_databricks_kimi_k3_hold_survives_refresh_and_passing_canary(
     assert by_id[KIMI_K3]["routable_reason"] == "provider-access-unavailable"
     # The control carries no hold, unless the refresh's own unserved-route
     # hold was on the committed row this test starts from.
-    assert "routable_reason" not in by_id[CONTROL] or row_on_unserved_route_hold(by_id[CONTROL])
+    assert "routable_reason" not in by_id[CONTROL] or row_taken_down_by_refresh(by_id[CONTROL])
 
 
 def test_databricks_kimi_k3_hold_stays_out_of_price_index_and_snapshot(

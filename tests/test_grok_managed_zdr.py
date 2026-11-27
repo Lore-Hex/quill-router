@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 from fastapi import HTTPException
 
+from tests.pinned_manifests import serve_committed_route
 from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     MODELS,
@@ -36,6 +37,14 @@ def test_grok_zdr_is_a_managed_account_setting_not_a_provider_default():
     shape = provider_to_openrouter_shape(provider)
     assert shape["prepaid_zero_data_retention"] is True
     assert shape["provider_zero_data_retention"] is not True
+
+
+@pytest.fixture(autouse=True)
+def _grok_routes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """These rules ride xAI's own Grok 4.7 routes, whether or not the hourly
+    refresh has the row down this hour."""
+    for kind in ("prepaid", "byok"):
+        serve_committed_route(monkeypatch, tmp_path / kind, f"x-ai/grok-4.7@grok/{kind}")
 
 
 def test_grok_credits_qualify_for_zdr_but_byok_and_confidential_do_not():

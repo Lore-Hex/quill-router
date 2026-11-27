@@ -49,6 +49,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.requests import Request
 
+from tests.pinned_manifests import serve_committed_route
 from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_store
 from trusted_router.catalog import META_MODEL_IDS, MODELS, NAMED_DECISION_MODEL_PROVIDERS
 from trusted_router.catalog_data import PRIVATE_PROXY_MODEL_TARGETS
@@ -542,14 +543,19 @@ def test_the_typed_store_matrix_is_byte_identical(monkeypatch: pytest.MonkeyPatc
     ("us-central1", 200), ("us-east4", 200), ("us-west1", 200), ("europe-west4", 200),
 ])
 def test_native_decision_origin_contract_is_byte_identical(
-    backend, region, expected, monkeypatch, caplog,
+    backend, region, expected, monkeypatch, caplog, tmp_path,
 ) -> None:
+    # The decision route is Regolo's committed row, whether or not the hourly
+    # refresh has it down this hour.
+    serve_committed_route(monkeypatch, tmp_path, "cloudflare/clef-flash@regolo/prepaid")
     case = {"model": "cloudflare/clef-flash", "route_type": "decide", "region": region}
     assert _compare([case], backend, monkeypatch, caplog) == {expected: 1}
 
 
-def test_the_comparison_rejects_missing_native_origin_guard(monkeypatch, caplog) -> None:
+def test_the_comparison_rejects_missing_native_origin_guard(monkeypatch, caplog, tmp_path) -> None:
     from trusted_router import authorize_candidates
+
+    serve_committed_route(monkeypatch, tmp_path, "cloudflare/clef-flash@regolo/prepaid")
 
     monkeypatch.setattr(authorize_candidates, "EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL", {})
     case = {"model": "cloudflare/clef-flash", "route_type": "decide"}

@@ -8,7 +8,7 @@ import pytest
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import boundless
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog_registry import MODEL_ENDPOINTS
 
@@ -163,7 +163,7 @@ def test_boundless_survivors_keep_serving_after_the_cutoff() -> None:
         assert "retirement_at" not in rows[model_id]
     # A survivor the refresh itself holds as unserved is dark until that hold
     # lifts. It is still not retired, which the loop above checks for all.
-    held = {model_id for model_id in _OPEN_SURVIVORS if row_on_unserved_route_hold(rows[model_id])}
+    held = {model_id for model_id in _OPEN_SURVIVORS if row_taken_down_by_refresh(rows[model_id])}
     for model_id in _OPEN_SURVIVORS - held:
         assert rows[model_id].get("routable") is not False
         assert f"{model_id}@boundless/prepaid" in MODEL_ENDPOINTS

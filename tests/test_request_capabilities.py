@@ -11,7 +11,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
-from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
+from tests.pinned_manifests import serve_committed_route
+from tests.provider_holds import (
+    committed_route_taken_down,
+    manifest_rows,
+    row_taken_down_by_refresh,
+)
 from trusted_router import catalog, catalog_ingest, provider_lifecycle, request_capabilities
 from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL, Model, ModelEndpoint
 from trusted_router.request_capabilities import (
@@ -102,12 +107,18 @@ def test_catalog_models_publish_verified_unions_and_unknown_effort(client):
         "openai/gpt-oss-120b": dict(reasoning_effort=["low", "medium", "high"], tools=True, seed=True, vision=False, confidential=True),
         "google/gemini-3-flash-preview": dict(reasoning_effort=None, tools=True, seed=True, vision=True, confidential=False),
     }
+    # The recovered, reviewed Chutes TEE route supplies 0731's confidential
+    # capability; an unqualified provider badge must not be its source. While
+    # the hourly refresh has that row down (delisted, held, a failed canary)
+    # no route supplies it, and the model must not claim it.
+    chutes_down = committed_route_taken_down("deepseek/deepseek-v4-flash-0731@chutes/prepaid")
+    if chutes_down:
+        expected["deepseek/deepseek-v4-flash-0731"]["confidential"] = False
     for model_id, capabilities in expected.items():
         assert rows[model_id]["trustedrouter"]["capabilities"] == capabilities, model_id
-    # The recovered, reviewed Chutes TEE route supplies this capability;
-    # an unqualified provider badge must not be its source.
     flash_routes = rows["deepseek/deepseek-v4-flash-0731"]["trustedrouter"]["endpoints"]
-    assert {route["provider"] for route in flash_routes if route["capabilities"]["confidential"]} == {"chutes"}
+    confidential_hosts = {route["provider"] for route in flash_routes if route["capabilities"]["confidential"]}
+    assert confidential_hosts == (set() if chutes_down else {"chutes"})
     assert "capabilities" not in rows["trustedrouter/auto"]["trustedrouter"]
 
 
@@ -153,7 +164,7 @@ def test_gpt_55_verified_tools_keep_openai_with_require_parameters(client):
     # The refresh's own unserved-route hold ends the prepaid route until it
     # lifts; the customer's own key keeps the other.
     committed = {row["id"]: row for row in manifest_rows("openai")}
-    if row_on_unserved_route_hold(committed.get(model.id, {})):
+    if row_taken_down_by_refresh(committed.get(model.id, {})):
         expected.discard("openai/gpt-5.5@openai/prepaid")
     assert {endpoint.id for _, endpoint in routes if endpoint.provider == "openai"} == expected
     response = client.get(f"/v1/models/{model.id}/endpoints")
@@ -188,7 +199,7 @@ def test_reviewed_tools_contracts_publish_and_keep_provider_routes(client):
         ]
         # A control the refresh itself holds as unserved has no route to read.
         committed = {row["id"]: row for row in manifest_rows(provider)}
-        assert endpoints or row_on_unserved_route_hold(committed.get(model_id, {})), (provider, model_id)
+        assert endpoints or row_taken_down_by_refresh(committed.get(model_id, {})), (provider, model_id)
         for endpoint in endpoints:
             assert endpoint["capabilities"]["tools"] is tools, endpoint["id"]
             assert ("tools" in endpoint["supported_parameters"]) is tools, endpoint["id"]
@@ -477,7 +488,10 @@ def test_zdr_does_not_imply_confidential(monkeypatch):
     ("nomic-ai/nomic-embed-text", "tinfoil"),
     ("qwen/qwen3-embedding-4b", "privatemode"),
 ])
-def test_reviewed_confidential_media_capability_matches_routing(model_id, provider):
+def test_reviewed_confidential_media_capability_matches_routing(model_id, provider, monkeypatch, tmp_path):
+    # The reviewed host's committed route, whether or not the hourly refresh
+    # has it down this hour.
+    serve_committed_route(monkeypatch, tmp_path, f"{model_id}@{provider}/prepaid")
     model = catalog.MODELS[model_id]
     endpoints = [ep for ep in catalog.endpoints_for_model(model_id) if ep.provider == provider]
     assert endpoints

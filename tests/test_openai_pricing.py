@@ -10,6 +10,7 @@ import pytest
 from scripts.pricing import base
 from scripts.pricing.parsers import openai as parser
 from scripts.pricing.providers import openai
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router import catalog_ingest
 from trusted_router.catalog_capabilities import manifest_supported_parameters
 
@@ -154,7 +155,9 @@ def test_openai_62_published_standard_prices_match_committed_routes(name, short,
     assert canonical not in parser.parse(batch)
     tiers = parser.parse(f"{batch}\n### Standard pricing data\n{header}\n{row}")[canonical]["tiers"]
     route = next(r for r in json.loads(openai.MANIFEST_PATH.read_text())["models"] if r["id"] == canonical)
-    assert route["upstream_id"] == model and route["routable"]
+    # The refresh may have the row down this hour (delisted, held, a failed
+    # canary); its committed prices are what the parser must match either way.
+    assert route["upstream_id"] == model and (route["routable"] or row_taken_down_by_refresh(route))
     assert tiers == [
         {"max_prompt_tokens": t["max_prompt_tokens"], "prompt_micro_per_m": t["input_token_price_per_m"],
          "completion_micro_per_m": t["output_token_price_per_m"],

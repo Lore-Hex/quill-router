@@ -260,7 +260,9 @@ def test_signed_evidence_delta_survives_strict_storage_decode():
         bounded_json(b'{"booked_minus_frozen":-17,"booked_minus_frozen":0}', signed=True)
 
 
-def test_cpu_budget_has_a_failing_witness(monkeypatch):
+def test_cpu_budget_has_a_failing_witness(monkeypatch, tmp_path):
+    from tests.pinned_manifests import serve_shadow_benchmark_routes
+    serve_shadow_benchmark_routes(monkeypatch, tmp_path)
     import pytest
 
     from scripts.async_settle import shadow_benchmark
@@ -518,7 +520,9 @@ def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch, shadow_
     rt.executor.shutdown()
 
 
-def test_cpu_budget_rejects_only_cold_tail(monkeypatch):
+def test_cpu_budget_rejects_only_cold_tail(monkeypatch, tmp_path):
+    from tests.pinned_manifests import serve_shadow_benchmark_routes
+    serve_shadow_benchmark_routes(monkeypatch, tmp_path)
 
     from scripts.async_settle import shadow_benchmark
     calls, tick = 0, 0

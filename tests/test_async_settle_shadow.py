@@ -329,8 +329,10 @@ def test_optimized_projection_matches_builder():
             assert b.canonical_bytes(project((e,),at)) == b.canonical_bytes(expected)
 
 
-def test_transport_measured_shapes():
+def test_transport_measured_shapes(monkeypatch, tmp_path):
     from scripts.async_settle.shadow_benchmark import cases
+    from tests.pinned_manifests import serve_shadow_benchmark_routes
+    serve_shadow_benchmark_routes(monkeypatch, tmp_path)
     from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
     measured = list(cases())
     # The named shapes are catalog-stable pins from the appendix measurement record.
@@ -365,8 +367,11 @@ def test_invalid_signature():
     assert result.classification == 'hash' and result.reasons == {'proof_signature'}
 
 
-def test_hash_only_literals_and_named_projection_lengths():
+def test_hash_only_literals_and_named_projection_lengths(monkeypatch, tmp_path):
+    from scripts.async_settle.shadow_benchmark import NAMED_MODELS
+    from tests.pinned_manifests import serve_shadow_benchmark_routes
     from trusted_router.catalog import MODEL_ENDPOINTS
+    serve_shadow_benchmark_routes(monkeypatch, tmp_path)
     root = FIXTURE_PATH.parent
     only = json.loads((root/'shadow_hash_only_v1.json').read_bytes())
     corrected = json.loads((root/'shadow_hash_only_corrected_v1.json').read_bytes())
@@ -375,8 +380,7 @@ def test_hash_only_literals_and_named_projection_lengths():
     rebuilt = snapshot_from_object(corrected['rebuilt_snapshot'])
     result = compare(wire(corrected['envelope']),context(rebuild=lambda:rebuilt),[signer().trusted])
     assert result.classification == corrected['classification'] and result.reasons == {corrected['reason']}
-    models = ('openai/gpt-6-astra','openai/gpt-5.6-sol','openai/gpt-6.1-sol','openai/gpt-5.5')
-    endpoints = tuple(next(e for e in MODEL_ENDPOINTS.values() if e.model_id == model and e.provider == 'openai' and e.usage_type == 'Credits') for model in models)
+    endpoints = tuple(next(e for e in MODEL_ENDPOINTS.values() if e.model_id == model and e.provider == 'openai' and e.usage_type == 'Credits') for model in NAMED_MODELS)
     assert [len(b.canonical_bytes(project(endpoints[:n],context().authorization.created_at))) for n in range(1,5)] == [1041,1884,2726,3563]
 
 

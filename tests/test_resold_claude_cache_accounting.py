@@ -36,6 +36,7 @@ from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import FakeSpannerDatabase, _ParamTypes
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
+from tests.provider_holds import manifest_rows, row_taken_down_by_refresh
 from tests.test_async_settle_handler import env, prepare
 from tests.test_async_settle_proof import catalog, legacy_body
 from tests.test_billing_snapshot import CASES
@@ -218,7 +219,20 @@ def test_the_rule_is_the_enclaves_dispatch_over_the_whole_catalog() -> None:
     # Claude rows, and the catalog publishes exactly the ones whose hourly
     # canary passed, so the rule and that table agree too.
     assert not _bedrock_runtime_table_disagreements(MODEL_ENDPOINTS.values(), _bedrock_manifest_rows())
-    # The equivalence is over a catalog that reaches every branch of it.
+    # The equivalence is over a catalog that reaches every branch of it. A
+    # provider's Claude routes may all be down this hour (the hourly refresh
+    # delisted, held or quarantined their rows); then its branch is reached
+    # through those committed rows instead, as the routes they were.
+    for provider in ("anthropic", "amazon-bedrock", "google-vertex"):
+        if by_kind[provider]:
+            continue
+        rows = [row for row in manifest_rows(provider)
+                if row["id"].startswith(CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX) and row_taken_down_by_refresh(row)]
+        assert rows, (provider, by_kind)
+        for row in rows:
+            assert provider_input_excludes_cache(provider, row["id"])
+            assert _enclave_relays_anthropic_native_usage(provider, row.get("upstream_id"), row["id"])
+        by_kind[provider] = len(rows)
     assert by_kind["anthropic"] >= 1 and by_kind["amazon-bedrock"] >= 1 and by_kind["google-vertex"] >= 1, by_kind
     # Claude routes only through Anthropic and its authorized clouds
     # (closed_weight_routes), so no other provider serves an anthropic/ model.

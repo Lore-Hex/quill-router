@@ -7,6 +7,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
+from tests.pinned_manifests import serve_committed_route
 from tests.route_inventory import route_paths
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -172,8 +173,11 @@ def test_funding_token_must_not_share_gateway_authority():
 
 
 @pytest.mark.parametrize("as_candidate", [False, True])
-def test_only_authenticated_fal_primary_submit_402_switches(test_settings, monkeypatch, as_candidate):
+def test_only_authenticated_fal_primary_submit_402_switches(test_settings, monkeypatch, as_candidate, tmp_path):
     endpoint = "fal/flux-1-schnell@fal/prepaid"
+    # The rule rides fal's committed route, whether or not the hourly refresh
+    # has it down this hour.
+    serve_committed_route(monkeypatch, tmp_path, endpoint)
     gen = "a" * 64
     test_settings.managed_key_generations = {"fal": gen}
     test_settings.internal_gateway_token = secrets.token_hex(16)

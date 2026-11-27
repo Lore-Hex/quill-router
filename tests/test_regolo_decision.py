@@ -186,8 +186,13 @@ def test_snapshot_preserves_decision_gateway_admission(served_clef):
 
 
 @pytest.mark.catalog_as_built
-def test_catalog_overrides_stale_chat_classification():
+def test_catalog_overrides_stale_chat_classification(monkeypatch, tmp_path):
+    from tests.pinned_manifests import serve_committed_route
     from trusted_router.catalog import MODELS
+
+    # Regolo's committed decision row, whether or not the hourly refresh has
+    # it down this hour.
+    serve_committed_route(monkeypatch, tmp_path, f"{regolo.DECISION_MODEL_ID}@regolo/prepaid")
 
     model = MODELS[regolo.DECISION_MODEL_ID]
     assert model.supports_decide and not model.supports_chat

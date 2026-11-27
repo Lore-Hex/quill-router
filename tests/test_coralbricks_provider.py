@@ -10,6 +10,14 @@ import pytest
 from scripts.pricing.providers import _direct_openai
 from scripts.pricing.providers import coralbricks as p
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
+from tests.pinned_manifests import serve_committed_route
+
+
+@pytest.fixture(autouse=True)
+def _committed_coralbricks_route(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The route these rules check is CoralBricks's committed V4.1 Flash row,
+    whether or not the hourly refresh has it down this hour."""
+    serve_committed_route(monkeypatch, tmp_path / "committed", "deepseek/deepseek-v4.1-flash@coralbricks/prepaid")
 
 
 def row(native="deepseek-v4.1-flash-fast"):

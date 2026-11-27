@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 from fastapi import HTTPException
 
+from tests.pinned_manifests import serve_committed_route
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
@@ -42,7 +43,11 @@ def test_approved_country_sets():
     )
 
 
-def test_authorize_and_replay_after_policy_change(client):
+def test_authorize_and_replay_after_policy_change(client, monkeypatch, tmp_path):
+    # The policy rides Cerebras's committed routes, whether or not the hourly
+    # refresh has one down this hour.
+    for endpoint_id in ("qwen/qwen3.8-27b@cerebras/prepaid", "openai/gpt-oss-120b@cerebras/prepaid"):
+        serve_committed_route(monkeypatch, tmp_path, endpoint_id)
     user = STORE.ensure_user("origin-policy@example.com")
     ws = STORE.list_workspaces_for_user(user.id)[0]
     _, key = STORE.create_api_key(workspace_id=ws.id, name="test", creator_user_id=user.id)

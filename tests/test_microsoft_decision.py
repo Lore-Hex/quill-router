@@ -9,7 +9,7 @@ import pytest
 from scripts.pricing.providers import azure
 from scripts.providers import sync_azure_foundry as sync
 from tests.lifecycle_clock import CATALOG_CLOCK
-from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
+from tests.provider_holds import manifest_rows, row_taken_down_by_refresh
 from tests.test_azure_provider import _canary_candidate, _minimum_retail_rows, _model, _usage
 from tests.test_decide_models import _authorize
 from trusted_router import catalog_ingest, provider_lifecycle
@@ -24,7 +24,7 @@ def _held_as_unserved() -> bool:
     """The refresh itself holds the decision row as unserved: until that hold
     lifts the route is dark, as it is once retired."""
     rows = {row["id"]: row for row in manifest_rows("azure")}
-    return row_on_unserved_route_hold(rows.get(MODEL, {}))
+    return row_taken_down_by_refresh(rows.get(MODEL, {}))
 
 
 def test_microsoft_decision_catalog_and_price() -> None:
