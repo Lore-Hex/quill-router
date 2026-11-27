@@ -122,8 +122,8 @@ def test_returning_user_and_zero_credit_signup_do_not_use_the_allowance(backend:
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_capped_signup_is_not_enrolled_in_social_rewards(backend: str) -> None:
     store = BACKENDS[backend]()
-    assert _credit_for(store, "a@corp.example", limit=1, credit=150_000, issuer="issuer") == 150_000
-    assert _credit_for(store, "b@corp.example", limit=1, credit=150_000, issuer="issuer") == 0
+    assert _credit_for(store, "a@corp.example", limit=1, credit=30_000, issuer="issuer") == 30_000
+    assert _credit_for(store, "b@corp.example", limit=1, credit=30_000, issuer="issuer") == 0
     a = store.find_user_by_email("a@corp.example")
     b = store.find_user_by_email("b@corp.example")
     assert store.get_social_reward_enrollment(a.id) is not None

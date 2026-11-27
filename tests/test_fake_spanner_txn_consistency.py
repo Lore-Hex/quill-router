@@ -179,7 +179,7 @@ def test_concurrent_grant_after_receipt_read_retries_without_double_credit(monke
     from trusted_router.typed_balance import live_credit_summary
 
     store, db = make_fake_store()
-    user = store.ensure_user('grant-race@example.com', trial_credit_microdollars=150_000,
+    user = store.ensure_user('grant-race@example.com', trial_credit_microdollars=30_000,
                              social_rewards_issuer='primary')
     enrollment = store.get_social_reward_enrollment(user.id)
     assert enrollment is not None
@@ -206,7 +206,7 @@ def test_concurrent_grant_after_receipt_read_retries_without_double_credit(monke
     assert db.aborts == aborts_before + 1
     assert store.has_credit_grant(workspace_id, event_id)
     summary = live_credit_summary(workspace_id, store=store)
-    assert summary is not None and summary['total_credits'] == 180_000
+    assert summary is not None and summary['total_credits'] == 60_000
 
     # A genuinely duplicate insert on a fresh transaction must still fail.
     import pytest

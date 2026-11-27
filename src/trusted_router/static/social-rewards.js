@@ -115,7 +115,7 @@
         ? "View rewards" : "Earn API credit for a follow";
     }
     openers.forEach((button) => { button.hidden = !(state.eligible && state.enabled); });
-    if (!state.enabled && dialog.open) dialog.close();
+    if ((!state.eligible || !state.enabled) && dialog.open) dialog.close();
     if (!state.eligible) {
       list.replaceChildren();
       notice.hidden = false;

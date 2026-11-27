@@ -28,7 +28,7 @@ def test_reward_throttle_survives_new_session_and_generic_limiter_disabled(monke
     rejected = _post(client, action="github")
     assert rejected.status_code == 429
     assert 1 <= int(rejected.headers["Retry-After"]) <= 60
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 300_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_180_000
     # Read-only reconciliation stays available after the request quota is spent.
     status = client.get("/console/social-rewards")
     assert status.status_code == 200
@@ -52,4 +52,4 @@ def test_reward_limiter_failure_cannot_invoke_credit_grant(monkeypatch):
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "5"
     assert granted == []
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_030_000

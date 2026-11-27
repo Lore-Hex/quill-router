@@ -39,6 +39,7 @@ from trusted_router.auth import SettingsDep, set_session_cookie
 from trusted_router.config import Settings
 from trusted_router.domains import configured_control_domains, request_hostname
 from trusted_router.errors import api_error, expected_api_error
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.oauth_provider import (
     OAUTH_PROVIDERS,
     OAuthCodeRejected,
@@ -55,7 +56,7 @@ from trusted_router.signup_gate import (
     require_non_disposable_email,
     starter_credit_for_email,
 )
-from trusted_router.social_rewards import SIGNUP_MICRODOLLARS, campaign_enabled
+from trusted_router.social_rewards import campaign_enabled
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -176,7 +177,9 @@ def _starter_credit(provider: OAuthProvider, info: OAuthUserInfo, settings: Sett
         info.provider_account_created_at
     ):
         return 0
-    return starter_credit_for_email(info.email, settings.signup_trial_credit_microdollars)
+    return starter_credit_for_email(
+        info.email, min(settings.signup_trial_credit_microdollars, DEFAULT_SIGNUP_CREDIT_MICRODOLLARS)
+    )
 
 
 def _persist_login(
@@ -236,7 +239,7 @@ def _persist_login(
             )
             result = STORE.signup(
                 email=info.email,
-                trial_credit_microdollars=(SIGNUP_MICRODOLLARS if enroll_rewards else starter_credit),
+                trial_credit_microdollars=starter_credit,
                 email_verified=True,
                 social_rewards_issuer=settings.social_rewards_issuer_id if enroll_rewards else None,
                 credit_domain_limit=(

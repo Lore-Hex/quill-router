@@ -597,8 +597,7 @@ class Settings(BaseSettings):
     # Starter credit granted exactly once with a new email/social OAuth account's
     # first workspace. Wallet-only and secondary workspaces receive no grant.
     # This default is the deployed value in every cloud (rollout.sh does not
-    # override it). It is the base allowance when social rewards do not apply;
-    # enrolled accounts receive $0.15 plus fixed rewards, at most $0.30 total.
+    # override it). Social enrollment never increases the starter amount.
     # The value lives in money.py, which the stores' default grant also reads.
     signup_trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
     # Enabled explicitly in the primary deployment configuration.
