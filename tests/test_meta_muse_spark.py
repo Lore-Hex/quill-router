@@ -20,7 +20,12 @@ MODEL_ID = "meta/muse-spark-1.1"
 ENDPOINT_ID = f"{MODEL_ID}@meta/prepaid"
 
 
-def test_muse_spark_routes_use_direct_meta_without_claiming_zdr() -> None:
+def test_muse_spark_routes_use_direct_meta_without_claiming_zdr(monkeypatch, tmp_path) -> None:
+    from tests.pinned_manifests import serve_committed_route
+
+    # Meta's committed rows, whether or not the hourly refresh has one down.
+    for version in ("1.1", "1.2", "1.3"):
+        serve_committed_route(monkeypatch, tmp_path / version, f"meta/muse-spark-{version}@meta/prepaid")
     provider = PROVIDERS["meta"]
     assert provider.name == "Meta"
     assert provider.supports_prepaid is True

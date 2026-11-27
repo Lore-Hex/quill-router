@@ -70,7 +70,12 @@ def test_beam_is_discovered_without_a_handwritten_id_mapping(
     assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == _customer_price(130_000)
 
 
-def test_committed_beam_route_has_verified_pricing_and_privacy() -> None:
+def test_committed_beam_route_has_verified_pricing_and_privacy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from tests.pinned_manifests import serve_committed_route
+
+    # Baseten's committed row, whether or not the hourly refresh has the route
+    # down this hour.
+    serve_committed_route(monkeypatch, tmp_path, f"{MODEL_ID}@baseten/prepaid")
     manifest = json.loads(baseten.MANIFEST_PATH.read_text())
     row = next(row for row in manifest["models"] if row["id"] == MODEL_ID)
     model = MODELS[MODEL_ID]
