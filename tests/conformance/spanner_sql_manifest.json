@@ -1,5 +1,7 @@
 {
   "builders": {
+    "storage_gcp_counter_dml:debit_credit_shard_statement": "9faecfc74c9cabffaa888b4cfe663fc1ce78e2b87d5795c41f2426ed33a44694",
+    "storage_gcp_counter_dml:transfer_credit_budget_statements": "7d959cd8e1c35e4f1bf46b0ce3d359b42d52079fd0dc3e22374c57d505f46e80",
     "storage_gcp_analytics_outbox:enqueue_statement": "79aefcba58e80b030f7d48ec211cb998f72478d7347e11905d7a36dbdf4c625e",
     "storage_gcp_async_admission:admission_statement": "7fba577deb934bafbcfabc57b04c3595cf715498b4e97ba87258f98decd7c152",
     "storage_gcp_async_admission:control_statement": "c6511216f97d996b4eac532738b7f174b6c1262797d1b09f5ec8e7ad3f8fee6e",
@@ -1151,8 +1153,8 @@
         }
       ]
     },
-    "storage_gcp_counter_dml:debit_credit_shard:1": {
-      "fingerprint": "3196c9abb65d6e856720ce4e9be5e897e932954c3ffd5565c9325d15aac7deb7",
+    "storage_gcp_counter_dml:debit_credit_shard_statement:1": {
+      "fingerprint": "9faecfc74c9cabffaa888b4cfe663fc1ce78e2b87d5795c41f2426ed33a44694",
       "scenarios": [
         {
           "bindings": {},
@@ -1178,8 +1180,8 @@
         }
       ]
     },
-    "storage_gcp_counter_dml:transfer_credit_budget:1": {
-      "fingerprint": "03771887a0a71a8cff40dd5f89bd1513cade0b57d1907314a529af679b011e92",
+    "storage_gcp_counter_dml:transfer_credit_budget_statements:1": {
+      "fingerprint": "7d959cd8e1c35e4f1bf46b0ce3d359b42d52079fd0dc3e22374c57d505f46e80",
       "scenarios": [
         {
           "bindings": {},
@@ -1729,7 +1731,7 @@
       ]
     },
     "storage_gcp_credit_rebalance:txn:1": {
-      "fingerprint": "6821ae3302810b87b9d82f450345d8acfd1f2de82f8e727d79603a6ddf0d5503",
+      "fingerprint": "0bfa94c35d6f0aed01e229d48e35597f63db4a53e3ab94b2b5d5cb5678766de1",
       "scenarios": [
         {
           "bindings": {},
@@ -5153,9 +5155,8 @@
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
     "storage_gcp_counter_dml:reserve_credit": "918d7a73492b0dbee6d859c244f96ba9a90b4c25f049dcd90d4cad292794fbb9",
     "storage_gcp_counter_dml:debit_workspace_credit": "ecb5f2a550bafecf029f91f3e60e39d118419f887c326c7e88221195eb1a4a0d",
-    "storage_gcp_counter_dml:debit_credit_shard": "3196c9abb65d6e856720ce4e9be5e897e932954c3ffd5565c9325d15aac7deb7",
+    "storage_gcp_counter_dml:debit_credit_shard": "fb5cb68e0a661c09988fb142317719b1dfd1981b0adf002bd06306c78f9cb35d",
     "storage_gcp_counter_dml:credit_credit_shard": "0027a78221bba0a336753c0e88d9c53f8cd979e8c58c0abd13bd685cb7cce626",
-    "storage_gcp_counter_dml:transfer_credit_budget": "03771887a0a71a8cff40dd5f89bd1513cade0b57d1907314a529af679b011e92",
     "storage_gcp_counter_dml:reserve_key": "2b60f448c465b4e09304138e051112d653b413e758361e9068e0a830516346de",
     "storage_gcp_counter_dml:insert_reservation": "5003ba8b2eb7e352be932a768f44b7b36ade7acf6b57fa11f00b22136f98400f",
     "storage_gcp_counter_dml:complete_reservation_retention": "04b8a59463b4526c5cb9a597aa50530988691ed1366d38232fb96e450dadcc6b",
@@ -5185,7 +5186,7 @@
     "storage_gcp_credit_json_cleanup:_inspect_reader": "8e30b9701e22a9c56307bfecca369515b6693c3bc760830118d0532b31cff3b1",
     "storage_gcp_credit_json_cleanup:legacy_credit_workspace_ids": "31c5139361245bdf1d10f540c13ccd18d91aa1c79ccc0973aaca6b798aad59d2",
     "storage_gcp_credit_rebalance:credit_headroom_precheck": "a6c755acc27a1ac95b623b5515ebd7ed346141ad2beac34b3b3d9ebfab62eee0",
-    "storage_gcp_credit_rebalance:rebalance_credit_for_estimate.txn": "6821ae3302810b87b9d82f450345d8acfd1f2de82f8e727d79603a6ddf0d5503",
+    "storage_gcp_credit_rebalance:rebalance_credit_for_estimate.txn": "0bfa94c35d6f0aed01e229d48e35597f63db4a53e3ab94b2b5d5cb5678766de1",
     "storage_gcp_credit_shard_admin:_typed_state": "03f3c5d102c5aa80066c888daa1862cd2c35adefbe02dfd34663aac0583255a1",
     "storage_gcp_credit_shard_admin:reshard_credit_account.txn": "9c05541b6c3c2d41ae51f34f2ad429f477c0a54ed4cf1e61108f81e579f96a91",
     "storage_gcp_credit_transfer:_read_shard_headroom": "fce73a9120f77ab688a8293814e89257842d447c2cf36375c5c51b35fa12fa80",

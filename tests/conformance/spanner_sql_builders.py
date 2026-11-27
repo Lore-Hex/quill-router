@@ -76,6 +76,22 @@ class Capture:
 
 def builder_cases() -> list[SQLCase]:
     cases = []
+    repairs = [
+        stmt
+        for donor, amount in ((2, 7), (1, 3))
+        for stmt in counters.transfer_credit_budget_statements(
+            pt, "repair-ws", amount, donor_shard=donor, target_shard=0,
+        )
+    ]
+    cases.append(SQLCase(
+        "credit-rebalance-two-donors", repairs, batch=True,
+        seed=[(
+            "INSERT INTO tr_credit_balance (workspace_id, shard, total_credits, total_usage, reserved) "
+            "VALUES ('repair-ws', 0, 0, 0, 0), ('repair-ws', 1, 6, 1, 2), ('repair-ws', 2, 8, 0, 1)",
+            {}, {},
+        )],
+        expected_counts=[1, 1, 1, 1],
+    ))
     from trusted_router.async_settle_shadow_evidence import CONTROL, COUNTER, SAMPLE
     from trusted_router.storage_gcp_async_settle_shadow import (
         day_statement,
