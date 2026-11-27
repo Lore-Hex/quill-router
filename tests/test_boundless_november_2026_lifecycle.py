@@ -115,14 +115,14 @@ def test_notice_names_map_to_the_retired_route(model_id: str) -> None:
 
 @pytest.mark.parametrize("model_id", sorted(_RETIRING))
 def test_retiring_routes_serve_before_the_cutoff_and_retire_at_it(model_id: str) -> None:
-    _, _, native_id, _ = _RETIRING[model_id]
+    notice_name, _, native_id, _ = _RETIRING[model_id]
     before = _CUTOFF - timedelta(minutes=1)
     assert not provider_lifecycle.provider_model_retired("boundless", model_id, native_id, at=before)
     assert provider_lifecycle.provider_model_retired("boundless", model_id, native_id, at=_CUTOFF)
     assert provider_lifecycle.provider_model_retired("boundless", model_id, at=_CUTOFF)
-    assert provider_lifecycle.provider_model_retired(
-        "boundless", "unrelated/model", native_id, at=_CUTOFF,
-    )
+    for upstream in {native_id, notice_name}:
+        assert not provider_lifecycle.provider_model_retired("boundless", "unrelated/model", upstream, at=before)
+        assert provider_lifecycle.provider_model_retired("boundless", "unrelated/model", upstream, at=_CUTOFF)
 
 
 def test_legacy_short_upstream_ids_retire_too() -> None:
@@ -221,10 +221,15 @@ def test_gpt_oss_120b_stays_held_until_the_cutoff() -> None:
 
 def test_manifest_maps_notice_names_and_records_the_cutover() -> None:
     rows = _manifest_rows()
-    for model_id, (_, title, native_id, replacements) in _RETIRING.items():
+    for model_id, (notice_name, title, native_id, replacements) in _RETIRING.items():
         row = rows[model_id]
         assert row["title"] == title
-        assert row["upstream_id"] == native_id
+        if row["upstream_id"] != native_id:
+            # The post-cutover listing can keep just the unpriced notice alias.
+            # No other substitution, or active route under that alias, qualifies.
+            assert row["upstream_id"] == notice_name
+            assert row["routable"] is False
+            assert row["routable_reason"] in {"awaiting-price", "delisted-upstream"}
         assert row["retirement_at"] == _MANIFEST_CUTOFF
         assert row.get("replacement_model_id") == (replacements[0] if replacements else None)
     legacy_id, legacy_upstream = _LEGACY_NEMOTRON
