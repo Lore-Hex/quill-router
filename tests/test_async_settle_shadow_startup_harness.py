@@ -313,12 +313,14 @@ async def test_listener_answers_while_harness_waits():
         return {'live': True}
     from tests.test_async_settle_shadow_startup_harness_round8 import start_serving
     await start_serving(app)
-    await asyncio.wait_for(entered.wait(), .2)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
-        assert (await asyncio.wait_for(client.get('/live'), .2)).json() == {'live': True}
-    assert not h.task.done()
-    release.set()
-    await h.task
+    try:
+        await asyncio.wait_for(entered.wait(), 30)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            assert (await client.get('/live')).json() == {'live': True}
+        assert not h.task.done()
+    finally:
+        release.set()
+        await h.task
 
 
 @pytest.mark.parametrize('partial', [False, True])

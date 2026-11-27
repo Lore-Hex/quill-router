@@ -7,13 +7,13 @@ import ssl
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
+from tests.async_settle_startup_clock import StartupClock
 from tests.test_async_settle_shadow_cohort import config
 from tests.test_async_settle_shadow_startup_harness import descriptor, fake_harness
 from trusted_router.services import async_settle_shadow_startup_harness as h
@@ -129,15 +129,16 @@ async def test_client_setup_keeps_listener_available(monkeypatch, setup):
     operation = h.dependency_operations(None, {"config": {"dependencies": {"router": [target]}}}, settings=settings)
     app = FastAPI()
     startup, _, _ = fake_harness()
+    clock = StartupClock(monkeypatch)
     entered, release = threading.Event(), threading.Event()
     worker_ids = []
     def stalled(*args, **kwargs):
         worker_ids.append(threading.get_ident())
         entered.set()
-        release.wait(.4)
+        assert release.wait(30), "listener did not answer while setup was blocked"
         raise ValueError("unfinished setup")
     async def begin():
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="unfinished setup"):
             await operation(target, 1_000_000)
     app.state.async_settle_shadow_startup = startup
     app.state.async_settle_shadow_startup_begin = begin
@@ -152,14 +153,13 @@ async def test_client_setup_keeps_listener_available(monkeypatch, setup):
         else:
             monkeypatch.setattr(h, "regional_attestation_resource", stalled)
         try:
-            started = time.monotonic()
             h.listener_started(app)
-            while not entered.is_set():
-                await asyncio.sleep(.005)
+            assert await asyncio.to_thread(entered.wait, 30)
             assert (await client.get("/live")).json() == {"live": True}
-            assert time.monotonic()-started < .25
+            assert not startup.task.done()
             assert worker_ids == [worker_ids[0]] and worker_ids[0] != threading.get_ident()
         finally:
+            clock.resume()
             release.set()
             await startup.task
 
@@ -169,31 +169,35 @@ async def test_whole_setup_deadline_and_single_worker(monkeypatch):
     target = dict(operation="transport", resource=h.regional_attestation_resource(settings),
         region=settings.effective_serving_region)
     operation = h.dependency_operations(None, {"config": {"dependencies": {"router": [target]}}}, settings=settings)
+    clock = StartupClock(monkeypatch)
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     def stalled(*args):
         entered.set()
         try:
-            release.wait(2)
+            assert release.wait(30), "setup deadline did not fire"
             raise ValueError("unfinished target")
         finally:
             finished.set()
     monkeypatch.setattr(h, "regional_attestation_resource", stalled)
+    task = asyncio.create_task(operation(target, 50_000))
     try:
-        started = time.monotonic()
+        assert await asyncio.to_thread(entered.wait, 30)
+        assert not task.done()
+        await clock.advance(.049)
+        assert not task.done()
+        await clock.advance(.001001)
+        assert task.done(), "50 ms startup deadline did not expire"
         with pytest.raises(TimeoutError):
-            await operation(target, 50_000)
-        assert entered.is_set() and time.monotonic()-started < .25
+            await task
+        assert not finished.is_set()
         with pytest.raises(ValueError):
             await h.startup_call(lambda: True, .1)
     finally:
+        clock.resume()
         release.set()
-        assert await asyncio.to_thread(finished.wait, 1)
-        # The worker releases its slot after the function returns.
-        for _ in range(100):
-            if h._STARTUP_WORKER.acquire(blocking=False):
-                h._STARTUP_WORKER.release()
-                break
-            await asyncio.sleep(.005)
+        assert await asyncio.to_thread(finished.wait, 30)
+        assert await asyncio.to_thread(h._STARTUP_WORKER.acquire, timeout=30)
+        h._STARTUP_WORKER.release()
 
 
 def test_all_deployed_router_regions_use_released_resource():

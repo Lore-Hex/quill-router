@@ -6,7 +6,9 @@ import copy
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
@@ -114,21 +116,34 @@ def test_unprepared_output_drops_without_setup(monkeypatch):
 
 
 @pytest.mark.parametrize("busy", ["mutex", "full"])
-def test_output_queue_never_waits(busy):
+def test_output_queue_never_waits(monkeypatch, busy):
     queue = records.OutputQueue(1)
     emitter = records.Emitter(queue.put_nowait)
     if busy == "full":
         queue.put_nowait(b"earlier")
     else:
         queue.mutex.acquire()
-    try:
-        started = time.monotonic()
-        assert emitter.emit(dict(kind="a3_traffic_ready", boot="boot", at_us=1)) is None
-        assert time.monotonic() - started < .1
-        assert emitter.dropped == 1
-    finally:
-        if busy == "mutex":
-            queue.mutex.release()
+    mutex = queue.mutex
+
+    def try_acquire(blocking=True, timeout=-1):
+        if blocking or timeout != -1:
+            pytest.fail("emit requested a blocking or timed mutex acquisition")
+        return mutex.acquire(False)
+
+    monkeypatch.setattr(queue, "mutex", Mock(wraps=mutex, acquire=try_acquire))
+    monkeypatch.setattr(queue.not_full, "wait", lambda *a, **kw: pytest.fail("emit waited for space"))
+    # The queue stays unavailable until emit returns. The timeout is only a
+    # deadlock watchdog; cleanup unblocks even a regressed, blocking writer.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            result = pool.submit(emitter.emit, dict(kind="a3_traffic_ready", boot="boot", at_us=1))
+            assert result.result(timeout=30) is None
+            assert emitter.dropped == 1
+        finally:
+            if busy == "mutex":
+                mutex.release()
+            else:
+                assert queue.get_nowait() == b"earlier"
 
 
 @pytest.mark.parametrize("ready", [False, True])
