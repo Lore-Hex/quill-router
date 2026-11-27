@@ -179,11 +179,10 @@
       "supported_features": [
         "streaming"
       ],
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2200000,
       "output_token_price_per_m": 11000000,
-      "cached_input_token_price_per_m": 220000,
-      "routable_reason": "provider-canary-failed"
+      "cached_input_token_price_per_m": 220000
     },
     {
       "display_name": "v3.1",
@@ -1713,7 +1712,7 @@
   ],
   "source": "https://bedrock-mantle.us-east-1.api.aws/v1/models",
   "pricing_source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/us-east-1/index.json",
-  "generated_at": "2026-11-27T09:50:13Z",
+  "generated_at": "2026-11-27T11:28:01Z",
   "price_scale": "microdollars_per_million",
   "model_count": 65
 }

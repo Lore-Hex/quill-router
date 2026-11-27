@@ -226,8 +226,7 @@
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 233333,
-      "limits_source": "api",
-      "missing_since": "2026-11-27"
+      "limits_source": "api"
     },
     {
       "display_name": "GLM-5.3-Flash",
@@ -288,5 +287,5 @@
     }
   ],
   "model_count": 5,
-  "generated_at": "2026-11-27T09:50:13Z"
+  "generated_at": "2026-11-27T11:28:01Z"
 }
