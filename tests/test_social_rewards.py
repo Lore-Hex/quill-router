@@ -15,7 +15,7 @@ from trusted_router.oauth_provider import OAUTH_PROVIDERS, OAuthUserInfo
 from trusted_router.routes.oauth import _persist_login
 from trusted_router.social_rewards import ACTIONS, campaign_enabled, claim
 from trusted_router.storage import STORE, InMemoryStore
-from trusted_router.storage_models import AcquisitionAttribution
+from trusted_router.storage_models import AcquisitionAttribution, CreditProvenance
 from trusted_router.typed_balance import live_credit_summary
 
 
@@ -28,15 +28,26 @@ def _settings(**overrides) -> Settings:
     })
 
 
-def _account(settings=None, *, enrolled=True, activated=True):
+def _pay(user_id, workspace_id):
+    assert STORE.credit_workspace_typed_direct(
+        workspace_id, 1_000_000, "reward-test-payment",
+        provenance=CreditProvenance(source="checkout", provider="stripe",
+                                    external_ref="pi_test_rewards", occurred_at=dt.datetime.now(dt.UTC)),
+        payment_amount_microdollars=1_000_000, currency="USD", lifetime_topup_user_id=user_id,
+    )
+
+
+def _account(settings=None, *, enrolled=True, activated=True, paid=True):
     settings = settings or _settings()
     app = create_app(settings, init_observability=False)
     client = TestClient(app, raise_server_exceptions=False)
     result = STORE.signup(
-        email="rewards@gmail.com", trial_credit_microdollars=150_000 if enrolled else 300_000,
+        email="rewards@gmail.com", trial_credit_microdollars=30_000,
         social_rewards_issuer="gcp-primary" if enrolled else None,
     )
     assert result is not None
+    if paid:
+        _pay(result.user.id, result.workspace.id)
     STORE.create_acquisition_attribution(AcquisitionAttribution(
         workspace_id=result.workspace.id, anonymous_id="", first_touch={}, last_touch={},
         signup_provider="google", starter_credit_microdollars=result.trial_credit_microdollars,
@@ -56,6 +67,39 @@ def _post(client, path="claim", **body):
                        headers={"Origin": "http://testserver"})
 
 
+def test_only_a_paid_topup_unlocks_offer_and_claims():
+    client, result, _ = _account(paid=False)
+    # Also covers historical $0.15 balances: neither their amount nor API usage
+    # is proof of payment. Other customers' top-ups don't count either.
+    STORE.credit_workspace_once(result.workspace.id, 120_000, "promo")
+    other = STORE.ensure_user("another-payer@example.com")
+    STORE.add_lifetime_topup(other.id, 1_000_000, "other-payer-payment")
+    offer = client.get("/console/social-rewards").json()
+    assert not offer["eligible"] and not offer["actions"]
+    assert _post(client, "shown").status_code == 403
+    assert _post(client, action="github").status_code == 403
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
+    assert not STORE.get_social_reward_enrollment(result.user.id).dismissed
+
+    _pay(result.user.id, result.workspace.id)
+    assert client.get("/console/social-rewards").json()["eligible"]
+    assert _post(client, "shown").json()["show_now"]
+    assert _post(client, action="github").json()["actions"][0]["claimed"]
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_180_000
+
+
+def test_cannot_claim_when_payment_evidence_is_unavailable(monkeypatch):
+    client, result, _ = _account(paid=False)
+
+    def unavailable(*args, **kwargs):
+        raise TimeoutError("billing read unavailable")
+
+    monkeypatch.setattr(InMemoryStore, "get_lifetime_topup_microdollars", unavailable)
+    assert not client.get("/console/social-rewards").is_success
+    assert not _post(client, action="github").is_success
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 30_000
+
+
 def test_claim_before_first_call_is_committed_once():
     client, result, _ = _account(activated=False)
     response = _post(client, action="github")
@@ -63,7 +107,7 @@ def test_claim_before_first_call_is_committed_once():
     assert response.json()["first_call_complete"] is False
     assert response.json()["actions"][0]["claimed"] is True
     assert _post(client, action="github").status_code == 200
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_060_000
 
 
 def test_console_keeps_rewards_in_credits_without_api_keys_invitation():
@@ -89,7 +133,7 @@ def test_claims_concurrent_fixed_total_and_destination():
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda a: claim(result.user.id, a, settings),
                       [action for action, _, _ in ACTIONS] * 4))
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 300_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_180_000
     assert live_credit_summary(other.id)["total_credits"] == other_initial_credit
     assert all(a["claimed"] for a in client.get("/console/social-rewards").json()["actions"])
 
@@ -107,7 +151,7 @@ def test_uncertain_commit_is_reconciled_and_retry_does_not_pay_twice(monkeypatch
         assert _post(client, action="github").status_code == 500
     assert client.get("/console/social-rewards").json()["actions"][0]["claimed"] is True
     assert _post(client, action="github").status_code == 200
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_060_000
 
 
 @pytest.mark.parametrize("body", [
@@ -122,7 +166,7 @@ def test_forged_claims_rejected(body):
     client, result, _ = _account()
     # The application maps request-model validation failures to HTTP 400.
     assert _post(client, **body).status_code == 400
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_030_000
 
 
 @pytest.mark.parametrize("origin", [None, "null", "https://attacker.invalid", "https://testserver", "http://testserver:99"])
@@ -143,7 +187,7 @@ def test_disabled_and_peer_plane_cannot_claim():
     for overrides in [{"social_rewards_enabled": False}, {"social_rewards_plane_id": "aws"}]:
         client, result, _ = _account(_settings(**overrides))
         assert _post(client, action="github").status_code == 409
-        assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
+        assert live_credit_summary(result.workspace.id)["total_credits"] == 1_030_000
         STORE.reset()
 
 
@@ -163,8 +207,8 @@ def test_campaign_can_enable_without_youtube():
 def test_signup_enrollment_preserves_existing_exclusions():
     settings = _settings()
     for provider, email, created_at, expected in [
-        ("google", "new@gmail.com", None, 150_000),
-        ("github", "oldgithub@gmail.com", "2020-01-01T00:00:00Z", 150_000),
+        ("google", "new@gmail.com", None, 30_000),
+        ("github", "oldgithub@gmail.com", "2020-01-01T00:00:00Z", 30_000),
         ("github", "newgithub@gmail.com", "2999-01-01T00:00:00Z", 0),
         ("google", "excluded@hotmail.com", None, 0),
     ]:
@@ -196,7 +240,7 @@ def test_optional_analytics_cannot_block_status_or_committed_receipts(monkeypatc
         response = _post(client, action="github")
         assert response.status_code == 200
         assert response.json()["actions"][0]["claimed"] is True
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_060_000
     activity.assert_not_called()
 
 
@@ -235,7 +279,7 @@ def test_wrong_account_has_no_access_to_enrollment():
     client.cookies.set("tr_session", token)
     assert client.get("/console/social-rewards").json()["eligible"] is False
     assert _post(client, action="github").status_code == 403
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_030_000
 
 
 def test_existing_authenticated_rate_limit_applies_to_claims(monkeypatch):
@@ -269,14 +313,14 @@ def test_optional_analytics_failure_cannot_fail_a_claim(monkeypatch):
 
     monkeypatch.setattr(acquisition, "_log_conversion", failing_log)
     assert _post(client, action="github").status_code == 200
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_060_000
 
 
 def test_click_is_not_a_claim():
     client, result, _ = _account()
     assert _post(client, "observe", event="social_reward_clicked", placement="api_key_setup",
                  action="github", observation_id="84c35821-8c8f-48ea-8aba-19724a965078").status_code == 200
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_030_000
 
 
 @pytest.mark.parametrize("url", ["", "javascript:alert(1)", "https://attacker.invalid/@test", "http://youtube.com/@test"])
@@ -287,7 +331,7 @@ def test_invalid_destination_hides_and_blocks_only_youtube(url):
     assert len(response["actions"]) == 4
     assert "youtube" not in {action["id"] for action in response["actions"]}
     assert _post(client, action="youtube").status_code == 422
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_030_000
 
 
 @pytest.mark.parametrize("change", ["transfer", "delete"])
@@ -335,10 +379,10 @@ def test_failure_before_commit_leaves_no_receipt_and_retry_grants_once(monkeypat
         patcher.setattr(InMemoryStore, 'credit_workspace_once', unavailable)
         assert _post(client, action='github').status_code == 500
     assert not STORE.has_credit_grant(result.workspace.id, claim_event_id(result.user.id, 'github'))
-    assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 1_030_000
     for _ in range(2):
         assert _post(client, action='github').status_code == 200
-    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 1_060_000
 
 
 def test_status_read_failure_after_commit_does_not_repeat_credit(monkeypatch):
@@ -350,9 +394,9 @@ def test_status_read_failure_after_commit_does_not_repeat_credit(monkeypatch):
     with monkeypatch.context() as patcher:
         patcher.setattr(InMemoryStore, 'has_credit_grant', unavailable)
         assert _post(client, action='github').status_code == 500
-    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 1_060_000
     assert _post(client, action='github').json()['actions'][0]['claimed']
-    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 1_060_000
 
 
 def test_pause_after_commit_preserves_receipt_and_resume_does_not_repeat():
@@ -369,7 +413,7 @@ def test_pause_after_commit_preserves_receipt_and_resume_does_not_repeat():
     progress = status(result.user.id, paused)
     assert not progress['enabled'] and progress['actions'][0]['claimed']
     claim(result.user.id, 'github', settings)
-    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 1_060_000
 
 
 def test_claim_requires_authenticated_session_and_cannot_supply_identity():
@@ -380,7 +424,7 @@ def test_claim_requires_authenticated_session_and_cannot_supply_identity():
                            json={'action': 'github'},
                            headers={'Origin': 'http://testserver'}, follow_redirects=False)
     assert response.status_code == 302
-    assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 1_030_000
 
 
 def test_ownership_return_restores_only_original_users_remaining_claims():
@@ -397,7 +441,7 @@ def test_ownership_return_restores_only_original_users_remaining_claims():
         with pytest.raises(HTTPException) as error:
             claim(user_id, "youtube", settings)
         assert error.value.status_code == 403
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_060_000
 
     STORE.transfer_workspace_ownership(result.workspace.id, result.user.id)
     restored = status(result.user.id, settings)
@@ -405,7 +449,7 @@ def test_ownership_return_restores_only_original_users_remaining_claims():
     assert [a["id"] for a in restored["actions"] if a["claimed"]] == ["github"]
     claim(result.user.id, "github", settings)
     claim(result.user.id, "youtube", settings)
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 210_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_090_000
     assert STORE.get_social_reward_enrollment(other.id) is None
 
 
@@ -423,7 +467,7 @@ def test_pause_signup_cohort_stays_excluded_while_existing_enrollment_resumes():
     assert error.value.status_code == 409
     progress = status(enrolled.user.id, paused)
     assert progress["dismissed"] and progress["actions"][0]["claimed"]
-    assert live_credit_summary(enrolled.workspace.id)["total_credits"] == 180_000
+    assert live_credit_summary(enrolled.workspace.id)["total_credits"] == 1_060_000
 
     info = OAuthUserInfo(sub="paused", email="paused@gmail.com", email_verified=True)
     signup = _persist_login(OAUTH_PROVIDERS["google"], paused, info, None)
@@ -440,7 +484,7 @@ def test_pause_signup_cohort_stays_excluded_while_existing_enrollment_resumes():
     resumed = claim(enrolled.user.id, "youtube", settings)
     assert resumed["dismissed"]
     assert sum(action["claimed"] for action in resumed["actions"]) == 2
-    assert live_credit_summary(enrolled.workspace.id)["total_credits"] == 210_000
+    assert live_credit_summary(enrolled.workspace.id)["total_credits"] == 1_090_000
 
 
 @pytest.mark.parametrize("change", ["transfer", "delete"])
@@ -458,7 +502,7 @@ def test_ownership_transfer_between_eligibility_and_commit_cannot_credit(monkeyp
 
     monkeypatch.setattr(InMemoryStore, 'credit_workspace_once', transfer_then_credit)
     assert _post(client, action='github').status_code == 403
-    assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 1_030_000
 
 
 def test_four_rewards_now_and_youtube_later_preserve_account_cap():
@@ -467,14 +511,14 @@ def test_four_rewards_now_and_youtube_later_preserve_account_cap():
         if action != "youtube":
             assert _post(client, action=action).status_code == 200
             assert _post(client, action=action).status_code == 200
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 270_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_150_000
     configured = settings.model_copy(update={
         "social_rewards_youtube_url": "https://www.youtube.com/@trustedrouter",
     })
     progress = claim(result.user.id, "youtube", configured)
     assert len(progress["actions"]) == 5
     claim(result.user.id, "youtube", configured)
-    assert live_credit_summary(result.workspace.id)["total_credits"] == 300_000
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 1_180_000
 
 
 def test_oauth_signup_enrolls_with_youtube_unconfigured():
@@ -483,5 +527,5 @@ def test_oauth_signup_enrolls_with_youtube_unconfigured():
         OAuthUserInfo(sub="four-actions", email="four-actions@gmail.com", email_verified=True),
         None,
     )
-    assert login.attribution[1] == 150_000
+    assert login.attribution[1] == 30_000
     assert STORE.get_social_reward_enrollment(login.user_id) is not None

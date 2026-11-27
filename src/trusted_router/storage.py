@@ -488,9 +488,10 @@ class InMemoryStore:
         credit_domain_limit: int | None = None,
     ) -> User:
         if social_rewards_issuer is not None and (
-            not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
+            not social_rewards_issuer.strip()
+            or not 0 < (trial_credit_microdollars or 0) <= DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
         ):
-            raise ValueError("social rewards enrollment requires the 150000 signup grant")
+            raise ValueError("social rewards enrollment requires an eligible ordinary signup grant")
         with self._lock:
             normalized_email = _normalize_email(email or user_id)
             existing_id = self.user_ids_by_email.get(normalized_email)

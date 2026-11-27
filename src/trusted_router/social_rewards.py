@@ -18,7 +18,6 @@ from trusted_router.storage_models import SocialRewardEnrollment
 log = logging.getLogger(__name__)
 
 CAMPAIGN_ID = "social-rewards-v1"
-SIGNUP_MICRODOLLARS = 150_000
 ACTION_MICRODOLLARS = 30_000
 ACTIONS = (
     ("github", "Star TrustedRouter on GitHub", "https://github.com/Lore-Hex/quill-router"),
@@ -62,6 +61,9 @@ def _eligible_enrollment(user_id: str, settings: Settings) -> SocialRewardEnroll
         return None
     workspace = STORE.get_workspace(enrollment.workspace_id)
     if workspace is None or workspace.owner_user_id != user_id:
+        return None
+    # Signup grants, transfers and spending promotional balance aren't paid top-ups.
+    if STORE.get_lifetime_topup_microdollars(user_id) <= 0:
         return None
     return enrollment
 
@@ -111,7 +113,7 @@ def require_offer(user_id: str, settings: Settings) -> SocialRewardEnrollment:
         raise HTTPException(409, "Rewards are temporarily unavailable. Your progress is saved.")
     enrollment = _eligible_enrollment(user_id, settings)
     if enrollment is None:
-        raise HTTPException(403, "This account is not enrolled in this offer.")
+        raise HTTPException(403, "This account is not eligible for this offer.")
     return enrollment
 
 

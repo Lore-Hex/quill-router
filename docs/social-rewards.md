@@ -6,12 +6,15 @@ request or a social action is not required for access.
 
 ## Credit and eligibility
 
-Enrolled accounts receive 150,000 microdollars at signup and can earn 30,000 per
-available action. The four available actions are starring the repository on
+Enrollment does not increase starter credit. Eligible signups receive the ordinary
+$0.03 by default; there is no separate social signup grant. The popup, Credits
+invitation and claims unlock only after the enrolled account has a recorded paid
+top-up. Promotional grants, transfers and spending free credit do not count.
+After that, each available action earns $0.03. The four available actions are starring the repository on
 GitHub, following TrustedRouter and its founder on X, and following TrustedRouter
-on LinkedIn. Completing all four brings the campaign total to 270,000 microdollars.
+on LinkedIn. Completing all four earns $0.12 in addition to starter credit.
 A configured official YouTube channel adds a fifth action, bringing the maximum
-to 300,000 microdollars ($0.30). These are dollar credits, not a guaranteed number
+earned from actions to $0.15. These are dollar credits, not a guaranteed number
 of tokens; token usage depends on model pricing.
 
 Existing accounts are not enrolled retroactively. Existing signup exclusions
@@ -28,7 +31,7 @@ expiration date.
 
 ## User experience
 
-Rewards are available immediately during onboarding and later from Credits. Users
+Eligible paying customers can access rewards from Credits. Users
 can dismiss the offer and return without repeated automatic popups. The offer must
 not cover the one-time API-key reveal.
 

@@ -71,7 +71,7 @@ log = logging.getLogger(__name__)
 CLAIM_WINDOW = dt.timedelta(days=7)
 NEW_WORKSPACE_AGE = dt.timedelta(days=14)
 #: Credits beyond the starter grant that still count as unfunded: social
-#: rewards ($0.15 signup plus $0.03 actions). The smallest purchase ($1) must
+#: rewards on historical unpaid accounts. The smallest purchase ($1) must
 #: stay above it so that adding credits always lifts the gate.
 FUNDED_SLACK_MICRODOLLARS = 500_000
 MINIMUM_PURCHASE_MICRODOLLARS = 1_000_000

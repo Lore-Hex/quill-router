@@ -61,6 +61,20 @@ async function rewardsPage(page, options = {}) {
   return { state, requests };
 }
 
+test("unpaid users see no invitation or popup, even after a successful API call", async ({ page }) => {
+  const { requests, state } = await rewardsPage(page, { keys: true, state: { eligible: false } });
+  await expect.poll(() => requests.some((r) => r.method === "GET")).toBe(true);
+  await expect(page.locator("[data-rewards-open]:visible")).toHaveCount(0);
+  await expect(page.locator("#social-rewards")).not.toBeVisible();
+  expect(requests.some((r) => r.method === "POST")).toBe(false);
+  state.eligible = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.locator("#social-rewards")).toBeVisible();
+  state.eligible = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.locator("#social-rewards")).not.toBeVisible();
+});
+
 test("server evidence gates automatic offer; key reveal is never interrupted", async ({ page }) => {
   const { requests } = await rewardsPage(page, { reveal: true });
   await expect(page.getByRole("button", { name: "Social rewards", exact: true })).toBeVisible();
@@ -226,7 +240,8 @@ test("ownership loss clears existing claims and disables the offer", async ({ pa
   await expect(page.getByRole("dialog")).toBeVisible();
   state.eligible = false;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(page.getByText("This account is not eligible for this offer.")).toBeVisible();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.locator("[data-rewards-open]:visible")).toHaveCount(0);
   await expect(page.locator("[data-rewards-list] button")).toHaveCount(0);
 });
 
