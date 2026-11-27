@@ -1037,7 +1037,7 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "inclusionai/ling-3.2-flash:free": {
+    "inclusionai/ling-3.2-flash": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [],

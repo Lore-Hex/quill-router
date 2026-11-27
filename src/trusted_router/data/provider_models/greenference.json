@@ -150,8 +150,7 @@
       "input_token_price_per_m": 76000,
       "output_token_price_per_m": 228000,
       "cached_input_token_price_per_m": 38000,
-      "routable_reason": "delisted-upstream",
-      "missing_since": "2026-11-26"
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "Qwen: Qwen3 30B A3B",
@@ -201,8 +200,7 @@
       "input_token_price_per_m": 95000,
       "output_token_price_per_m": 285000,
       "cached_input_token_price_per_m": 47500,
-      "routable_reason": "delisted-upstream",
-      "missing_since": "2026-11-27"
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "Qwen: Qwen3 32B",
@@ -508,7 +506,7 @@
     }
   ],
   "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
-  "generated_at": "2026-11-27T11:28:01Z",
+  "generated_at": "2026-11-27T13:06:32Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }
