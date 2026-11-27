@@ -563,8 +563,7 @@ def test_public_models_page_does_not_require_api_key(
         assert any(name in link.get_text() for link in links)
         assert f'src="/static/provider-logos/{slug}.png"' in response.text
         assert f"<span>{name}</span>" in response.text
-    assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
-    assert "IQ 116" in response.text
+    assert BeautifulSoup(response.text, "html.parser").select('h2.models-name-title a[href="/models/moonshotai/kimi-k2.6"]')
 
 
 def test_public_models_page_is_a_ranked_searchable_price_explorer(
@@ -585,7 +584,10 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert 'type="search"' in body
     assert "data-model-search" in body
     assert "data-model-sort" in body
-    assert "Cached input" in body
+    assert "Cached input is shown only" in body
+    for kind in ("text", "image", "video", "speech", "embeddings"):
+        assert f'data-model-kind-tab="{kind}"' in body
+    assert 'aria-label="Model catalog"' in body
     assert "/static/models.js" in body
     assert 'href="/for-developers"' in body
     assert 'data-signin-mode="signup">Start building</button>' in body
@@ -692,7 +694,7 @@ def test_public_model_pages_never_claim_tr_stores_content(client: TestClient) ->
     assert "stores content" not in catalog.text.lower()
     assert "tr stores content" not in detail.text.lower()
     assert "Provider policy" in detail.text
-    assert "varies by provider" in catalog.text
+    assert "Labels describe available provider routes, not every route." in catalog.text
 
 
 def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
@@ -980,3 +982,27 @@ def test_revenue_loop_docs_define_google_sheet_and_interview_rules() -> None:
     assert "Do not paraphrase claims" in interview_doc
     assert "approved_message" in sheet_csv
     assert "opt_out" in sheet_csv
+
+
+def test_media_catalog_prices_match_provider_and_model_pages(client: TestClient) -> None:
+    from trusted_router.catalog import MODELS
+    from trusted_router.model_kinds import media_price
+
+    catalog = BeautifulSoup(client.get("/models?makes=image").text, "html.parser")
+    for model_id in ("recraft/recraftv4", "alibaba/wan-2.7"):
+        model = MODELS[model_id]
+        endpoints = [ep for ep in endpoints_for_model(model_id) if ep.usage_type == "Credits"]
+        assert endpoints
+        price = media_price(model, [ep.provider for ep in endpoints])
+        assert price and ("/image" in price or "/sec" in price)
+        row = catalog.select_one(f'[data-model-id="{model_id}"]')
+        assert row is not None
+        assert price in row.select_one('[data-col="price"]').get_text()
+        assert row.select_one("h2 a")["href"] == f"/models/{model_id}"
+        detail = client.get(f"/models/{model_id}")
+        assert detail.status_code == 200
+        assert price in detail.text
+        provider = endpoints[0].provider
+        provider_page = client.get(f"/providers/{provider}")
+        assert provider_page.status_code == 200
+        assert media_price(model, [provider]) in provider_page.text

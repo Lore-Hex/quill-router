@@ -2,7 +2,12 @@
 {% block promotion %}{% include "public/_fortanix_promo.html" %}{% endblock %}
 {% set catalog_header_search = true %}
 {% from "public/_catalog_privacy.html" import privacy_badges, serving_provider_chip %}
-{% block head_extra %}<link rel="alternate" type="application/atom+xml" title="TrustedRouter model route changes" href="/v1/models/changes.atom">{% endblock %}
+{% macro from_price(label) -%}
+{%- set parts = label.split(' to ') -%}
+{%- set low = parts[0][:-3] if parts[0].endswith('/1M') else parts[0] -%}
+{%- if parts|length > 1 %}<small>from</small> {% endif %}{{ low }}
+{%- endmacro %}
+{% block head_extra %}<link rel="stylesheet" href="/static/models-table.css?v={{ static_version|default('local') }}"><link rel="alternate" type="application/atom+xml" title="TrustedRouter model route changes" href="/v1/models/changes.atom">{% endblock %}
 {% block hero %}
 <section class="models-page-hero">
   <div>
@@ -18,138 +23,119 @@
 </section>
 {% endblock %}
 {% block body %}
-<section class="model-explorer" data-model-explorer data-page-size="{{ initial_page_size }}">
-  <div class="model-explorer-toolbar">
-    <label class="model-sort-field">
-      <span class="model-control-label">Sort by</span>
+<section class="model-explorer models-table-explorer" data-model-explorer data-page-size="{{ initial_page_size }}" data-active-kind="all">
+  <div class="models-kind-tabs" role="toolbar" aria-label="What the model makes">
+    <a href="/models{% if active_filter != 'all' %}?filter={{ active_filter }}{% endif %}" data-model-kind-tab="all" aria-current="page">All</a>
+    {% for kind, label in model_kinds %}
+    <a href="/models?makes={{ kind }}{% if active_filter != 'all' %}&amp;filter={{ active_filter }}{% endif %}" data-model-kind-tab="{{ kind }}"{% if kind in ('speech', 'embeddings') %} data-kind-more{% endif %}>{{ label }}</a>
+    {% endfor %}
+    <label class="models-kind-more">
+      <select data-model-kind-more aria-label="More model types">
+        <option value="">More</option>
+        <option value="speech">Speech</option>
+        <option value="embeddings">Embeddings</option>
+      </select>
+    </label>
+    <p class="models-kind-count"><span data-model-result-count role="status">600+ models</span><span data-model-result-detail></span></p>
+  </div>
+
+  <div class="models-table-bar">
+    <nav class="model-filter-row" aria-label="Route filters">
+      {% for item in model_filters %}
+      <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}" data-route-filter>{{ 'All routes' if item.id == 'all' else item.label }}</a>
+      {% endfor %}
+    </nav>
+    <label class="models-sort-compact models-route-compact">
+      <span>Routes</span>
+      <select data-route-select aria-label="Filter routes">
+        {% for item in model_filters %}
+        <option value="{{ item.href }}"{% if active_filter == item.id %} selected{% endif %}>{{ 'All' if item.id == 'all' else item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="models-sort-compact">
+      <span>Sort</span>
       <select data-model-sort aria-label="Sort models">
         <option value="featured">Featured</option>
-        <option value="input">Lowest input price</option>
-        <option value="cached">Lowest cached-input price</option>
+        <option value="price">Lowest price</option>
         <option value="output">Lowest output price</option>
         <option value="context">Largest context</option>
         <option value="providers">Most providers</option>
         <option value="name">Name</option>
       </select>
     </label>
-  </div>
-
-  <div class="model-quick-row" aria-label="Popular model searches">
-    <span>Popular now</span>
-    <button type="button" data-model-query="glm 5.3">GLM 5.3</button>
-    <button type="button" data-model-query="kimi k3">Kimi K3</button>
-    <button type="button" data-model-query="deepseek">DeepSeek</button>
-  </div>
-
-  <nav class="model-filter-row" aria-label="Model filters">
-    {% for item in model_filters %}
-    <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
-    {% endfor %}
-  </nav>
-  <div class="catalog-privacy-legend">
-    <dl>
-      <div><dt>Trusted</dt><dd>Confidential routes from operators selected for operator physical security and reliability history.</dd></div>
-      <div><dt>Confidential</dt><dd>Verified provider compute + E2EE + explicit ZDR.</dd></div>
-      <div><dt>ZDR</dt><dd>Zero data retention.</dd></div>
-    </dl>
-    <p>Labels describe available provider routes, not every route. <a href="/docs#trusted-tier">Privacy routing</a></p>
-  </div>
-
-  <div class="model-explorer-status">
-    <p><strong data-model-result-count role="status">600+ models</strong><span data-model-result-detail> in the public catalog</span></p>
     <button class="model-clear-button" type="button" data-model-clear hidden>Clear search</button>
   </div>
 
-  <div class="model-results" id="model-results" data-model-results>
+  <table class="models-table" id="model-results" aria-label="Model catalog" data-model-results>
+    <thead>
+      <tr>
+        <th scope="col">Model</th>
+        <th scope="col">Routes</th>
+        <th scope="col" data-col="in"><button type="button" data-sort-key="price">Input / 1M</button></th>
+        <th scope="col" data-col="out"><button type="button" data-sort-key="output">Output / 1M</button></th>
+        <th scope="col" data-col="ctx"><button type="button" data-sort-key="context">Context</button></th>
+        <th scope="col" data-col="price"><button type="button" data-sort-key="price">Price</button></th>
+        <th scope="col" data-col="accepts">Accepts</th>
+        <th scope="col" data-col="length">Length</th>
+        <th scope="col" data-col="res">Up to</th>
+      </tr>
+    </thead>
     {% for model in models %}
-    <article
-      class="model-result-card"
+    {% set is_media = model.kind in ('image', 'video') %}
+    <tbody
+      class="models-table-row"
       data-model-card
       data-model-id="{{ model.id }}"
+      data-kind="{{ model.kind }}"
       data-search-text="{{ model.search_text }}"
       data-initial-index="{{ loop.index0 }}"
       data-featured-rank="{{ model.featured_rank if model.featured_rank is not none else '' }}"
-      data-input-price="{{ model.prompt_price_sort if model.prompt_price_sort is not none else '' }}"
-      data-cached-price="{{ model.cached_price_sort if model.cached_price_sort is not none else '' }}"
-      data-output-price="{{ model.completion_price_sort if model.completion_price_sort is not none else '' }}"
-      data-context="{{ model.context_length_int }}"
+      data-input-price="{{ model.prompt_price_sort if model.prompt_price_sort is not none and not is_media else '' }}"
+      data-output-price="{{ model.completion_price_sort if model.completion_price_sort is not none and not is_media else '' }}"
+      data-media-price="{{ model.media_price_sort if model.media_price_sort is not none else '' }}"
+      data-context="{{ model.context_length_int if not is_media else 0 }}"
       data-provider-count="{{ model.provider_count }}"
       {% if loop.index0 >= initial_page_size %}hidden{% endif %}
     >
-      <div class="model-card-main">
-        <div class="model-card-heading">
-          {% if model.publisher_slug %}
-          <a class="model-publisher-logo" href="/providers/{{ model.publisher_slug }}" aria-label="{{ model.provider }} provider page">
-            <img src="/static/provider-logos/{{ model.publisher_slug }}.png" alt="{{ model.provider }} logo" width="36" height="36" loading="lazy" decoding="async">
-          </a>
-          {% endif %}
-          <div class="model-card-title">
-            <div class="model-card-title-line">
-              <h2><a href="{{ model.detail_href }}">{{ model.name }}</a></h2>
-              {% if model.featured_rank is not none %}<span class="model-featured-badge">Popular</span>{% endif %}
+      <tr>
+        <td class="models-cell-model">
+          <div class="models-name">
+            {% if model.publisher_slug %}<a class="models-publisher" href="/providers/{{ model.publisher_slug }}" aria-label="{{ model.provider }} provider page"><img src="/static/provider-logos/{{ model.publisher_slug }}.png" alt="{{ model.provider }} logo" width="30" height="30" loading="lazy" decoding="async"></a>{% endif %}
+            <div>
+              <h2 class="models-name-title"><a href="{{ model.detail_href }}">{{ model.name }}</a>{% if model.featured_rank is not none %} <span class="model-featured-badge">Popular</span>{% endif %}</h2>
+              <code>{{ model.id }}</code>
             </div>
-            <code>{{ model.id }}</code>
-            {% if model.e2e_available or model.zdr_available %}
-            <div class="catalog-privacy-summary" aria-label="Available route privacy">
-              <span class="catalog-privacy-scope">{{ 'Component routes' if model.is_meta else 'Available routes' }}</span>
-              {{ privacy_badges(model.e2e_available, model.zdr_available, trusted=model.trusted_available) }}
-            </div>
+          </div>
+        </td>
+        <td class="models-cell-routes">
+          <div class="models-routes">
+            {{ privacy_badges(model.e2e_available, model.zdr_available, trusted=model.trusted_available) }}
+            {% if model.endpoints_url %}
+            <button type="button" class="models-routes-toggle" aria-expanded="false" aria-controls="model-routes-{{ loop.index }}" data-route-toggle data-endpoints-url="{{ model.endpoints_url }}"{% if is_media and (model.media_price or not model.completion_price_sort) %} data-media-prices='{{ model.provider_media_prices|tojson }}'{% endif %}>
+              <span>{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}</span><span class="models-routes-plus" aria-hidden="true">+</span>
+            </button>
+            {% else %}
+            <a class="models-routes-link" href="{{ model.detail_href }}">Routing details</a>
             {% endif %}
           </div>
-        </div>
-
-        <div class="model-price-grid" aria-label="{{ model.name }} pricing and context">
-          <div><span>Input</span><strong>{{ model.prompt_price }}</strong></div>
-          <div><span>Cached input</span><strong>{{ model.cached_prompt_price }}</strong></div>
-          <div><span>Output</span><strong>{{ model.completion_price }}</strong></div>
-          {% if model.transcription %}
-          <div><span>Input limit</span><strong>7 MiB, 10 minutes</strong></div>
-          {% elif model.speech %}
-          <div><span>Input limit</span><strong>{{ model.speech.max_input_characters }} characters</strong></div>
-          {% else %}
-          <div><span>Context</span><strong title="{{ model.context_length }} tokens">{{ model.context_length_compact }}</strong></div>
-          {% endif %}
-        </div>
-      </div>
-
-      <div class="model-card-meta">
-        <div class="model-card-badges" aria-label="Model attributes">
-          {% if model.open_weights %}<span class="pill good">Open weights</span>{% endif %}
-          {% if model.provider_policy_varies %}<span class="pill warn">{{ model.provider_policy_variation_label }}</span>{% endif %}
-          {% if model.us_provider_available %}<span class="pill">US</span>{% endif %}
-          {% if model.eu_focused_provider_available %}<span class="pill">EU</span>{% endif %}
-          {% if model.ai_iq %}
-          <a class="pill model-iq-pill" href="{{ model.ai_iq.url }}" rel="nofollow noopener">IQ {{ model.ai_iq.iq }} · #{{ model.ai_iq.rank }}</a>
-          {% endif %}
-          {% if model.is_meta %}<span class="pill">Router alias</span>{% endif %}
-        </div>
-
-        <div class="provider-chip-list model-card-providers" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">
-          {% for provider in model.providers %}
-          {{ serving_provider_chip(provider, overflow=loop.index > 6) }}
-          {% endfor %}
-          {% if model.provider_count > 6 %}<span class="pill model-provider-more">+{{ model.provider_count - 6 }} more</span>{% endif %}
-        </div>
-      </div>
-
+        </td>
+        <td class="models-num" data-col="in" data-label="Input / 1M">{% if is_media and model.media_price %}{% if model.media_price_from %}<small>from</small> {% endif %}{{ model.media_price }}{% else %}{{ from_price(model.prompt_price) }}{% endif %}</td>
+        <td class="models-num" data-col="out" data-label="Output / 1M">{% if is_media and model.media_price %}—{% else %}{{ from_price(model.completion_price) }}{% endif %}</td>
+        <td class="models-num" data-col="ctx" data-label="{{ 'Input limit' if model.speech or model.transcription else 'Context' }}">{% if model.transcription %}7 MiB, 10 min{% elif model.speech %}{{ model.speech.max_input_characters }} chars{% elif is_media %}—{% else %}<span title="{{ model.context_length }} tokens">{{ model.context_length_compact }}</span>{% endif %}</td>
+        <td class="models-num" data-col="price" data-label="Price">{% if model.media_price %}{% if model.media_price_from %}<small>from</small> {% endif %}{{ model.media_price }}{% elif model.completion_price_sort %}{{ from_price(model.completion_price) }}/1M output{% else %}Not published{% endif %}</td>
+        <td class="models-num" data-col="accepts" data-label="Accepts">{{ model.media_accepts or '—' }}</td>
+        <td class="models-num" data-col="length" data-label="Length">{{ model.media_length or '—' }}</td>
+        <td class="models-num" data-col="res" data-label="Up to">{{ model.media_resolution or '—' }}</td>
+      </tr>
       {% if model.endpoints_url %}
-      <details class="model-route-details" data-endpoints-url="{{ model.endpoints_url }}">
-        <summary>
-          <span>Compare {{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }} and prices</span>
-          <span aria-hidden="true">+</span>
-        </summary>
-        <div class="model-route-results" data-route-results>
-          <p class="model-route-loading">Open to load current provider routes.</p>
-        </div>
-      </details>
-      {% else %}
-      <div class="model-card-footer">
-        <a href="{{ model.detail_href }}">View routing details</a>
-      </div>
+      <tr class="models-routes-panel" id="model-routes-{{ loop.index }}" hidden>
+        <td colspan="9"><div class="model-route-results{% if is_media and (model.media_price or not model.completion_price_sort) %} model-media-routes{% endif %}" data-route-results><div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">{% for provider in model.providers %}{{ serving_provider_chip(provider) }}{% endfor %}</div></div></td>
+      </tr>
       {% endif %}
-    </article>
+    </tbody>
     {% endfor %}
-  </div>
+  </table>
 
   <div class="model-explorer-empty" data-model-empty hidden>
     <strong>No matching models</strong>
@@ -160,6 +146,15 @@
 
   <div class="model-show-more-wrap">
     <button class="btn" type="button" data-model-show-more>Show more models</button>
+  </div>
+
+  <div class="catalog-privacy-legend">
+    <dl>
+      <div><dt>Trusted</dt><dd>Confidential routes from operators selected for operator physical security and reliability history.</dd></div>
+      <div><dt>Confidential</dt><dd>Verified provider compute + E2EE + explicit ZDR.</dd></div>
+      <div><dt>ZDR</dt><dd>Zero data retention.</dd></div>
+    </dl>
+    <p>Labels describe available provider routes, not every route. <a href="/docs#trusted-tier">Privacy routing</a></p>
   </div>
 
   <div class="model-catalog-note">

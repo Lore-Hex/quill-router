@@ -122,6 +122,7 @@ from trusted_router.gateway_processing import GATEWAY_HOP_CLAIM, gateway_process
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
+from trusted_router.model_kinds import MODEL_KINDS, media_price, model_kind, model_kind_view
 from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.page_headers import (
@@ -2589,6 +2590,10 @@ def _launch_offer_lede(offer: LaunchOfferFacts) -> dict[str, object]:
 def _model_kind_phrase(model: Model, view: Mapping[str, object]) -> str:
     if view["is_meta"]:
         return "orchestration preset"
+    if view.get("kind") == "image":
+        return "image model"
+    if view.get("kind") == "video":
+        return "video model"
     if view["speech"]:
         return "text-to-speech model"
     if view["transcription"]:
@@ -2618,8 +2623,24 @@ def _model_page(
     # An orchestration's endpoint is its internal selector; the page lists
     # its component models instead of provider rows.
     endpoints = [] if view["is_meta"] else cast(list[dict[str, object]], view["endpoints"])
+    # Image and video models billed per image or per second rather than per
+    # token: a published media price, or no token price at all.
+    listed_media_price = (
+        media_price(model, [str(row["provider_slug"]) for row in endpoints])
+        if view.get("kind") in ("image", "video")
+        else None
+    )
+    media = view.get("kind") in ("image", "video") and (
+        listed_media_price is not None
+        or not any(
+            cast(int, row["prompt_microdollars_per_million_tokens"])
+            or cast(int, row["completion_microdollars_per_million_tokens"])
+            for row in endpoints
+        )
+    )
     token_priced = not (
-        view["transcription"]
+        media
+        or view["transcription"]
         or view["fetch"]
         or (view["speech"] and not SPEECH_MODELS[model.id].token_billed)
     )
@@ -2651,8 +2672,16 @@ def _model_page(
                 "cheapest": total == min_total and min_total != max_total,
                 "zdr": zdr,
                 "confidential": confidential,
-                "input": _short_dollars(prompt, digits=3) if token_priced else row["prompt_price"],
-                "output": _short_dollars(completion, digits=3) if token_priced else row["completion_price"],
+                "input": (
+                    _short_dollars(prompt, digits=3) if token_priced
+                    else (media_price(model, [str(row["provider_slug"])]) or "Not published") if media
+                    else row["prompt_price"]
+                ),
+                "output": (
+                    _short_dollars(completion, digits=3) if token_priced
+                    else "Included" if media
+                    else row["completion_price"]
+                ),
                 "cached": (
                     _short_dollars(min(cached), digits=3) if cached and token_priced else "—"
                 ),
@@ -2728,10 +2757,14 @@ def _model_page(
             if endpoints and token_priced
             else None
         ),
-        "price_label": None if token_priced or not endpoints else route_evidence["lowest_prompt_price"],
+        "price_label": (
+            None
+            if token_priced or not endpoints or (media and listed_media_price is None)
+            else route_evidence["lowest_prompt_price"]
+        ),
         "context": (
             _compact_token_count(cast(int, view["context_length_int"]))
-            if cast(int, view["context_length_int"]) > 0 and not (view["speech"] or view["transcription"] or view["fetch"])
+            if cast(int, view["context_length_int"]) > 0 and not (media or view["speech"] or view["transcription"] or view["fetch"])
             else None
         ),
         "token_priced": token_priced,
@@ -4413,6 +4446,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             total_provider_count=sum(provider.slug != "trustedrouter" for provider in providers_for_display()),
             initial_page_size=MODEL_DISCOVERY_PAGE_SIZE,
             active_filter=normalized_filter,
+            model_kinds=MODEL_KINDS,
             model_filters=[
                 {"id": "all", "label": "All", "href": "/models"},
                 {"id": "trusted", "label": "Trusted", "href": "/models?filter=trusted"},
@@ -4945,8 +4979,15 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     )
     title = f"{seo_name} API, Pricing and Providers | TrustedRouter"
     description = (
-        f"Compare every TrustedRouter route for {seo_name}, including token pricing, context "
-        "limits, privacy policy, regional availability, measured uptime, and API support."
+        f"Compare every TrustedRouter route for {seo_name}, including "
+        + (
+            "per-image pricing"
+            if model_view["kind"] == "image"
+            else "per-second pricing"
+            if model_view["kind"] == "video"
+            else "token pricing, context limits"
+        )
+        + ", privacy policy, regional availability, measured uptime, and API support."
     )
     offer = launch_offer_facts() if model.id == LAUNCH_OFFER_MODEL_ID else None
     # Passed only when set: the base template's `default` filter keeps None.
@@ -6108,6 +6149,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         ).casefold(),
         "endpoints_url": None if is_meta else f"/v1/models/{model.id}/endpoints",
         "detail_href": f"/models/{model.id}",
+        **model_kind_view(model, endpoints),
         "benchmarks_href": (
             f"/models/{model.id}/benchmarks"
             if model.id not in META_MODEL_IDS and scores_for_model(model.id)
@@ -6494,7 +6536,7 @@ def _model_detail_view(
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
                 "provider_logo_url": provider_logo_url(endpoint.provider),
-                "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens, include_zero=model_kind(model) in ("image", "video")),
                 "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else _cached_prompt_price_range((endpoint,)),
                 "completion_price": "Included" if transcription or (speech and not speech.token_billed) or model.id == FETCH_MODEL_ID else _endpoint_price_range(
                     (endpoint,), "completion_price_microdollars_per_million_tokens"
@@ -6544,6 +6586,7 @@ def _model_detail_view(
     return {
         "id": model.id,
         "name": model.name,
+        "kind": model_kind(model),
         "provider": publisher.name,
         "publisher_slug": publisher.slug,
         "context_length": f"{context_length:,}",
@@ -6928,6 +6971,16 @@ def _model_route_evidence(
     audio_price = transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else None
     if model.id == FETCH_MODEL_ID:
         audio_price = fetch_price_label()
+    # Set for image and video models billed per image or per second: those
+    # with a published media price, or with no token price at all.
+    media_kind = None
+    if (kind := model_kind(model)) in ("image", "video"):
+        listed = media_price(model, [endpoint.provider for endpoint in endpoints])
+        if listed:
+            audio_price = listed
+            media_kind = kind
+        elif not lowest_prompt and not lowest_completion:
+            media_kind = kind
 
     ttft_rows = [
         row
@@ -6974,7 +7027,14 @@ def _model_route_evidence(
         else None
     )
     return {
-        "lowest_prompt_price": (audio_price or _price(lowest_prompt)) if lowest_prompt is not None else None,
+        "media_kind": media_kind,
+        "media_price_listed": media_kind is not None and audio_price is not None,
+        # Some video models bill output tokens only; their input price is a real $0.
+        "lowest_prompt_price": (
+            (audio_price or _price(lowest_prompt, include_zero=kind in ("image", "video")))
+            if lowest_prompt is not None
+            else None
+        ),
         "lowest_completion_price": (
             "Included" if audio_price and endpoints else _price(
                 lowest_completion,
@@ -7047,9 +7107,17 @@ def _model_faq_items(
         speech = SPEECH_MODELS.get(model.id)
         transcription = TRANSCRIPTION_MODELS.get(model.id)
         non_token_audio = (transcription is not None and not transcription.token_billed) or (speech is not None and not speech.token_billed)
+        media_unit = {"image": "per image", "video": "per second of video"}.get(
+            str(route_evidence.get("media_kind") or "")
+        )
+        media_lowest = route_evidence["lowest_prompt_price"]
         price_answer = (
             f"The current Credits price is {fetch_price_label()}. No token charge applies."
             if model.id == FETCH_MODEL_ID else
+            f"The current lowest Credits price is {media_lowest}. {name} is billed {media_unit}, not per token."
+            if media_unit and route_evidence.get("media_price_listed") else
+            f"{name} is billed {media_unit}, not per token. The price for a request depends on its settings."
+            if media_unit else
             f"The current Credits price is {route_evidence['lowest_prompt_price']}. "
             "Output is included; these are audio prices, not text-token prices."
             if non_token_audio else
@@ -7709,10 +7777,19 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
             continue
         speech = SPEECH_MODELS.get(model.id)
         transcription = TRANSCRIPTION_MODELS.get(model.id)
+        media = model_kind(model) in ("image", "video") and (
+            media_price(model, [provider_slug]) is not None
+            or not any(
+                endpoint.prompt_price_microdollars_per_million_tokens
+                or endpoint.completion_price_microdollars_per_million_tokens
+                for endpoint in endpoints
+            )
+        )
         rows.append(
             {
                 "id": model.id,
                 "name": model.name,
+                "media": media,
                 "detail_href": f"/models/{model.id}",
                 "benchmarks_href": (
                     f"/models/{model.id}/benchmarks" if scores_for_model(model.id) else None
@@ -7732,22 +7809,23 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                     if (retention := endpoint_retention_metadata(endpoint)) is not None
                 ],
                 "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
-                "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
+                "prompt_price": (media_price(model, [provider_slug]) or "Not published") if media else fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
                     endpoints,
                     "prompt_price_microdollars_per_million_tokens",
                 ),
-                "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else _cached_prompt_price_range(endpoints),
+                "cached_prompt_price": "Not applicable" if media or speech or transcription or model.id == FETCH_MODEL_ID else _cached_prompt_price_range(endpoints),
                 # Token-priced chat rows only: the provider hero's "from" price.
                 "min_prompt_microdollars": (
                     None
                     if model.id == FETCH_MODEL_ID
+                    or media
                     or model.supports_embeddings
                     or model.supports_rerank
                     or transcription
                     or (speech and not speech.token_billed)
                     else min(endpoint.prompt_price_microdollars_per_million_tokens for endpoint in endpoints)
                 ),
-                "completion_price": "Included" if transcription or (speech and not speech.token_billed) or model.id == FETCH_MODEL_ID else _endpoint_price_range(
+                "completion_price": "Included" if media or transcription or (speech and not speech.token_billed) or model.id == FETCH_MODEL_ID else _endpoint_price_range(
                     endpoints,
                     "completion_price_microdollars_per_million_tokens",
                 ),
