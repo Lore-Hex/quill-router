@@ -147,6 +147,22 @@ def test_all_catalog_trusted_endpoints_are_also_confidential() -> None:
         assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED) is expected
 
 
+def test_catalog_does_not_promise_best_route_by_default(pinned_model) -> None:
+    tr = model_to_openrouter_shape(MODELS[pinned_model])["trustedrouter"]
+    assert tr["available_privacy_tier"] == PRIVACY_TIER_TRUSTED
+    assert tr["default_min_privacy_tier"] == 0
+    assert tr["privacy_tier_scope"] == "available_route"
+    trusted = model_to_openrouter_shape(MODELS[TRUSTED_MODEL_ID])["trustedrouter"]
+    assert trusted["default_min_privacy_tier"] == PRIVACY_TIER_TRUSTED
+
+
+def test_catalog_does_not_promote_unreviewed_advisor_to_trusted() -> None:
+    tr = model_to_openrouter_shape(MODELS["parasail/liberty-2.0"])["trustedrouter"]
+    assert tr["available_privacy_tier"] is None
+    assert tr["privacy_tier_scope"] == "not_established"
+    assert tr["privacy_tier"] == tr["default_min_privacy_tier"] == 0
+
+
 def test_a_declared_tier_cannot_replace_missing_technical_evidence(monkeypatch) -> None:
     from trusted_router.catalog_data import (
         _MODEL_PROVIDER_PRIVACY_OVERRIDES,

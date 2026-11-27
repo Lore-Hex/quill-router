@@ -81,6 +81,7 @@ const r = await client.chat.completions.create({
   "stream": true
 }</code></pre>
   <p>To choose a specific model instead, send <code>provider.min_privacy: "trusted"</code> on the ordinary API. Catalog endpoints in this tier report <code>privacy_tier: 4</code> and <code>privacy_tier_label: "Trusted"</code>. Provider filters can narrow the tier, never expand it.</p>
+  <p>In <code>/v1/models</code>, a model's <code>available_privacy_tier</code> describes a route you can select, not a promise about the default route. <code>default_min_privacy_tier</code> is the floor required by the model ID itself. A null available tier means the catalog cannot establish the tier across all required hops.</p>
   <p>On <code>api.confidential.nytokenexchange.com</code> or <code>api.confidential.trustedrouter.com</code>, use <code>model: "nyte/trusted"</code> with the host's required <code>provider.min_privacy: "confidential"</code>. The model's stronger Trusted restriction still applies. These aliases use your TrustedRouter credits; pricing follows the selected eligible route.</p>
 </section>
 
