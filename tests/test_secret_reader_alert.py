@@ -212,6 +212,15 @@ def test_messages_quote_nothing_and_no_address_is_written() -> None:
         assert not re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", text), "an address is written in the repository"
 
 
+def test_secret_alerts_distinguish_attempt_from_disclosure_without_filtering_denials() -> None:
+    for name in ("unexpected_secret_reader", "signing_key_read_by_other"):
+        resource = _resource(name)
+        assert "attempted" in resource.split("combiner", 1)[0]
+        assert "protoPayload.status.code = 7 means permission denied" in resource
+    filters = _code(ALERT).split('resource "google_monitoring_alert_policy"', 1)[0]
+    assert "protoPayload.status" not in filters
+
+
 CONFIDENTIAL = (INFRA / "confidential_secret_readers.tf").read_text()
 
 
