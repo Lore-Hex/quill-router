@@ -2432,3 +2432,11 @@ def test_free_llm_api_price_claims_follow_the_live_table(
     else:
         assert f"models start at {expected} per million tokens" in body
         assert f"cheapest models cost {expected} per million tokens" in body
+
+
+def test_security_page_describes_broadcast_and_router_license(client: TestClient) -> None:
+    response = client.get("/security")
+    assert response.status_code == 200
+    assert "gateway excludes prompts and outputs from those exports" in response.text
+    assert "Business Source License" in response.text
+    assert "send content through the attested gateway to its own" not in response.text
