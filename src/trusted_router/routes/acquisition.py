@@ -24,8 +24,10 @@ class CatalogEventDetails(BaseModel):
             model = MODELS.get(self.model_id)
             if model is None or model.internal_only:
                 raise ValueError("Unknown public model")
-        if self.provider_id is not None and self.provider_id not in PROVIDERS:
-            raise ValueError("Unknown public provider")
+        if self.provider_id is not None:
+            provider = PROVIDERS.get(self.provider_id)
+            if provider is None or provider.internal_only:
+                raise ValueError("Unknown public provider")
         return self
 
 
@@ -76,7 +78,7 @@ class MarketingEventRequest(BaseModel):
     finish_reason: Literal["stop", "length", "content_filter", "tool_calls", "unknown"] | None = None
 
     @model_validator(mode="after")
-    def validate_attempt(self) -> Self:
+    def validate_event(self) -> Self:
         details = self.model_dump(exclude={"event", "catalog"}, exclude_none=True)
         if self.event.startswith("models."):
             required = {

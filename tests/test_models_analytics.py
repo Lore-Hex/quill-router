@@ -98,3 +98,43 @@ def test_catalog_fingerprint_joins_existing_signup_and_activation(client, caplog
     records = [r for r in caplog.records if r.getMessage() in stages]
     assert {r.getMessage() for r in records} == stages
     assert len({r.anonymous_fingerprint for r in records}) == 1
+
+
+def test_catalog_controls_match_accepted_metadata(client):
+    from typing import get_args
+    from urllib.parse import parse_qs, urlsplit
+
+    from bs4 import BeautifulSoup
+
+    from trusted_router.routes.acquisition import CatalogEventDetails, MarketingEventRequest
+
+    page = BeautifulSoup(client.get("/models").text, "html.parser")
+    controls = {
+        "pick": ("[data-model-query]", "data-model-query", "models.popular_pick_clicked"),
+        "filter": (".model-filter-row a", "href", "models.filter_changed"),
+        "sort": ("[data-model-sort] option", "value", "models.sort_changed"),
+    }
+    for field, (selector, attribute, event) in controls.items():
+        values = {control[attribute] for control in page.select(selector)}
+        if field == "filter":
+            values = {parse_qs(urlsplit(value).query).get("filter", ["all"])[0] for value in values}
+        annotation = CatalogEventDetails.model_fields[field].annotation
+        literal = next(arg for arg in get_args(annotation) if arg is not type(None))
+        assert values == set(get_args(literal))
+        for value in values:
+            MarketingEventRequest.model_validate({"event": event, "catalog": {field: value}})
+
+
+@pytest.mark.parametrize("kind", ["model", "provider"])
+def test_catalog_rejects_internal_identifiers(client, monkeypatch, kind):
+    from dataclasses import replace
+
+    from trusted_router.catalog import MODELS, PROVIDERS
+
+    registry = MODELS if kind == "model" else PROVIDERS
+    identifier = "trustedrouter/auto" if kind == "model" else "openai"
+    monkeypatch.setitem(registry, identifier, replace(registry[identifier], internal_only=True))
+    assert client.post("/analytics/events", json={
+        "event": "models.provider_clicked",
+        "catalog": {"model_id": "trustedrouter/auto", "provider_id": "openai"},
+    }).status_code == 400

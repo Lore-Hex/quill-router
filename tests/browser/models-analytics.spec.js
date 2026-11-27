@@ -33,7 +33,7 @@ test('catalog events debounce search and preserve privacy without duplicate rend
     expect(entry.headers.referer).toBeUndefined();
     expect(JSON.stringify(entry.body)).not.toContain('private-query');
   }
-  await page.locator('[data-catalog-filter="zdr"]').click();
+  await page.locator('.model-filter-row a[href="/models?filter=zdr"]').click();
   await expect.poll(() => sent.length).toBe(5);
   expect(sent[4].body).toEqual({event:'models.filter_changed',catalog:{filter:'zdr'}});
 });
@@ -92,4 +92,47 @@ test('failed telemetry leaves search and sorting usable', async ({ page }) => {
   await page.locator('[data-model-sort]').selectOption('name');
   await expect(page.locator('[data-model-empty]')).toBeHidden();
   expect(errors).toEqual([]);
+});
+
+test('clearing then quickly repeating a successful search counts a new search', async ({ page }) => {
+  const sent = await capture(page);
+  await page.goto('/models');
+  const search = page.locator('[data-model-search]');
+  await search.fill('deepseek');
+  await expect.poll(() => sent.length).toBe(1);
+  // Clear and retype without giving the empty value its own debounce interval.
+  await search.fill('');
+  await search.fill('deepseek');
+  await expect.poll(() => sent.length).toBe(2);
+  expect(sent.map(x => x.body.event)).toEqual(['models.search_used', 'models.search_used']);
+  await search.fill('  DEEPSEEK  ');
+  await search.blur();
+  await page.waitForTimeout(600);
+  expect(sent).toHaveLength(2);
+});
+
+test('backgrounding flushes a pending search once even when pagehide follows', async ({ page }) => {
+  const sent = await capture(page);
+  await page.goto('/models');
+  await page.evaluate(() => {
+    const input = document.querySelector('[data-model-search]');
+    input.value = 'private-query-canary';
+    input.dispatchEvent(new Event('input'));
+    Object.defineProperty(document, 'visibilityState', {configurable:true, get: () => 'hidden'});
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('pagehide'));
+  });
+  await expect.poll(() => sent.length).toBe(2);
+  await page.waitForTimeout(600);
+  expect(sent.map(x => x.body.event)).toEqual(['models.search_used', 'models.search_zero_results']);
+});
+
+test('middle clicks count once and context-menu clicks are ignored', async ({ page }) => {
+  const sent = await capture(page);
+  await page.goto('/models');
+  const link = page.locator('[data-model-card] .model-card-title a').first();
+  await link.dispatchEvent('auxclick', {button:2});
+  await link.dispatchEvent('auxclick', {button:1});
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].body.event).toBe('models.model_clicked');
 });

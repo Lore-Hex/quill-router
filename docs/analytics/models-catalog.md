@@ -11,7 +11,7 @@ All names below receive the `acquisition.` prefix in logs and Axiom.
 
 | Event | Meaning | Additional exported fields |
 |---|---|---|
-| `models.search_used` | Nonempty typed search after 500 ms idle, blur, or page exit | None |
+| `models.search_used` | Nonempty typed search after 500 ms idle, blur, page hide, or page exit | None |
 | `models.search_zero_results` | Subset of those searches with zero matches | None |
 | `models.popular_pick_clicked` | Popular-search button activated | `catalog_pick` |
 | `models.filter_changed` | A different filter link activated | `catalog_filter` |
@@ -68,24 +68,10 @@ Example source-dataset check (bound the query to the release verification window
 | summarize interactions=count(), visitors=dcount(anonymous_fingerprint) by event
 ```
 
-## Verification and release status — 2026-11-27
+## Release follow-through
 
-Focused endpoint/export/privacy tests and five Chromium interaction checks pass.
-The attribution test checks the same anonymous fingerprint across a catalog
-interaction, signup, and first successful API call. No full local CI was run,
-as requested. Focused runtime mypy and Ruff checks pass; directly checking the
-worker script with mypy exposed 15 pre-existing typing issues outside the
-repository's configured `src/trusted_router` mypy scope.
+Live ingestion must be verified by the deployment owner after release.
 
-A bounded live Axiom query confirmed current acquisition events, including
-signup, API-key creation, and first successful API calls. No new catalog events
-were present. An explicitly labeled synthetic run through the new local HTTP
-route and the existing scrubbed, queued Axiom logger was rejected by Axiom:
-`403: user does not have access to resource: ingest with action: create`.
-The operator login can query but cannot ingest. This is **not** successful
-end-to-end verification of the new events, and this change is not deployed.
-
-Backend/release follow-through:
 
 1. Release the app through its normal CI and deployment gates.
 2. Deploy the growth worker through `deploy-growth-sync`, preserving collector

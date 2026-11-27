@@ -28,7 +28,6 @@
   let searchTimer;
   let pendingSearch;
   let lastSearch = "";
-  let resultCount = 0;
 
   function flushSearch() {
     clearTimeout(searchTimer);
@@ -42,10 +41,12 @@
     if (zero) track("models.search_zero_results");
   }
 
-  function scheduleSearch() {
+  function scheduleSearch(resultCount) {
     clearTimeout(searchTimer);
     // Query exists only in page memory for deduplication, never in telemetry.
-    pendingSearch = { query: normalize(search.value), zero: resultCount === 0 };
+    const query = normalize(search.value);
+    if (!query) lastSearch = "";
+    pendingSearch = { query, zero: resultCount === 0 };
     searchTimer = setTimeout(flushSearch, 500);
   }
 
@@ -90,7 +91,6 @@
     const query = normalize(search.value);
     const matches = sortCards(cards.filter((card) => window.TRModelSearch.matches(card.dataset.searchText || "", query)));
 
-    resultCount = matches.length;
     matches.forEach((card) => results.append(card));
     const visible = matches.slice(0, visibleLimit);
     const visibleSet = new Set(visible);
@@ -111,17 +111,20 @@
       link.href = `/support?${requestParams.toString()}#support-inquiry`;
     });
     writeUrl();
+    return matches.length;
   }
 
   search.addEventListener("input", () => {
     visibleLimit = pageSize;
-    render();
-    scheduleSearch();
+    scheduleSearch(render());
     // Keep the response to typing visible while the input stays in the sticky header.
     count.scrollIntoView({ block: "start", behavior: "instant" });
   });
   search.addEventListener("blur", flushSearch);
   window.addEventListener("pagehide", flushSearch);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushSearch();
+  });
   sort.addEventListener("change", () => {
     flushSearch();
     track("models.sort_changed", { sort: sort.value });
@@ -159,8 +162,8 @@
     if (event.type === "auxclick" && event.button !== 1) return;
     const link = event.target.closest("a[href]");
     if (!link) return;
-    const filter = link.dataset.catalogFilter;
-    if (filter !== undefined) {
+    if (link.closest(".model-filter-row")) {
+      const filter = new URL(link.href).searchParams.get("filter") || "all";
       if (!link.classList.contains("good")) track("models.filter_changed", { filter });
       return;
     }
