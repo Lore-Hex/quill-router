@@ -92,7 +92,7 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 585000,
+      "input_token_price_per_m": 604500,
       "output_token_price_per_m": 3384000,
       "cached_input_token_price_per_m": 150000
     },
@@ -317,7 +317,7 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 130000,
+      "input_token_price_per_m": 150000,
       "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 30000
     },
@@ -369,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-27T13:06:32Z",
+  "generated_at": "2026-11-27T15:26:41Z",
   "model_count": 8
 }

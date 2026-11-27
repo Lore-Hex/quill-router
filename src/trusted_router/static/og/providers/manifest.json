@@ -118,10 +118,10 @@
   },
   "boundless": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Boundless",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "boundless"
   },
