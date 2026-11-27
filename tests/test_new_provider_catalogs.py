@@ -8,7 +8,7 @@ import pytest
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import chutes, cloudflare_workers_ai, digitalocean
 from tests import catalog_vehicles
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -84,7 +84,7 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
         row.get("routable") is True
         or row.get("routable_reason") == "awaiting-price"
         or (row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed")
-        or row_on_unserved_route_hold(row)
+        or row_taken_down_by_refresh(row)
         or (row.get("routable_reason") == "delisted-upstream" and row.get("missing_since"))
         for row in rows
     )
@@ -162,7 +162,7 @@ def test_new_provider_manifests_create_only_eligible_routes() -> None:
         # credentials. The snapshot that refresh wrote before the hold still
         # lists the route, so a customer's own key keeps it (BYOK), as for any
         # Credits-only manifest hold.
-        held_unserved = {row["id"] for row in manifest["models"] if row_on_unserved_route_hold(row)}
+        held_unserved = {row["id"] for row in manifest["models"] if row_taken_down_by_refresh(row)}
         on_credits = {
             endpoint.model_id for endpoint in endpoints
             if endpoint.provider == provider.SLUG and endpoint.usage_type == "Credits"

@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from scripts.pricing.providers import lyceum
+from tests.provider_holds import committed_route_taken_down
 
 
 def card(model="z-ai/glm-5.3-flash", *, prompt="$0.20 /1M", output="$0.50 /1M", cached="$0.05 /1M", categories="text,code", context="1M"):
@@ -164,11 +165,17 @@ def test_shared_embedding_model_keeps_each_provider_route():
     model_id = "qwen/qwen3-embedding-8b"
     assert MODELS[model_id].supports_embeddings
     assert not MODELS[model_id].supports_chat
-    endpoint = MODEL_ENDPOINTS[f"{model_id}@lyceum/prepaid"]
+    assert any(e.provider != "lyceum" and e.model_id == model_id for e in MODEL_ENDPOINTS.values())
+    endpoint_id = f"{model_id}@lyceum/prepaid"
+    if committed_route_taken_down(endpoint_id):
+        # The hourly refresh took Lyceum's row down: the other hosts keep
+        # theirs (above) and Lyceum's is left out, not merged into another.
+        assert endpoint_id not in MODEL_ENDPOINTS
+        return
+    endpoint = MODEL_ENDPOINTS[endpoint_id]
     assert endpoint.upstream_id == model_id
     assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(20_000)
     assert endpoint.completion_price_microdollars_per_million_tokens == 0
-    assert any(e.provider != "lyceum" and e.model_id == model_id for e in MODEL_ENDPOINTS.values())
 
 
 @pytest.mark.parametrize("changes", [

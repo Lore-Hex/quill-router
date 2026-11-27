@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from scripts.pricing.providers import together
-from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
+from tests.provider_holds import manifest_rows, row_taken_down_by_refresh
 from trusted_router import provider_lifecycle
 from trusted_router.catalog_data import NAMED_DECISION_MODEL_PROVIDERS, TREV_1_0_MODEL_ID
 from trusted_router.catalog_registry import MODEL_ENDPOINTS
@@ -74,7 +74,7 @@ def test_unnamed_together_routes_keep_serving(model_id: str) -> None:
     # Served after the cutoff, unless the refresh itself holds the row as unserved.
     assert "together" in _live_providers(
         model_id, _CUTOFF + timedelta(days=1)
-    ) or row_on_unserved_route_hold(_manifest_rows().get(model_id, {}))
+    ) or row_taken_down_by_refresh(_manifest_rows().get(model_id, {}))
 
 
 def test_other_providers_keep_gpt_oss_120b() -> None:
@@ -95,7 +95,7 @@ def test_trev_keeps_live_hosts_on_its_chain_after_the_cutoff() -> None:
     live = _live_providers(_GPT_OSS_120B[0], _CUTOFF + timedelta(days=1))
     # Cerebras keeps serving it, unless the refresh itself holds that row as unserved.
     cerebras = {row["id"]: row for row in manifest_rows("cerebras")}
-    assert "cerebras" in live or row_on_unserved_route_hold(cerebras.get(_GPT_OSS_120B[0], {}))
+    assert "cerebras" in live or row_taken_down_by_refresh(cerebras.get(_GPT_OSS_120B[0], {}))
     assert [host for host in chain if host in live]
 
 

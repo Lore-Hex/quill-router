@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from tests.provider_holds import committed_row, row_taken_down_by_refresh
 from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.catalog_ingest import _filter_unserved_provider_endpoints
 from trusted_router.provider_contracts import (
@@ -74,9 +75,13 @@ def test_hosting_not_model_author_controls_eligibility(
     template = next(iter(MODEL_ENDPOINTS.values()))
     endpoint = replace(template, id="hosted", provider=provider, model_id=model_id,
                        upstream_id=upstream_id, usage_type="Credits")
+    # Unless the hourly refresh took the host's row down this hour: then the
+    # host does not serve it, which is the rule too.
+    row = committed_row(provider, model_id)
+    expected = {} if row is not None and row_taken_down_by_refresh(row) else {endpoint.id: endpoint}
     assert _filter_unserved_provider_endpoints(
         {endpoint.id: endpoint}, explicit_model_ids=frozenset({model_id}),
-    ) == {endpoint.id: endpoint}
+    ) == expected
 
 
 @pytest.mark.parametrize("model_id", ["openai/gpt-oss-20b", "openai/gpt-oss-120b"])
@@ -98,5 +103,8 @@ def test_openai_authorship_does_not_create_a_hosted_gpt_oss_route(
 def test_gpt_oss_actual_hosts_keep_both_billing_modes(provider: str, usage_type: str) -> None:
     model_id = "openai/gpt-oss-120b"
     assert not provider_model_operator_held(provider, model_id)
+    # Unless the hourly refresh has the host's row down this hour, which is
+    # not about who may host gpt-oss.
+    row = committed_row(provider, model_id)
     assert any(ep.provider == provider and ep.model_id == model_id and ep.usage_type == usage_type
-               for ep in MODEL_ENDPOINTS.values())
+               for ep in MODEL_ENDPOINTS.values()) or (row is not None and row_taken_down_by_refresh(row))

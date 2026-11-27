@@ -281,9 +281,14 @@ def test_registration_and_conservative_privacy():
     assert "BEDROCK_API_KEY:trustedrouter-bedrock-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
 
 
-def test_committed_routes_use_bedrock_ids_prices_and_fail_closed_holds():
+def test_committed_routes_use_bedrock_ids_prices_and_fail_closed_holds(monkeypatch, tmp_path):
+    from tests.pinned_manifests import serve_committed_route
     from trusted_router.catalog import MODEL_ENDPOINTS
     from trusted_router.pricing import _customer_price
+
+    # The committed row's Bedrock id and prices, whether or not the hourly
+    # refresh has the route down this hour.
+    serve_committed_route(monkeypatch, tmp_path, "openai/gpt-oss-20b@amazon-bedrock/prepaid")
 
     endpoint = MODEL_ENDPOINTS["openai/gpt-oss-20b@amazon-bedrock/prepaid"]
     assert endpoint.upstream_id == "openai.gpt-oss-20b"

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
+from tests.pinned_manifests import serve_committed_route
 from trusted_router.seo_meta import provider_link_rel
 
 
@@ -34,7 +37,12 @@ def test_provider_resource_rel(url: str, external: bool) -> None:
 ])
 def test_rendered_provider_link_rel(
     client: TestClient, page: str, external_selector: str, internal_selector: str,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    if page == "/models/minimax/minimax-m3":
+        # The model page links its maker's own route; that route is the
+        # vehicle here, whether or not the refresh has it down this hour.
+        serve_committed_route(monkeypatch, tmp_path, "minimax/minimax-m3@minimax/prepaid")
     response = client.get(page)
     assert response.status_code == 200
     soup = BeautifulSoup(response.text, "html.parser")

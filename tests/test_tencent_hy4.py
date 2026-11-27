@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import _direct_openai, tencent
 from tests import catalog_vehicles
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.pinned_manifests import serve_committed_route
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router.provider_lifecycle import (
     ProviderPrice,
     provider_price_microdollars,
@@ -46,7 +47,7 @@ def test_hy4_manifest_preserves_managed_canary_gate_and_privacy() -> None:
                if e.model_id == MODEL and e.provider == "tencent" and e.usage_type == "Credits"]
     # Routable with a managed route, unless the refresh itself holds the row
     # as unserved; any other hold or reason on it is still a failure.
-    held = row_on_unserved_route_hold(row)
+    held = row_taken_down_by_refresh(row)
     assert row["routable"] is True or held
     assert "routable_reason" not in row or held
     assert managed or held
@@ -199,13 +200,14 @@ def test_hy4_catalog_history_discovers_both_promotion_boundaries() -> None:
     (datetime(2027, 1, 1, tzinfo=UTC), "List"),
 ])
 def test_hy4_future_serving_page_discloses_discount_expiry(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, at: datetime, period: str,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, at: datetime, period: str, tmp_path: Path,
 ) -> None:
     from trusted_router import catalog
 
     # Pin a synthetic route to test both pricing periods independently of
     # live account state. Monkeypatch restores the registry. HY3 is the
     # template because HY4 Preview retires on 2026-12-06.
+    serve_committed_route(monkeypatch, tmp_path, "tencent/hy3@tencent/prepaid")
     base = catalog.MODELS["tencent/hy3"]
     template = next(e for e in catalog_vehicles.registry_endpoints().values()
                     if e.model_id == base.id and e.provider == "tencent" and e.usage_type == "Credits")

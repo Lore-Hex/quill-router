@@ -19,13 +19,16 @@ from trusted_router.async_settle_shadow_wire import _inline_snapshot
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.detached_jws import b64encode, canonical
 
+# The named shapes: one and four OpenAI Credits routes, pinned by the appendix
+# measurement record (tests/test_async_settle_shadow.py).
+NAMED_MODELS = ('openai/gpt-6-astra','openai/gpt-5.6-sol','openai/gpt-6.1-sol','openai/gpt-5.5')
+
 
 def cases():
     at = context().authorization.created_at
     endpoints = tuple(e for e in MODEL_ENDPOINTS.values() if e.provider in {'openai','anthropic'}
         and e.usage_type == 'Credits' and e.model_id.startswith(e.provider+'/') and MODELS[e.model_id].supports_chat)
-    named = ('openai/gpt-6-astra','openai/gpt-5.6-sol','openai/gpt-6.1-sol','openai/gpt-5.5')
-    four = tuple(next(e for e in endpoints if e.model_id == model) for model in named)
+    four = tuple(next(e for e in endpoints if e.model_id == model) for model in NAMED_MODELS)
     for group in ((four[0],), four, endpoints):
         snapshot = project(group, at)
         raw = b.RawUsage.model_validate(FIXTURE['raw_usage'])

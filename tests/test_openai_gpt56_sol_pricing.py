@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.authorize_candidates import endpoint_cost_microdollars
 from trusted_router.catalog import MODEL_ENDPOINTS, effective_endpoint
 from trusted_router.money import token_cost_microdollars
@@ -40,6 +41,24 @@ STANDARD_TIERS = (
     PriceTier(272_000, 5_275_000, 31_650_000, 527_500),
     PriceTier(None, 10_550_000, 47_475_000, 1_055_000),
 )
+
+
+@pytest.fixture(autouse=True)
+def _sol_on_first_party_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cutover is OpenAI's own price for its own routes, whatever today's
+    catalog lists: the hourly refresh can hold or delist the committed route
+    (provider-route-unserved), and the schedule must still price both kinds of
+    first-party route. The fixture routes carry the manifest's promotion price,
+    which effective_endpoint replaces in either period."""
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, MODEL_ID, "openai", author="openai", usage_type=usage_type,
+            upstream_id="gpt-5.6-sol",
+            prompt_price_microdollars_per_million_tokens=PROMOTION_TIERS[0].prompt_price_microdollars_per_million_tokens,
+            completion_price_microdollars_per_million_tokens=PROMOTION_TIERS[0].completion_price_microdollars_per_million_tokens,
+            price_tiers=PROMOTION_TIERS,
+            published_price_tiers=PROMOTION_TIERS,
+        )
 
 
 def test_switch_is_december_first_utc_midnight() -> None:

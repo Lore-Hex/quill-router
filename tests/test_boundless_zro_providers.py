@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pricing.providers import boundless, zro
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import row_taken_down_by_refresh
 
 
 def boundless_product(native="mimo-v2.6-pro"):
@@ -319,7 +319,7 @@ def _published_route_disagreements(module, endpoints, rows, *, settlement_only=F
         if row is None:
             problems.append(f"{slug}: {e.model_id} published without a manifest row")
             continue
-        if row.get("routable") is False and not (settlement_only and row_on_unserved_route_hold(row)):
+        if row.get("routable") is False and not (settlement_only and row_taken_down_by_refresh(row)):
             problems.append(f"{slug}: {e.model_id} published while {row.get('routable_reason')}")
         if e.upstream_id != row.get("upstream_id"):
             problems.append(f"{slug}: {e.model_id} upstream {e.upstream_id} != manifest {row.get('upstream_id')}")
@@ -530,7 +530,7 @@ def test_boundless_gpt_oss_120b_is_held_while_the_provider_rejects_it():
     assert rows[GPT_OSS_120B]["routable"] is False
     assert rows[GPT_OSS_120B]["routable_reason"] == "provider-access-unavailable"
     # The control serves, unless the refresh itself holds it as unserved.
-    control_held = row_on_unserved_route_hold(rows[BOUNDLESS_CONTROL])
+    control_held = row_taken_down_by_refresh(rows[BOUNDLESS_CONTROL])
     assert rows[BOUNDLESS_CONTROL].get("routable") is not False or control_held
     built = catalog_vehicles.registry_endpoints()
     assert f"{GPT_OSS_120B}@boundless/prepaid" not in built

@@ -43,6 +43,13 @@ VEHICLE_ENDPOINT_IDS = (
     "anthropic/claude-opus-4.7@anthropic/byok",
     "anthropic/claude-sonnet-4.6@anthropic/prepaid",
     "anthropic/claude-sonnet-4.6@anthropic/byok",
+    # OpenAI's own routes that settlement, broadcast, probe and replay tests
+    # authorize on (the refresh's unserved-route hold can take any one down;
+    # `scripts/tombstone_sweep.py holds`, 2026-11-26).
+    "openai/gpt-5.5@openai/prepaid",
+    "openai/gpt-5.5@openai/byok",
+    "openai/gpt-4.1@openai/prepaid",
+    "openai/gpt-4.1-mini@openai/prepaid",
 )
 
 # Chosen from `scripts/tombstone_sweep.py models` (2026-09-29): the models whose

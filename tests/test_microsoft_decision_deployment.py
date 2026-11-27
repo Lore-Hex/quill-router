@@ -49,11 +49,14 @@ def test_fresh_cloud_catalog_discovery_and_authorization(region: str) -> None:
             from trusted_router.config import Settings
             from trusted_router.main import create_app
             from trusted_router.provider_lifecycle import provider_model_retired
+            from tests.provider_holds import committed_route_taken_down
 
             model = "microsoft/microsoft-decision-1"
             allowed = os.environ["TR_PRIMARY_REGION"] == "us-central1"
             assert (model in MODELS) is allowed
-            available = allowed and not provider_model_retired("azure", model, at=CATALOG_CLOCK)
+            # The hourly refresh may also have Azure's row down this hour.
+            taken_down = committed_route_taken_down(model + "@azure/prepaid")
+            available = allowed and not provider_model_retired("azure", model, at=CATALOG_CLOCK) and not taken_down
             assert any(e.model_id == model for e in MODEL_ENDPOINTS.values()) is available
             assert "typesafe-ai/jev" in MODELS
 
@@ -71,8 +74,9 @@ def test_fresh_cloud_catalog_discovery_and_authorization(region: str) -> None:
                 assert response.status_code == 200, response.text
                 ids = {row["id"] for row in response.json()["data"]}
                 # Retirement disables routes but preserves the seed's public
-                # metadata. A gateway hold removes the entire model instead.
-                assert (model in ids) is allowed
+                # metadata. A gateway hold removes the entire model instead,
+                # and so does the refresh taking its only route's row down.
+                assert (model in ids) is (allowed and not taken_down)
             asyncio.run(verify())
         ''')],
         env={**os.environ, "TR_PRIMARY_REGION": region, "TR_SERVING_REGION": "", "TR_ENVIRONMENT": "test"},

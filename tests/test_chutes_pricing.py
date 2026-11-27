@@ -10,7 +10,7 @@ import pytest
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import chutes
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import row_taken_down_by_refresh
 
 GLM = "zai-org/GLM-5.2-TEE"
 KIMI = "moonshotai/Kimi-K2.6-TEE"
@@ -436,7 +436,7 @@ def test_committed_chutes_snapshot_routes_match_their_manifest_model_and_price()
             row = rows[model["id"]]
             # The refresh writes the snapshot before its unserved-route step
             # runs, so a route that step has just held is still listed here.
-            assert row.get("routable") is not False or row_on_unserved_route_hold(row)
+            assert row.get("routable") is not False or row_taken_down_by_refresh(row)
             assert row["confidential_compute"] is True
             assert endpoint["model_id"] == row["upstream_id"]
             assert chutes._canonical_model_id(endpoint["model_id"]) == model["id"]

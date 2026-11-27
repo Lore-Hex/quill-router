@@ -14,7 +14,7 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, read_stale_provider_manifest
 from scripts.pricing.manifest import apply_canary_results
 from scripts.pricing.providers import nscale
-from tests.provider_holds import manifest_rows, row_on_unserved_route_hold
+from tests.provider_holds import manifest_rows, row_taken_down_by_refresh
 from trusted_router import catalog_ingest, provider_lifecycle, provider_manifest_policy
 from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
@@ -166,7 +166,7 @@ def test_nscale_retired_routes_keep_tombstones_and_manifest_renews(
         "qwen/qwen3.8-flash-next-fp8",
         nscale.EMBEDDING_MODEL_ID,
     ):
-        assert rows[model_id].get("routable") is not False or row_on_unserved_route_hold(
+        assert rows[model_id].get("routable") is not False or row_taken_down_by_refresh(
             rows[model_id]
         ), model_id
     # Every route the November cutover retired stays a dark tombstone.
@@ -678,7 +678,7 @@ def test_nscale_prepaid_routes_serve_after_the_operator_token_was_replaced() -> 
     # one of these rows is a different, per-route decision that lifts itself.
     committed = {row["id"]: row for row in manifest_rows(nscale.SLUG)}
     for model_id in ("z-ai/glm-5.3", "qwen/qwen3.8-27b"):
-        assert f"{model_id}@nscale/prepaid" in built or row_on_unserved_route_hold(
+        assert f"{model_id}@nscale/prepaid" in built or row_taken_down_by_refresh(
             committed[model_id]
         ), model_id
     assert not [key for key in HELD_PREPAID_SETTLEMENT_ENDPOINTS if key.endswith("@nscale/prepaid")]

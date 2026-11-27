@@ -9,7 +9,7 @@ import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.providers import nscale
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router import provider_lifecycle, provider_manifest_policy
 
 _CUTOFF = datetime(2026, 12, 11, tzinfo=UTC)
@@ -136,7 +136,7 @@ def test_nscale_post_december_catalog_renews_and_tombstones_the_retired_rows(
     # A survivor keeps routing, unless the refresh itself holds the committed
     # row as unserved: the writer carries that hold forward.
     for model_id in _SURVIVING:
-        assert rows[model_id].get("routable") is not False or row_on_unserved_route_hold(
+        assert rows[model_id].get("routable") is not False or row_taken_down_by_refresh(
             rows[model_id]
         ), model_id
         assert rows[model_id]["input_token_price_per_m"] > 0
@@ -144,7 +144,7 @@ def test_nscale_post_december_catalog_renews_and_tombstones_the_retired_rows(
     # unserved-route hold, which outranks the delisting until it lifts.
     for model_id in _RETIRING:
         assert rows[model_id]["routable"] is False, model_id
-        assert rows[model_id]["routable_reason"] == "delisted-upstream" or row_on_unserved_route_hold(
+        assert rows[model_id]["routable_reason"] == "delisted-upstream" or row_taken_down_by_refresh(
             rows[model_id]
         ), model_id
         assert rows[model_id]["missing_since"]
@@ -187,7 +187,11 @@ def test_nscale_post_december_listing_before_the_cutover_fails_closed(
     _at(monkeypatch, _CUTOFF - timedelta(hours=1))
     _serve(monkeypatch, manifest, _payload(_POST_DECEMBER))
 
-    _assert_fails_closed(manifest, r"no longer prices \[.*'qwen/qwen3.8-flash-next-fp8'.*no retirement")
+    # The committed copy names the early-dropped model, unless the hourly
+    # refresh already has that row down; then the refusal names the others.
+    early = _rows(manifest)["qwen/qwen3.8-flash-next-fp8"]
+    named = r".*" if row_taken_down_by_refresh(early) else r".*'qwen/qwen3.8-flash-next-fp8'.*"
+    _assert_fails_closed(manifest, rf"no longer prices \[{named}no retirement")
 
 
 def test_nscale_post_december_listing_without_the_retirement_record_fails_closed(

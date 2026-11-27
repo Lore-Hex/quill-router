@@ -257,8 +257,15 @@ def test_routing_documentation_distinguishes_metadata_from_filtering(client) -> 
     assert "runtime_verified" in response.text
 
 
-def test_featherless_declaration_is_exact_route_only_and_not_weight_verification(client, test_settings):
+def test_featherless_declaration_is_exact_route_only_and_not_weight_verification(
+    client, test_settings, monkeypatch, tmp_path,
+):
+    from tests.pinned_manifests import serve_committed_route
+
     model_id = "minimax/minimax-m3.1-flash"
+    # Featherless's committed row carries the declaration, whether or not the
+    # hourly refresh has the route down this hour.
+    serve_committed_route(monkeypatch, tmp_path, f"{model_id}@featherless/prepaid")
     endpoint = _endpoint("featherless", model_id)
     assert endpoint is not None
     precision = endpoint_precision_metadata(endpoint)

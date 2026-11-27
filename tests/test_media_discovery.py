@@ -1,7 +1,10 @@
 from decimal import Decimal
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.pinned_manifests import serve_committed_media_routes, serve_committed_route
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.media_discovery import media_discovery
@@ -32,7 +35,12 @@ def test_two_catalogs_agree_on_every_video(client: TestClient) -> None:
     ]["1080p"] == 8
 
 
-def test_job_token_live_and_unavailable_prices_are_distinct(client: TestClient) -> None:
+def test_job_token_live_and_unavailable_prices_are_distinct(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Seedance 2.0 Fast's token tariff is BytePlus's committed table, whether
+    # or not the hourly refresh has the route down this hour.
+    serve_committed_route(monkeypatch, tmp_path, "bytedance/seedance-2.0-fast@byteplus/prepaid")
     rows = {r["id"]: r for r in client.get("/v1/videos/models").json()["data"]}
     ltx = rows["lightricks/ltx-2.3-fast"]["trustedrouter"]["media"]["pricing"]["routes"]
     assert any(ex["duration"] == 6 and ex["resolution"] == "1080p"
@@ -50,7 +58,11 @@ def test_job_token_live_and_unavailable_prices_are_distinct(client: TestClient) 
     assert empty and empty["pricing"]["routes"] == {}
 
 
-def test_image_and_audio_controls_and_units(client: TestClient) -> None:
+def test_image_and_audio_controls_and_units(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Each speech and transcription model's one host, whatever the refresh holds.
+    serve_committed_media_routes(monkeypatch, tmp_path)
     rows = {r["id"]: r for r in client.get("/v1/models").json()["data"]}
     for key in (IMAGE_MODEL_ID_SET | SPEECH_MODELS.keys() | TRANSCRIPTION_MODELS.keys()) & MODELS.keys():
         media = rows[key]["trustedrouter"]["media"]

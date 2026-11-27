@@ -888,7 +888,14 @@ def test_skewed_stamps_are_a_second_apart_across_a_minute_and_leave_curated_mani
 def test_a_sample_is_reproducible_disjoint_and_only_routable_rows(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _data(monkeypatch, tmp_path)
+    root = _data(monkeypatch, tmp_path)
+    for provider, stamp in (("alpha", "2026-11-26T12:00:00Z"), ("beta", "2026-11-26T12:00:01Z")):
+        path = root / "provider_models" / f"{provider}.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "generated_at": stamp}))
+    # A held provider's manifest keeps its old stamp; the refresh does not
+    # delist or rename its rows.
+    (root / "provider_models" / "held.json").write_text(json.dumps(
+        {"generated_at": "2026-09-28T00:00:00Z", "models": [{"id": "maker/held"}]}))
     routable = {("alpha", "maker/model-a"), ("alpha", "maker/model-b"), ("beta", "maker/model-a"),
                 ("beta", "maker/model-a-fast")}
     assert set(sweep.routable_rows()) == routable
@@ -940,3 +947,21 @@ def test_a_renamed_row_lists_the_model_under_a_new_upstream_id(
     assert [row["upstream_id"] for row in rows] == ["model-a-renamed-upstream", "maker/model-b-renamed-upstream"]
     gone = json.loads((root / "provider_models" / "beta.json").read_text())["models"][2]
     assert "upstream_id" not in gone
+
+
+def test_a_delisted_row_takes_the_providers_alias_rows_for_the_same_upstream_with_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _data(monkeypatch, tmp_path)
+    path = root / "provider_models" / "alpha.json"
+    path.write_text(json.dumps({"models": [
+        {"id": "maker/model-a", "upstream_id": "model-a"},
+        {"id": "alpha/model-a", "upstream_id": "model-a"},
+        {"id": "maker/model-b", "upstream_id": "model-b"},
+    ]}))
+
+    assert sweep.delist_rows([["alpha", "maker/model-a"]])["rows"] == 2
+
+    rows = {row["id"]: row for row in json.loads(path.read_text())["models"]}
+    assert rows["maker/model-a"]["routable_reason"] == rows["alpha/model-a"]["routable_reason"] == "delisted-upstream"
+    assert "routable" not in rows["maker/model-b"]

@@ -9,8 +9,12 @@ import pytest
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS, parse
 from scripts.pricing.providers import thinkingmachines
-from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.pinned_manifests import (
+    THINKINGMACHINES_GLM_5_3,
+    serve_committed_route,
+    serve_manifest_rows,
+)
+from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
@@ -604,6 +608,9 @@ def test_inkling_2_small_would_publish_with_an_open_weights_badge(
     from trusted_router.catalog import endpoints_for_model, model_open_weights
 
     serve_manifest_rows(monkeypatch, tmp_path, "thinkingmachines", [INKLING_2_SMALL_ROW])
+    # The sibling compared below is Tinker's committed route, whether or not
+    # the hourly refresh has it down this hour.
+    serve_committed_route(monkeypatch, tmp_path / "sibling", "thinkingmachines/inkling-small@thinkingmachines/prepaid")
     model = MODELS["thinkingmachines/inkling-2-small"]
     assert model.context_length >= 262_144
     assert model.input_modalities == ("text", "image")
@@ -645,7 +652,7 @@ def test_tinker_inkling_2_routes_are_held_out_of_routing_and_probes() -> None:
     for sibling in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
         # No operator hold on a sibling. The refresh's own unserved-route hold
         # is a different, self-lifting decision.
-        held_unserved = row_on_unserved_route_hold(rows[sibling])
+        held_unserved = row_taken_down_by_refresh(rows[sibling])
         assert "routable" not in rows[sibling] or held_unserved
         if provider_lifecycle.provider_model_retired("thinkingmachines", sibling):
             # First-gen Inkling retires on 2026-12-14; it is neither probed nor routed.

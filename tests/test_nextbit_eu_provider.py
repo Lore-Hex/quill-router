@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from scripts.pricing.providers import _direct_openai, nextbit, nextbit_eu
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
-from tests.provider_holds import row_on_unserved_route_hold
+from tests.provider_holds import committed_row, row_taken_down_by_refresh
 from trusted_router.catalog import PROVIDERS
 from trusted_router.catalog_data import EU_FOCUSED_PROVIDER_ORDER
 from trusted_router.catalog_privacy import (
@@ -166,7 +166,7 @@ def test_eu_gemma_3_27b_is_held_while_the_provider_rate_limits_it():
     assert rows[GEMMA_3_27B]["routable"] is False
     assert rows[GEMMA_3_27B]["routable_reason"] == "provider-access-unavailable"
     # The control serves, unless the refresh itself holds it as unserved.
-    control_held = row_on_unserved_route_hold(rows[EU_CONTROL])
+    control_held = row_taken_down_by_refresh(rows[EU_CONTROL])
     assert rows[EU_CONTROL].get("routable") is not False or control_held
     built = catalog_vehicles.registry_endpoints()
     assert f"{GEMMA_3_27B}@nextbit-eu/prepaid" not in built
@@ -225,4 +225,7 @@ def test_eu_gemma_3_27b_is_out_of_the_committed_snapshot():
     model = next(model for model in snapshot["models"] if model["id"] == GEMMA_3_27B)
     providers = {e.get("tr_provider_slug") for e in model["endpoints"]}
     assert "nextbit-eu" not in providers
-    assert "nextbit" in providers  # The global route is not held.
+    # The global route is not held, unless the hourly refresh took Nextbit's
+    # own row down this hour.
+    global_row = committed_row("nextbit", GEMMA_3_27B)
+    assert "nextbit" in providers or (global_row is not None and row_taken_down_by_refresh(global_row))

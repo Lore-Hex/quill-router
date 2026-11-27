@@ -3,8 +3,15 @@ import json
 import pytest
 
 from scripts.pricing.speech import parse_tinfoil_request_prices
+from tests.pinned_manifests import serve_committed_media_routes
 from trusted_router.pricing import customer_fixed_price_microdollars
 from trusted_router.speech import SPEECH_MODELS
+
+
+@pytest.fixture(autouse=True)
+def _committed_media_routes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """These rules ride each model's one host, whatever the refresh holds."""
+    serve_committed_media_routes(monkeypatch, tmp_path / "media-routes")
 
 
 @pytest.mark.parametrize("model,cost", [("qwen/qwen3-tts", 10000), ("mistralai/voxtral-4b-tts-2603", 2000)])

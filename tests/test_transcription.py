@@ -6,7 +6,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.pinned_manifests import serve_committed_media_routes
 from trusted_router.transcription import TRANSCRIPTION_MODELS
+
+
+@pytest.fixture(autouse=True)
+def _committed_media_routes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """These rules ride each model's one host, whatever the refresh holds."""
+    serve_committed_media_routes(monkeypatch, tmp_path / "media-routes")
 
 
 @pytest.fixture

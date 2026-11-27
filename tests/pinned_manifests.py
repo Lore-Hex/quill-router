@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 from collections.abc import Iterable
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,10 @@ from typing import Any
 import pytest
 
 from tests.fixture_routes import bypass_catalog_caches
+from tests.provider_holds import committed_row, row_taken_down_by_refresh
 from trusted_router import catalog_ingest, catalog_registry
 from trusted_router.catalog_data import Model, ModelEndpoint
+from trusted_router.provider_manifest_policy import UNSERVED_ROUTE_HELD_AT_FIELD
 from trusted_router.routes import catalog as catalog_routes
 
 
@@ -1308,3 +1311,69 @@ def isolate_public_catalog_cache(monkeypatch: pytest.MonkeyPatch) -> None:
         "_public_catalog_payload",
         lru_cache(maxsize=1)(getattr(projection, "__wrapped__", projection)),
     )
+
+
+# What the hourly refresh writes on a row it takes down on its own (a
+# delisting, the unserved-route hold, a canary quarantine): undone, the row is
+# the route it was.
+_REFRESH_TAKE_DOWN_FIELDS = ("routable", "routable_reason", "missing_since", UNSERVED_ROUTE_HELD_AT_FIELD)
+
+
+def serve_committed_route(monkeypatch: pytest.MonkeyPatch, directory: Path, endpoint_id: str) -> None:
+    """Keep a committed route a rule rides on, if the refresh took its row down.
+
+    A billing or routing rule that needs a host's route with its committed
+    tariff (a video resolution table, a price schedule) is not about whether
+    the host serves it this hour. When the hourly refresh has delisted, held
+    or quarantined the row (provider_holds.row_taken_down_by_refresh), the row
+    is served again in this process with only those fields undone, built by
+    the catalog's own ingestion; a row that routes, or is unroutable for any
+    other reason, is left exactly as it is."""
+    model_id, _, rest = endpoint_id.rpartition("@")
+    provider = rest.split("/", 1)[0]
+    row = committed_row(provider, model_id)
+    if row is None or not row_taken_down_by_refresh(row):
+        return
+    if _media_model(model_id):
+        # Speech and transcription routes are not built from manifest rows:
+        # the catalog builds each from its static model and drops it while the
+        # host's row is dark. Rebuild it the same way.
+        model = catalog_registry.MODELS[model_id]
+        built = catalog_ingest._build_endpoints({model_id: model})[endpoint_id]
+        bypass_catalog_caches(monkeypatch)
+        isolate_public_catalog_cache(monkeypatch)
+        monkeypatch.setitem(
+            catalog_registry.MODEL_ENDPOINTS, endpoint_id, replace(built, input_modalities=model.input_modalities)
+        )
+        return
+    revived = {key: value for key, value in row.items() if key not in _REFRESH_TAKE_DOWN_FIELDS}
+    serve_manifest_rows(monkeypatch, directory, provider, [revived])
+    assert endpoint_id in catalog_registry.MODEL_ENDPOINTS, f"{endpoint_id} was not rebuilt from {revived}"
+
+
+def _media_model(model_id: str) -> bool:
+    from trusted_router.speech import SPEECH_MODELS
+    from trusted_router.transcription import TRANSCRIPTION_MODELS
+
+    return model_id in SPEECH_MODELS or model_id in TRANSCRIPTION_MODELS
+
+
+def serve_shadow_benchmark_routes(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+    """The OpenAI routes scripts/async_settle/shadow_benchmark.py names for its
+    measured shapes, kept whether or not the refresh has one down this hour."""
+    from scripts.async_settle.shadow_benchmark import NAMED_MODELS
+
+    for model_id in NAMED_MODELS:
+        serve_committed_route(monkeypatch, directory / model_id.replace("/", "_"), f"{model_id}@openai/prepaid")
+
+
+def serve_committed_media_routes(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+    """Every speech and transcription model's route on its one host, kept
+    whether or not the refresh has that host's row down this hour. Each of
+    these models has a single host, so one held row would otherwise take the
+    model out of every speech or transcription rule."""
+    from trusted_router.speech import SPEECH_MODELS
+    from trusted_router.transcription import TRANSCRIPTION_MODELS
+
+    for model_id, spec in (*SPEECH_MODELS.items(), *TRANSCRIPTION_MODELS.items()):
+        serve_committed_route(monkeypatch, directory, f"{model_id}@{spec.provider}/prepaid")
