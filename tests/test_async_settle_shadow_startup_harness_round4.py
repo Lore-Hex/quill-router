@@ -148,7 +148,7 @@ async def test_listener_real_begin_failure(monkeypatch, failure):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app), base_url="http://test"
     ) as client:
-        assert (await asyncio.wait_for(client.get("/live"), 0.3)).json() == {"live": True}
+        assert (await client.get("/live")).json() == {"live": True}
     await asyncio.wait_for(h.task, 3)
     assert not h.admission.ready
     if failure == "crashing_check":
@@ -207,41 +207,31 @@ async def test_resolver_lock_blocks_listener_task(monkeypatch):
     monkeypatch.setattr(module, "read_fd", descriptor)
     monkeypatch.setattr(module, "load_manifest", lambda path: manifest())
     monkeypatch.setattr(module, "REGISTRY_SECONDS", 0.05)
-    ready, release = threading.Event(), threading.Event()
+    entered = threading.Event()
+    listener_thread = threading.get_ident()
+    accepted = resolver.accepted_image_digests
 
-    def locker():
-        with resolver._state_lock:
-            ready.set()
-            release.wait(2)
+    def contended():
+        assert threading.get_ident() != listener_thread
+        entered.set()
+        return accepted()
 
-    worker = threading.Thread(target=locker)
-    worker.start()
-    assert ready.wait(1)
-
-    async def http_probe():
-        before = time.monotonic()
-        await asyncio.sleep(0.02)
+    monkeypatch.setattr(resolver, "accepted_image_digests", contended)
+    resolver._state_lock.acquire()
+    module.listener_started(app)
+    try:
+        assert await asyncio.to_thread(entered.wait, 30), "resolver did not reach the held lock"
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://test"
         ) as client:
             response = await client.get("/live")
         assert response.json() == {"live": True}
-        return time.monotonic() - before
-
-    task = asyncio.create_task(http_probe())
-    module.listener_started(app)
-    try:
-        assert await task < 0.2
-        await asyncio.wait_for(h.task, 0.5)
+        await h.task
         assert "DependencyRegistry" in h.missing and not h.admission.ready
     finally:
-        release.set()
-        worker.join(1)
-        for _ in range(200):
-            if module._STARTUP_WORKER.acquire(blocking=False):
-                module._STARTUP_WORKER.release()
-                break
-            await asyncio.sleep(0.005)
+        resolver._state_lock.release()
+        assert await asyncio.to_thread(module._STARTUP_WORKER.acquire, timeout=30)
+        module._STARTUP_WORKER.release()
         await h.task
 
 

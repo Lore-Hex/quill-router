@@ -6,6 +6,7 @@ import copy
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 
 import pytest
@@ -121,14 +122,18 @@ def test_output_queue_never_waits(busy):
         queue.put_nowait(b"earlier")
     else:
         queue.mutex.acquire()
-    try:
-        started = time.monotonic()
-        assert emitter.emit(dict(kind="a3_traffic_ready", boot="boot", at_us=1)) is None
-        assert time.monotonic() - started < .1
-        assert emitter.dropped == 1
-    finally:
-        if busy == "mutex":
-            queue.mutex.release()
+    # The queue stays unavailable until emit returns. The timeout is only a
+    # deadlock watchdog; cleanup unblocks even a regressed, blocking writer.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            result = pool.submit(emitter.emit, dict(kind="a3_traffic_ready", boot="boot", at_us=1))
+            assert result.result(timeout=30) is None
+            assert emitter.dropped == 1
+        finally:
+            if busy == "mutex":
+                queue.mutex.release()
+            else:
+                assert queue.get_nowait() == b"earlier"
 
 
 @pytest.mark.parametrize("ready", [False, True])

@@ -337,6 +337,7 @@ async def test_bound_slow_read_keeps_listener_available(monkeypatch):
     import httpx
     from fastapi import FastAPI
 
+    from tests.async_settle_startup_clock import StartupClock
     from tests.test_async_settle_shadow_observation import service as make_service
     from tests.test_async_settle_shadow_startup_harness import manifest
     from tests.test_async_settle_shadow_startup_harness_round8 import start_serving
@@ -350,7 +351,7 @@ async def test_bound_slow_read_keeps_listener_available(monkeypatch):
     read = svc.store.read
     def delayed(*args):
         entered.set()
-        assert release.wait(3)
+        assert release.wait(30), "listener did not answer before releasing the read"
         return read(*args)
     monkeypatch.setattr(svc.store, 'read', delayed)
     operation = dependency_operations(svc, m)
@@ -363,13 +364,15 @@ async def test_bound_slow_read_keeps_listener_available(monkeypatch):
     @app.get('/live')
     async def live():
         return {'live': True}
+    clock = StartupClock(monkeypatch)
     try:
         await start_serving(app)
-        assert await asyncio.to_thread(entered.wait, 1)
+        assert await asyncio.to_thread(entered.wait, 30)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
-            assert (await asyncio.wait_for(client.get('/live'), .2)).json() == {'live': True}
+            assert (await client.get('/live')).json() == {'live': True}
         assert not h.task.done()
     finally:
+        clock.resume()
         release.set()
         if h.task is not None:
             await h.task
@@ -514,7 +517,7 @@ async def test_busy_attempt_recorder_preserves_admission(monkeypatch):
 
 
 class RegionalEnclave:
-    """Small real HTTP server with a bounded release wait."""
+    """Small HTTP server that can hold a reply until context exit."""
     def __init__(self, monkeypatch, body, *, slow=False):
         import socket
         import threading
@@ -535,7 +538,7 @@ class RegionalEnclave:
                 owner.requests.append((self.command, self.path))
                 owner.entered.set()
                 if slow:
-                    owner.release.wait(3)
+                    owner.release.wait()  # __exit__ releases the server after the timeout checks.
                 try:
                     self.send_response(200)
                     self.send_header('Content-Length', str(len(body)))
@@ -619,8 +622,6 @@ def test_regional_resource_uses_probe_inventory():
     (b'not-a-record', False), (b'{}', False), (b'x'*65537, False)],
     ids=['matching', 'unknown', 'malformed', 'wrong-shape', 'oversized'])
 async def test_regional_transport_image_result_keeps_serving(monkeypatch, body, matched):
-    import asyncio
-
     import httpx
     from fastapi import FastAPI
 
@@ -650,7 +651,7 @@ async def test_regional_transport_image_result_keeps_serving(monkeypatch, body, 
             return {'live': True}
         await start_serving(app)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://router') as client:
-            assert (await asyncio.wait_for(client.get('/live'), .5)).status_code == 200
+            assert (await client.get('/live')).status_code == 200
             await h.task
             assert (await client.get('/live')).status_code == 200
         assert enclave.requests == [('GET', '/attestation')]
@@ -661,13 +662,14 @@ async def test_regional_transport_image_result_keeps_serving(monkeypatch, body, 
 
 async def test_slow_regional_transport_keeps_listener_available(monkeypatch):
     import asyncio
-    import time
 
     import httpx
     from fastapi import FastAPI
 
+    from tests.async_settle_startup_clock import StartupClock
     from tests.test_async_settle_shadow_cohort import config
     from tests.test_async_settle_shadow_startup_harness_round8 import start_serving
+    from trusted_router.services import async_settle_shadow_startup_harness as harness
     from trusted_router.services.async_settle_shadow_startup_harness import (
         dependency_operations,
     )
@@ -677,12 +679,10 @@ async def test_slow_regional_transport_keeps_listener_available(monkeypatch):
         operation = dependency_operations(None, m, settings=settings)
         result = []
         async def begin():
-            started = time.monotonic()
             try:
                 result.append(await operation(m['config']['dependencies']['router'][0], 1_000_000))
             except (TimeoutError, httpx.TimeoutException):
                 result.append(False)
-            result.append(time.monotonic()-started)
         app = FastAPI()
         h, _, _ = fake_harness()
         app.state.async_settle_shadow_startup = h
@@ -690,15 +690,26 @@ async def test_slow_regional_transport_keeps_listener_available(monkeypatch):
         @app.get('/live')
         async def live():
             return {'live': True}
-        await start_serving(app)
-        assert await asyncio.to_thread(enclave.entered.wait, 2)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://router') as client:
-            assert (await asyncio.wait_for(client.get('/live'), .2)).json() == {'live': True}
-            assert not h.task.done()
-            await h.task
-            assert (await client.get('/live')).status_code == 200
-        assert result[0] is False and .8 <= result[1] < 1.6
+        clock = StartupClock(monkeypatch)
+        try:
+            await start_serving(app)
+            assert await asyncio.to_thread(enclave.entered.wait, 30)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://router') as client:
+                assert (await client.get('/live')).json() == {'live': True}
+                assert not h.task.done()
+                await clock.advance(.8)
+                assert not h.task.done()
+                await clock.advance(.201)
+                assert h.task.done(), "the configured one-second transport budget did not expire"
+                await h.task
+                assert (await client.get('/live')).status_code == 200
+            assert result == [False]
+        finally:
+            clock.resume()
         assert enclave.requests == [('GET', '/attestation')]
+    # The listener's deadline can expire before the private transport loop exits.
+    assert await asyncio.to_thread(harness._STARTUP_WORKER.acquire, timeout=30)
+    harness._STARTUP_WORKER.release()
 
 
 @pytest.mark.parametrize('with_service', [False, True])
