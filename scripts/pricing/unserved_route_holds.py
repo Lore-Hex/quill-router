@@ -267,8 +267,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 - no catalog means no count to hold against
             # Without the served routes the per-provider limits cannot be
             # measured, so nothing new is held. Expired holds still lift.
-            print(f"served routes unavailable ({type(exc).__name__}); holding nothing", file=sys.stderr)
-            evidence = None
+            # Printed where the run's summary reads it, with this cause and
+            # not the planner's "evidence unavailable".
+            print(f"served routes unavailable ({type(exc).__name__}); holding nothing")
+            evidence = set()
     frozen = quarantined_manifests()
     for note in apply_unserved_route_holds(
         evidence, manifest_dir=args.manifest_dir, now=now, frozen=frozen, served=served,
