@@ -168,6 +168,7 @@ for (const width of [1440, 390]) {
     await page.goto('/models?makes=text&q=glm&sort=name');
     if (width < 761) await page.locator('[data-route-select]').selectOption('/models?filter=zdr');
     else await page.getByRole('link', {name:'ZDR', exact:true}).click();
+    await expect(page).toHaveURL(/filter=zdr/);
     const params = new URL(page.url()).searchParams;
     expect(Object.fromEntries(params)).toMatchObject({makes:'text',q:'glm',sort:'name',filter:'zdr'});
     await expect(page.getByRole('searchbox', {name:'Search models'})).toHaveValue('glm');
