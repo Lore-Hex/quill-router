@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-26T15:32:08Z",
+  "generated_at": "2026-11-27T06:45:26Z",
   "model_count": 188,
   "models": [
     {
@@ -31,7 +31,9 @@
       ],
       "status": 1,
       "upstream_id": "Sao10K/L3-8B-Stheno-v3.2",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "baichuan/baichuan-m2-32b",
@@ -297,7 +299,9 @@
       ],
       "status": 1,
       "upstream_id": "deepseek/deepseek-ocr-2",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-prover-v2-671b",
@@ -357,7 +361,9 @@
       "status": 1,
       "upstream_id": "deepseek/deepseek-r1-0528",
       "cached_input_token_price_per_m": 3500,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-r1-0528-qwen3-8b",
@@ -850,7 +856,9 @@
       ],
       "status": 1,
       "upstream_id": "google/gemma-3-27b-it",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "google/gemma-4-26b-a4b-it",
@@ -880,7 +888,9 @@
       ],
       "status": 1,
       "upstream_id": "google/gemma-4-26b-a4b-it",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -910,7 +920,9 @@
       ],
       "status": 1,
       "upstream_id": "google/gemma-4-31b-it",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "gryphe/mythomax-l2-13b",
@@ -1150,7 +1162,9 @@
       ],
       "status": 1,
       "upstream_id": "meta-llama/llama-3.1-8b-instruct",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "meta-llama/llama-3.2-3b-instruct",
@@ -1206,7 +1220,9 @@
       ],
       "status": 1,
       "upstream_id": "meta-llama/llama-3.3-70b-instruct",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
@@ -1489,7 +1505,8 @@
         "chat/completions"
       ],
       "status": 1,
-      "upstream_id": "minimaxai/minimax-m1-80k"
+      "upstream_id": "minimaxai/minimax-m1-80k",
+      "missing_since": "2026-11-27"
     },
     {
       "id": "mistralai/mistral-nemo",
@@ -1574,8 +1591,7 @@
         "anthropic"
       ],
       "status": 1,
-      "upstream_id": "moonshotai/kimi-k2-instruct",
-      "missing_since": "2026-11-26"
+      "upstream_id": "moonshotai/kimi-k2-instruct"
     },
     {
       "id": "moonshotai/kimi-k2-thinking",
@@ -1606,7 +1622,9 @@
       "status": 1,
       "upstream_id": "moonshotai/kimi-k2-thinking",
       "cached_input_token_price_per_m": 1500,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2.5",
@@ -1764,8 +1782,9 @@
       ],
       "status": 1,
       "upstream_id": "openai/gpt-oss-120b",
-      "routable": true,
-      "missing_since": "2026-11-26"
+      "routable": false,
+      "missing_since": "2026-11-26",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-oss-20b",
@@ -2410,7 +2429,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-omni-30b-a3b-thinking",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-vl-235b-a22b-instruct",
@@ -2599,7 +2620,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3.5-122b-a10b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3.5-27b",
@@ -2660,7 +2683,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3.5-35b-a3b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3.5-397b-a17b",
@@ -2691,7 +2716,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3.5-397b-a17b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3.6-27b",
@@ -2722,7 +2749,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3.6-27b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3.6-35b-a3b",
@@ -2753,7 +2782,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3.6-35b-a3b",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "sao10k/l3-70b-euryale-v2.1",
@@ -2939,7 +2970,9 @@
       ],
       "status": 1,
       "upstream_id": "zai-org/autoglm-phone-9b-multilingual",
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "zai-org/glm-4.5",
@@ -3031,7 +3064,9 @@
       "status": 1,
       "upstream_id": "zai-org/glm-4.5v",
       "cached_input_token_price_per_m": 1100,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "zai-org/glm-4.6",
@@ -3096,7 +3131,9 @@
       "status": 1,
       "upstream_id": "zai-org/glm-4.6v",
       "cached_input_token_price_per_m": 550,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "tencent/hy3",
@@ -3185,7 +3222,8 @@
       ],
       "status": 1,
       "upstream_id": "zai-org/glm-4.7-flash",
-      "cached_input_token_price_per_m": 100
+      "cached_input_token_price_per_m": 100,
+      "missing_since": "2026-11-27"
     },
     {
       "id": "zai-org/glm-5",
@@ -3632,7 +3670,9 @@
       "input_token_price_per_m": 9500,
       "output_token_price_per_m": 40000,
       "cached_input_token_price_per_m": 1900,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nex-agi/nex-n2-pro",
@@ -3715,7 +3755,9 @@
       "max_output_tokens": 32768,
       "input_token_price_per_m": 500,
       "output_token_price_per_m": 2000,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openchat/openchat-7b",
@@ -3881,7 +3923,9 @@
       "input_token_price_per_m": 16500,
       "output_token_price_per_m": 49510,
       "cached_input_token_price_per_m": 3300,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "stepfun/step-3.7-flash",
@@ -4881,7 +4925,9 @@
       "input_token_price_per_m": 8340,
       "output_token_price_per_m": 25010,
       "cached_input_token_price_per_m": 420,
-      "missing_since": "2026-11-26"
+      "missing_since": "2026-11-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "xiaomi/mimo-v2.6-flash",

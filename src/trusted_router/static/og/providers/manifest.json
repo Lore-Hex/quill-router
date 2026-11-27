@@ -640,10 +640,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 72,
+    "model_count": 49,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 144,
+    "route_count": 98,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
