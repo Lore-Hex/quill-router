@@ -1,0 +1,38 @@
+/* C2: shared NYTE shell, intrinsic tiles, and the existing brand band. */
+.not-found.wrap{max-width:1280px;min-height:708px;padding:80px 60px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:80px;align-items:center}
+.not-found-copy{display:flex;flex-direction:column;align-items:flex-start;gap:24px;min-width:0}
+.not-found-copy h1{margin:0;font-size:clamp(44px,5vw,72px);line-height:1;letter-spacing:-.02em}
+.not-found-copy p{margin:0;font-size:20px;line-height:1.5}
+.not-found-copy .btn{width:auto;min-height:52px;height:auto;margin-top:8px;padding:14px 28px;font-size:16px;line-height:1.4}
+.not-found-pages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0}
+.not-found-tile{min-height:210px;padding:28px;display:flex;flex-direction:column;justify-content:space-between;gap:28px;color:var(--ink);text-decoration:none;overflow-wrap:anywhere}
+.not-found-tile:hover{color:var(--ink);text-decoration:none}
+.not-found-tile:hover span:first-child{text-decoration:underline;text-underline-offset:.2em}
+.not-found-tile:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+.not-found-tile span:first-child{font-size:26px;line-height:1.15;letter-spacing:-.01em}
+.not-found-tile span:last-child{font-size:16px;line-height:1.4}
+.not-found-api{background:var(--lime)}
+.not-found-cowork{background:var(--sky)}
+.not-found-buy{background:var(--purple)}
+.not-found-index{background:var(--yellow)}
+@media(max-width:1000px){
+  .not-found.wrap{padding:64px 32px;gap:40px}
+  .not-found-tile{padding:20px}
+  .not-found-tile span:first-child{font-size:22px}
+}
+@media(max-width:800px){
+  .not-found.wrap{min-height:747px;grid-template-columns:1fr;padding:64px 20px;gap:36px;align-content:center}
+  .not-found-copy{gap:20px}
+  .not-found-copy h1{font-size:44px}
+  .not-found-copy p{font-size:18px}
+  .not-found-copy .btn{margin-top:4px}
+  .not-found-pages{gap:10px}
+  .not-found-tile{min-height:150px;padding:16px;gap:24px}
+  .not-found-tile span:first-child{font-size:19px}
+  .not-found-tile span:last-child{font-size:15px;line-height:1.35}
+  [data-nyte-page="not-found"] .v3-band{height:clamp(28px,8.33vw,66px)}
+}
+@media(max-width:359px){
+  .not-found-copy h1{font-size:40px}
+  .not-found-tile{padding:12px}
+}

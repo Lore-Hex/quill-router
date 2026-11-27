@@ -646,7 +646,7 @@ class ExchangeTests(unittest.TestCase):
                 if market["slug"] == "new-york":
                     from nyte_v2 import PAGES
                     paths += [entry["route"] for key, entry in PAGES.items()
-                              if key != "home" and entry.get("builder") != "anchor"]
+                              if key not in ("home", "not-found") and entry.get("builder") != "anchor"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market.get("canonical_domain", market["domain"])}{path}' for path in paths],
