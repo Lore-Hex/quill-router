@@ -703,6 +703,16 @@ requires it.
 
 ## Rollback and Content Rules
 
+For New York's branded 404, publish the built `assets/nyte-v2/not-found.css`
+first, then publish the built `404.html` as **`new-york/404.html`**. Use the
+generation preconditions above. Do not publish either root `404` alias or
+set an error document on the shared bucket. The Terraform rule belongs only
+to the serving New York matcher. Include `[nyte-404-only]` in the squash
+merge title for a 404 routing release: the apply workflow rejects any other
+resource write or URL map change in its saved plan. Verify shallow and nested
+missing paths with GET (status 404, branded HTML, noindex), known paths with
+200, and an unchanged missing response on the global market.
+
 Rebuild a prior reviewed revision and sync its assets for content rollback.
 For routing rollback, remove only `exchange-*` matchers/host rules from a fresh
 URL map. Never blindly import an old full map over concurrent production changes.

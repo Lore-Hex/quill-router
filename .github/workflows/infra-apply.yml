@@ -102,9 +102,14 @@ jobs:
 
       - name: Apply reviewed plan
         shell: bash
+        env:
+          NYTE_404_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[nyte-404-only]') }}
         run: |
           set -euo pipefail
           terraform -chdir=src/infra show -json tfplan | python3 src/scripts/deploy/check_terraform_plan.py
+          if [[ "$NYTE_404_ONLY" == true ]]; then
+            terraform -chdir=src/infra show -json tfplan | python3 src/infra/tools/check_nyte_404_plan.py
+          fi
           terraform -chdir=src/infra apply tfplan
 
   release-coordinator:
