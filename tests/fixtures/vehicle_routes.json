@@ -348,50 +348,6 @@
   },
   {
    "catalog_valid_until": null,
-   "completion_price_microdollars_per_million_tokens": 1318750,
-   "completion_timeout_seconds": null,
-   "context_length": 400000,
-   "first_token_timeout_seconds": null,
-   "id": "openai/gpt-5.4-nano@openai/byok",
-   "input_modalities": [
-    "text",
-    "image"
-   ],
-   "max_completion_tokens": 128000,
-   "model_id": "openai/gpt-5.4-nano",
-   "output_token_price_per_m_by_resolution": null,
-   "price_tiers": [
-    {
-     "completion_price_microdollars_per_million_tokens": 1318750,
-     "max_prompt_tokens": null,
-     "prompt_cached_price_microdollars_per_million_tokens": 21100,
-     "prompt_price_microdollars_per_million_tokens": 211000
-    }
-   ],
-   "prompt_price_microdollars_per_million_tokens": 211000,
-   "provider": "openai",
-   "published_completion_price_microdollars_per_million_tokens": 1318750,
-   "published_price_tiers": [
-    {
-     "completion_price_microdollars_per_million_tokens": 1318750,
-     "max_prompt_tokens": null,
-     "prompt_cached_price_microdollars_per_million_tokens": 21100,
-     "prompt_price_microdollars_per_million_tokens": 211000
-    }
-   ],
-   "published_prompt_price_microdollars_per_million_tokens": 211000,
-   "request_price_microdollars": 0,
-   "stream_idle_timeout_seconds": null,
-   "supported_parameters": [
-    "tools",
-    "max_tokens",
-    "reasoning_effort"
-   ],
-   "upstream_id": "gpt-5.4-nano",
-   "usage_type": "BYOK"
-  },
-  {
-   "catalog_valid_until": null,
    "completion_price_microdollars_per_million_tokens": 8440000,
    "completion_timeout_seconds": null,
    "context_length": 1047576,
@@ -701,65 +657,6 @@
     }
    ],
    "published_prompt_price_microdollars_per_million_tokens": 5275000,
-   "request_price_microdollars": 0,
-   "supported_parameters": [
-    "tools",
-    "tool_choice",
-    "max_tokens",
-    "reasoning",
-    "reasoning_effort",
-    "include_reasoning",
-    "structured_outputs",
-    "response_format",
-    "verbosity"
-   ],
-   "supports_chat": true,
-   "supports_decide": false,
-   "supports_embeddings": false,
-   "supports_messages": false,
-   "supports_rerank": false,
-   "supports_video": false,
-   "upstream_id": null
-  },
-  {
-   "byok_available": true,
-   "completion_price_microdollars_per_million_tokens": 1318750,
-   "context_length": 400000,
-   "documentation": null,
-   "hidden_public_metadata": false,
-   "id": "openai/gpt-5.4-nano",
-   "input_modalities": [
-    "image",
-    "text"
-   ],
-   "internal_only": false,
-   "max_completion_tokens": 128000,
-   "minimum_charge_microdollars": 0,
-   "name": "OpenAI: GPT-5.4 Nano",
-   "output_modalities": [
-    "text"
-   ],
-   "prepaid_available": true,
-   "price_tiers": [
-    {
-     "completion_price_microdollars_per_million_tokens": 1318750,
-     "max_prompt_tokens": null,
-     "prompt_cached_price_microdollars_per_million_tokens": 21100,
-     "prompt_price_microdollars_per_million_tokens": 211000
-    }
-   ],
-   "prompt_price_microdollars_per_million_tokens": 211000,
-   "provider": "openai",
-   "published_completion_price_microdollars_per_million_tokens": 1318750,
-   "published_price_tiers": [
-    {
-     "completion_price_microdollars_per_million_tokens": 1318750,
-     "max_prompt_tokens": null,
-     "prompt_cached_price_microdollars_per_million_tokens": 21100,
-     "prompt_price_microdollars_per_million_tokens": 211000
-    }
-   ],
-   "published_prompt_price_microdollars_per_million_tokens": 211000,
    "request_price_microdollars": 0,
    "supported_parameters": [
     "tools",

@@ -48,7 +48,6 @@ VEHICLE_ENDPOINT_IDS = (
     # `scripts/tombstone_sweep.py holds`, 2026-11-26).
     "openai/gpt-5.5@openai/prepaid",
     "openai/gpt-5.5@openai/byok",
-    "openai/gpt-5.4-nano@openai/byok",
     "openai/gpt-4.1@openai/prepaid",
     "openai/gpt-4.1-mini@openai/prepaid",
 )
