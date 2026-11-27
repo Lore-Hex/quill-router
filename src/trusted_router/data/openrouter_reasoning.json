@@ -2488,12 +2488,6 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "qwen/qwen3-235b-a22b-thinking-2507": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "qwen/qwen3-30b-a3b": {
       "mandatory": false,
       "default_enabled": true,

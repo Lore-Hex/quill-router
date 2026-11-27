@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Phala routes live ahead of the shared snapshot. phala/* upstream IDs select the Confidential AI tier. Upstream-author pass-through routes are separately classified and must not inherit the confidential or ZDR posture of phala/* routes.",
   "provider": "phala",
   "source": "https://inference.phala.com/v1/models",
-  "generated_at": "2026-11-27T19:28:19Z",
+  "generated_at": "2026-11-27T21:31:22Z",
   "model_count": 7,
   "models": [
     {
@@ -274,8 +274,10 @@
       "input_token_price_per_m": 30000,
       "output_token_price_per_m": 30000,
       "cached_input_token_price_per_m": 10000,
-      "unserved_hold_count": 1,
-      "unserved_lifted_at": "2026-11-27T03:15:09Z"
+      "unserved_hold_count": 2,
+      "routable": false,
+      "routable_reason": "provider-route-unserved",
+      "unserved_held_at": "2026-11-27T21:31:23Z"
     },
     {
       "display_name": "Phala: GLM 5.3 Uncensored",
