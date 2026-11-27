@@ -147,7 +147,7 @@ def needs(outputs: dict[str, str] | None = None, **results: str) -> dict[str, di
     """The summary job's NEEDS. The scope job's flags default to `true`, so
     only the data-only rule can excuse a skip unless a test sets one."""
     base: dict[str, dict[str, object]] = {name: {"result": "success"} for name in
-                                          ("lint", "production-import", "test", "test-post-cutover", "browser",
+                                          ("lint", "production-import", "test", "test-post-cutover", "browser", "browser-post-cutover",
                                            *SKIPPED_FOR_DATA_ONLY)}
     base["scope"] = {"result": "success",
                      "outputs": {"data_only": "false", **dict.fromkeys(PATH_FLAGS, "true"), **(outputs or {})}}
