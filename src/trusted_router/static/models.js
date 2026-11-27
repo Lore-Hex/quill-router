@@ -90,6 +90,10 @@
       const url = new URL(link.href, window.location.origin);
       if (kind !== "all") url.searchParams.set("makes", kind);
       else url.searchParams.delete("makes");
+      if (search.value.trim()) url.searchParams.set("q", search.value.trim());
+      else url.searchParams.delete("q");
+      if (sort.value !== "featured") url.searchParams.set("sort", sort.value);
+      else url.searchParams.delete("sort");
       link.href = `${url.pathname}${url.search}`;
     });
   }
@@ -139,6 +143,7 @@
     const url = new URL(routeSelect.value, window.location.origin);
     if (kind !== "all") url.searchParams.set("makes", kind);
     if (search.value.trim()) url.searchParams.set("q", search.value.trim());
+    if (sort.value !== "featured") url.searchParams.set("sort", sort.value);
     window.location.href = `${url.pathname}${url.search}`;
   });
   sortHeads.forEach((button) => button.addEventListener("click", () => {
@@ -223,7 +228,7 @@
     return cell;
   }
 
-  function renderRoutes(container, routes) {
+  function renderRoutes(container, routes, mediaPrices) {
     container.replaceChildren();
     const creditRoutes = routes.filter((route) => route.usage_type === "Credits");
     if (!creditRoutes.length) {
@@ -239,7 +244,7 @@
     });
 
     const header = element("div", "model-route-head");
-    ["Provider", "Input", "Cached input", "Output", "Available privacy"].forEach((label) => header.append(element("span", "", label)));
+    (mediaPrices ? ["Provider", "Price", "Available privacy"] : ["Provider", "Input", "Cached input", "Output", "Available privacy"]).forEach((label) => header.append(element("span", "", label)));
     container.append(header);
 
     [...grouped.entries()]
@@ -259,9 +264,13 @@
         providerCell.dataset.label = "Provider";
         providerCell.append(providerLink);
         row.append(providerCell);
-        row.append(routeCell("Input", priceRange(providerRoutes, "prompt"), "model-route-price"));
-        row.append(routeCell("Cached input", priceRange(providerRoutes, "input_cache_read"), "model-route-price"));
-        row.append(routeCell("Output", priceRange(providerRoutes, "completion"), "model-route-price"));
+        if (mediaPrices) {
+          row.append(routeCell("Price", mediaPrices[slug] || "Not published", "model-route-price"));
+        } else {
+          row.append(routeCell("Input", priceRange(providerRoutes, "prompt"), "model-route-price"));
+          row.append(routeCell("Cached input", priceRange(providerRoutes, "input_cache_read"), "model-route-price"));
+          row.append(routeCell("Output", priceRange(providerRoutes, "completion"), "model-route-price"));
+        }
         row.append(privacyCell(providerRoutes));
         container.append(row);
       });
@@ -282,7 +291,8 @@
         const response = await fetch(toggle.dataset.endpointsUrl, { headers: { Accept: "application/json" } });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
-        renderRoutes(container, Array.isArray(payload.data) ? payload.data : []);
+        renderRoutes(container, Array.isArray(payload.data) ? payload.data : [],
+          toggle.dataset.mediaPrices ? JSON.parse(toggle.dataset.mediaPrices) : null);
         toggle.dataset.loaded = "true";
       } catch (_error) {
         container.replaceChildren(element("p", "model-route-error", "Provider routes could not be loaded. Try again."));

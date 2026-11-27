@@ -112,7 +112,7 @@
           <div class="models-routes">
             {{ privacy_badges(model.e2e_available, model.zdr_available, trusted=model.trusted_available) }}
             {% if model.endpoints_url %}
-            <button type="button" class="models-routes-toggle" aria-expanded="false" aria-controls="model-routes-{{ loop.index }}" data-route-toggle data-endpoints-url="{{ model.endpoints_url }}">
+            <button type="button" class="models-routes-toggle" aria-expanded="false" aria-controls="model-routes-{{ loop.index }}" data-route-toggle data-endpoints-url="{{ model.endpoints_url }}"{% if is_media and (model.media_price or not model.completion_price_sort) %} data-media-prices='{{ model.provider_media_prices|tojson }}'{% endif %}>
               <span>{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}</span><span class="models-routes-plus" aria-hidden="true">+</span>
             </button>
             {% else %}
@@ -123,14 +123,14 @@
         <td class="models-num" data-col="in" data-label="Input / 1M">{% if is_media and model.media_price %}{% if model.media_price_from %}<small>from</small> {% endif %}{{ model.media_price }}{% else %}{{ from_price(model.prompt_price) }}{% endif %}</td>
         <td class="models-num" data-col="out" data-label="Output / 1M">{% if is_media and model.media_price %}—{% else %}{{ from_price(model.completion_price) }}{% endif %}</td>
         <td class="models-num" data-col="ctx" data-label="{{ 'Input limit' if model.speech or model.transcription else 'Context' }}">{% if model.transcription %}7 MiB, 10 min{% elif model.speech %}{{ model.speech.max_input_characters }} chars{% elif is_media %}—{% else %}<span title="{{ model.context_length }} tokens">{{ model.context_length_compact }}</span>{% endif %}</td>
-        <td class="models-num" data-col="price" data-label="Price">{% if model.media_price %}{% if model.media_price_from %}<small>from</small> {% endif %}{{ model.media_price }}{% else %}{{ from_price(model.completion_price) }}/1M output{% endif %}</td>
+        <td class="models-num" data-col="price" data-label="Price">{% if model.media_price %}{% if model.media_price_from %}<small>from</small> {% endif %}{{ model.media_price }}{% elif model.completion_price_sort %}{{ from_price(model.completion_price) }}/1M output{% else %}Not published{% endif %}</td>
         <td class="models-num" data-col="accepts" data-label="Accepts">{{ model.media_accepts or '—' }}</td>
         <td class="models-num" data-col="length" data-label="Length">{{ model.media_length or '—' }}</td>
         <td class="models-num" data-col="res" data-label="Up to">{{ model.media_resolution or '—' }}</td>
       </tr>
       {% if model.endpoints_url %}
       <tr class="models-routes-panel" id="model-routes-{{ loop.index }}" hidden>
-        <td colspan="9"><div class="model-route-results" data-route-results><div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">{% for provider in model.providers %}{{ serving_provider_chip(provider) }}{% endfor %}</div></div></td>
+        <td colspan="9"><div class="model-route-results{% if is_media and (model.media_price or not model.completion_price_sort) %} model-media-routes{% endif %}" data-route-results><div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">{% for provider in model.providers %}{{ serving_provider_chip(provider) }}{% endfor %}</div></div></td>
       </tr>
       {% endif %}
     </tbody>

@@ -67,6 +67,7 @@ def _image_view(model: Model) -> dict[str, object]:
     return {
         "media_price": f"{_dollars(dollars)}/image",
         "media_price_sort": float(dollars),
+        "media_price_from": len(set(fixed.values())) > 1,
         "media_accepts": _accepts(model),
     }
 
@@ -108,6 +109,11 @@ def model_kind_view(model: Model, endpoints: Sequence[ModelEndpoint]) -> dict[st
         view.update(_image_view(model))
     elif kind == "video":
         view.update(_video_view(model, {endpoint.provider for endpoint in endpoints}))
+    if kind in ("image", "video"):
+        view["provider_media_prices"] = {
+            endpoint.provider: media_price(model, [endpoint.provider])
+            for endpoint in endpoints if endpoint.usage_type == "Credits"
+        }
     return view
 
 
