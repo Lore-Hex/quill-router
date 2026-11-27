@@ -73,7 +73,7 @@ const r = await client.chat.completions.create({
 
 <section style="margin-top:48px" id="trusted-tier">
   <h2 id="trusted-selected-operators-confidential-inference">{{ topic("trusted-tier", "Trusted: selected operators, confidential inference") }}</h2>
-  <p><a href="/models/trustedrouter/trusted"><code>trustedrouter/trusted</code></a> and <code>nyte/trusted</code> route only through eligible Confidential endpoints from <a href="/providers/tinfoil">Tinfoil</a>, <a href="/providers/privatemode">Privatemode</a>, and <a href="/providers/maple">Maple</a>. For Maple, only the managed <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">DeepSeek V4.1 Flash Uncensored</a> route qualifies. Other Maple models and customer keys do not. TrustedRouter selects these operators for their physical-security posture and history of reliability. This is our operator assessment, separate from hardware attestation or an independent certification.</p>
+  <p><a href="/models/trustedrouter/trusted"><code>trustedrouter/trusted</code></a> and <code>nyte/trusted</code> route only through eligible Confidential endpoints from <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a>. Maple's managed <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">DeepSeek V4.1 Flash Uncensored</a> route qualifies for Confidential, not Trusted. TrustedRouter selects Trusted operators for their physical-security posture and history of reliability. This is our operator assessment, separate from hardware attestation or an independent certification.</p>
   <p>Every eligible endpoint must also meet the Confidential requirements: verified confidential compute, provider-side E2EE and explicit ZDR. Every fallback keeps those requirements and the same two-provider restriction. When no qualifying route remains, the request fails before inference.</p>
   <pre><code>{
   "model": "trustedrouter/trusted",
@@ -81,6 +81,7 @@ const r = await client.chat.completions.create({
   "stream": true
 }</code></pre>
   <p>To choose a specific model instead, send <code>provider.min_privacy: "trusted"</code> on the ordinary API. Catalog endpoints in this tier report <code>privacy_tier: 4</code> and <code>privacy_tier_label: "Trusted"</code>. Provider filters can narrow the tier, never expand it.</p>
+  <p>In <code>/v1/models</code>, a model's <code>available_privacy_tier</code> describes a route you can select, not a promise about the default route. <code>default_min_privacy_tier</code> is the floor required by the model ID itself. A null available tier means the catalog cannot establish the tier across all required hops.</p>
   <p>On <code>api.confidential.nytokenexchange.com</code> or <code>api.confidential.trustedrouter.com</code>, use <code>model: "nyte/trusted"</code> with the host's required <code>provider.min_privacy: "confidential"</code>. The model's stronger Trusted restriction still applies. These aliases use your TrustedRouter credits; pricing follows the selected eligible route.</p>
 </section>
 

@@ -72,7 +72,7 @@ PRIVACY_TIER_TRUSTED = 4  # Confidential plus TrustedRouter's curated operator a
 # This is an explicit product allowlist, not inferred from a provider's own
 # security claims. Adding an operator requires a separate physical-security
 # and operating-history review; technical Confidential eligibility still applies.
-TRUSTED_PROVIDER_ORDER = ("tinfoil", "privatemode", "maple")
+TRUSTED_PROVIDER_ORDER = ("tinfoil", "privatemode")
 TRUSTED_PROVIDER_SLUGS = frozenset(TRUSTED_PROVIDER_ORDER)
 
 PRIVACY_TIER_ALIASES: dict[str, int] = {

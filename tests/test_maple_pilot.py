@@ -42,7 +42,8 @@ def test_only_exact_managed_maple_route_qualifies_for_confidential(variant):
         endpoint = replace(endpoint, upstream_id=None)
     elif variant == "byok":
         endpoint = replace(endpoint, usage_type="BYOK")
-    for requirement in (PRIVACY_TIER_TRUSTED, PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_ZERO_RETENTION):
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED)
+    for requirement in (PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_ZERO_RETENTION):
         assert endpoint_meets_privacy_requirement(endpoint, requirement) is (variant == "approved")
 
 
