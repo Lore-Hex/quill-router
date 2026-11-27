@@ -145,12 +145,12 @@ locals {
 
 resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
   project      = local.gcp_project_id
-  display_name = "TR Security: a secret was read by an account that does not normally read secrets"
+  display_name = "TR Security: unexpected caller attempted to read a secret"
   combiner     = "OR"
   severity     = "CRITICAL"
 
   conditions {
-    display_name = "A secret was read by an account off the readers list, or by a user login from an unknown address"
+    display_name = "A secret read was attempted by an unlisted account or a user from an unknown address"
     condition_matched_log {
       filter = local.unexpected_secret_reader_filter
     }
@@ -167,7 +167,7 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
   }
 
   documentation {
-    content   = "An account that is not on the readers list read a secret's value (Secret Manager AccessSecretVersion), or a user login read one from an address that is not on the known list (secret tr-laptop-key-known-addresses). The incident names the account (`protoPayload.authenticationInfo.principalEmail`, or `principalSubject` for a federated identity), the secret (`protoPayload.resourceName`) and the address (`protoPayload.requestMetadata.callerIp`). If it is the operator's own login on a new network, add that address to the known list as for the laptop key alert (infra/laptop_key_use_alert.tf). If the account is a new workload that was given a secret on purpose, add it to `secret_readers` and run infra-apply. If neither, treat its credential as stolen: list everything it read with `gcloud logging read 'protoPayload.serviceName=\"secretmanager.googleapis.com\" AND protoPayload.authenticationInfo.principalEmail=\"ACCOUNT\"' --project=quill-cloud-proxy --freshness=7d`, rotate each secret it read, and remove the credential. infra/secret_reader_alert.tf in Lore-Hex/quill-router."
+    content   = "An unexpected caller attempted AccessSecretVersion. Check the matching audit record: protoPayload.status.code = 7 means permission denied; this request did not return the value. Inspect all calls by the principal (principalEmail or principalSubject), their resourceName, callerIp, status and authorizationInfo. A denied attempt warrants investigation, not a claim of disclosure. If there are successful unexpected reads, contain the credential and rotate the affected secrets. Verify any new workload or operator address independently before changing any allowlist. See infra/secret_reader_alert.tf."
     mime_type = "text/markdown"
   }
 
@@ -234,12 +234,12 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
 
 resource "google_monitoring_alert_policy" "signing_key_read_by_other" {
   project      = local.gcp_project_id
-  display_name = "TR Security: a signing key was read by an account other than its signer"
+  display_name = "TR Security: an account other than the signer attempted to read a signing key"
   combiner     = "OR"
   severity     = "CRITICAL"
 
   conditions {
-    display_name = "The fast path envelope key or the routing snapshot signing key was read by another account"
+    display_name = "An unexpected account attempted to read the envelope or routing snapshot signing key"
     condition_matched_log {
       filter = local.signing_key_read_by_other_filter
     }
@@ -253,7 +253,7 @@ resource "google_monitoring_alert_policy" "signing_key_read_by_other" {
   }
 
   documentation {
-    content   = "A signing key's value was read by an account other than the one that signs with it: fastpath-envelope-key by anyone but tr-fastpath-node, or trustedrouter-routing-snapshot-signing-key by anyone but trusted-router-control-run. The operator's step that reads the routing snapshot key while adding a version (docs/runbooks/routing-snapshot-key.md) pages here too; any other read means the key must be treated as known to someone else. Rotate it (docs/runbooks/fastpath-key-rotation.md, docs/runbooks/routing-snapshot-key.md), then find what else the reading account did in the audit log. infra/secret_reader_alert.tf in Lore-Hex/quill-router."
+    content   = "An account other than the configured signer attempted AccessSecretVersion on an envelope or routing snapshot signing key. Check the audit record: protoPayload.status.code = 7 means permission denied; this request did not return the key. Investigate all calls by the principal. For successful reads, verify whether this was the documented operator key-version procedure (docs/runbooks/routing-snapshot-key.md). Treat an unexplained successful read as disclosure: follow docs/runbooks/fastpath-key-rotation.md or docs/runbooks/routing-snapshot-key.md and investigate the credential."
     mime_type = "text/markdown"
   }
 
