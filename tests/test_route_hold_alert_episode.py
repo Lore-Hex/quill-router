@@ -137,6 +137,12 @@ class _Sweeps:
         monkeypatch.setattr(plan, "PACKAGED_MANIFEST_DIR", manifest_dir)
         monkeypatch.setattr(synthetic_routes, "evaluate_route_health", lambda _store: list(self.flags))
         monkeypatch.setattr(synthetic_routes, "evaluate_unserved_routes", lambda _store: list(self.evidence))
+        # The hold counts the routes this deployment serves and probes: here,
+        # every row of the fixture manifest, not today's catalog.
+        monkeypatch.setattr(
+            synthetic_routes, "probed_routes",
+            lambda: frozenset((ROUTE[0], model) for model in (ROUTE[1], *OTHER_MODELS)),
+        )
         monkeypatch.setattr(synthetic_routes, "report_catalog_freshness", lambda: None)
         monkeypatch.setattr(synthetic_routes, "_sweep_hour", lambda now=None: f"2026-11-23T{self.hour:02d}")
         # Keep the daily degradation digest out of these sweeps.

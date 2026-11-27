@@ -47,6 +47,7 @@ from trusted_router.synthetic.route_health import (
     evaluate_account_refusals,
     evaluate_route_health,
     evaluate_unserved_routes,
+    probed_routes,
     report_catalog_freshness,
     report_image_generation_failures,
     report_route_health,
@@ -794,7 +795,7 @@ def _route_holds() -> tuple[
     counts: dict[tuple[str, str], int] = {}
     try:
         evidence = {(route.provider, route.model): route for route in evaluate_unserved_routes(STORE)}
-        counts = pending_unserved_route_hold_counts(set(evidence))
+        counts = pending_unserved_route_hold_counts(set(evidence), served=probed_routes())
         held = {route: evidence[route] for route in counts}
     except Exception:  # noqa: BLE001 - no evidence means page as before, never "held"
         log.warning("synthetic_route_health.hold_evidence_unavailable", exc_info=True)

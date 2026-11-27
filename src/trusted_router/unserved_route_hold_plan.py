@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Sequence, Set
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -146,7 +146,8 @@ def _routable(row: dict[str, Any]) -> bool:
 
 
 def _live(stem: str, row: dict[str, Any], now: datetime) -> bool:
-    """A row the catalog serves at ``now``.
+    """A row that is routable in the manifest and not past a scheduled
+    retirement at ``now``.
 
     A scheduled retirement (provider_lifecycle) stops a route without touching
     its manifest row, which stays marked routable. Such a row is not a route
@@ -154,11 +155,18 @@ def _live(stem: str, row: dict[str, Any], now: datetime) -> bool:
     serves: a provider whose other rows have all retired would otherwise have
     its last live route held, and the half-of-a-provider limit would be
     measured against rows that serve nothing.
+
+    This is as far as the manifest alone can say. The catalog drops more rows
+    than these (routes held by an operator, models a host is not allowed to
+    resell, rows outside a host's allowlist), so the planner's callers also
+    say which routes are served; see ``served`` on plan_unserved_route_holds.
     """
+    return _routable(row) and not provider_model_retired(stem, row["id"], _upstream_id(row), at=now)
+
+
+def _upstream_id(row: dict[str, Any]) -> str | None:
     upstream = row.get("upstream_id")
-    return _routable(row) and not provider_model_retired(
-        stem, row["id"], upstream if isinstance(upstream, str) else None, at=now,
-    )
+    return upstream if isinstance(upstream, str) else None
 
 
 def live_route_ids(stem: str, rows: Iterable[Any], *, now: datetime) -> list[str]:
@@ -180,7 +188,8 @@ def plan_unserved_route_holds(
     *,
     manifest_stems: Iterable[str],
     extra_held: int = 0,
-    now: datetime | None = None,
+    now: datetime,
+    served: Set[Route] | None = None,
 ) -> tuple[list[tuple[int, dict[str, Any]]], list[str]]:
     """Return ([(manifest index, row to hold)], notes).
 
@@ -189,8 +198,15 @@ def plan_unserved_route_holds(
     ones the caller leaves untouched; ``extra_held`` counts holds in those.
     ``now`` is the time the rows are judged at: a row past its scheduled
     retirement is not a route (see _live).
+
+    ``served`` is every route the provider serves on our own key and the
+    route probes watch (route_health.probed_routes), as (manifest stem, model
+    id). Only those can be held, and the per-provider limits count only
+    those: a manifest lists many rows the catalog never serves, and counting
+    them let "half of the provider" cover every route it does serve. ``None``
+    means the caller has no catalog for these manifests (a sweep or a test on
+    its own rows) and every live row counts as served.
     """
-    now = now or datetime.now(UTC)
     notes: list[str] = []
     by_provider: dict[str, set[str]] = {}
     if evidence is None:
@@ -208,17 +224,31 @@ def plan_unserved_route_holds(
         wanted = by_provider.get(stem, set())
         if not wanted:
             continue
-        routable_rows = {
+        live_rows = {
             row["id"]: row for row in rows
             if isinstance(row, dict) and isinstance(row.get("id"), str) and _live(stem, row, now)
         }
+        routable_rows = {
+            model: row for model, row in live_rows.items()
+            if served is None or (stem, model) in served
+        }
         targets = sorted(wanted & set(routable_rows))
+        # A held row past its scheduled retirement is no longer a route on
+        # either side of the limits.
         already_held = {
             row.get("id") for row in rows
             if _held(row) and isinstance(row.get("id"), str)
+            and not provider_model_retired(stem, row["id"], _upstream_id(row), at=now)
+        }
+        marked_routable = {
+            row["id"] for row in rows
+            if isinstance(row, dict) and isinstance(row.get("id"), str) and _routable(row)
         }
         for model in sorted(wanted - set(routable_rows) - already_held):
-            notes.append(f"{stem}: {model} is not a routable manifest row; not held")
+            if model in marked_routable:
+                notes.append(f"{stem}: {model} is not a route this provider serves; not held")
+            else:
+                notes.append(f"{stem}: {model} is not a routable manifest row; not held")
         # Rows this step already holds count on both sides, so the cap
         # cannot ratchet a provider down one partial run at a time.
         unserved = len(targets) + len(already_held)
@@ -228,7 +258,7 @@ def plan_unserved_route_holds(
             or len(targets) >= len(routable_rows)
         ):
             notes.append(
-                f"{stem}: {unserved} of {candidates} rows unserved; "
+                f"{stem}: {unserved} of {candidates} routes unserved; "
                 "provider-wide problem, holding none"
             )
             targets = []
@@ -282,28 +312,40 @@ def applied_unserved_route_holds(
     }
 
 
+def served_with_lifted(served: Set[Route] | None, stem: str, lifted: Iterable[str]) -> Set[Route] | None:
+    """``served`` plus the routes whose hold just lifted. A catalog built
+    while a route was held does not serve it, and the route is served again
+    once the lift is published; it was held as a served route."""
+    if served is None:
+        return None
+    return frozenset(served) | {(stem, model) for model in lifted}
+
+
 def pending_unserved_route_holds(
     evidence: set[Route], *, manifest_dir: Path | None = None, now: datetime | None = None,
+    served: Set[Route] | None = None,
 ) -> set[Route]:
     """The evidenced routes the next refresh would hold, judged on copies of
     the deployed manifests after the same expiry lift the refresh applies
     first. Quarantine state is not known here."""
-    return set(pending_unserved_route_hold_counts(evidence, manifest_dir=manifest_dir, now=now))
+    return set(pending_unserved_route_hold_counts(evidence, manifest_dir=manifest_dir, now=now, served=served))
 
 
 def pending_unserved_route_hold_counts(
     evidence: set[Route], *, manifest_dir: Path | None = None, now: datetime | None = None,
+    served: Set[Route] | None = None,
 ) -> dict[Route, int]:
     """pending_unserved_route_holds, with the hold count each would carry
-    (above 1 for a repeat hold, see next_unserved_hold_count)."""
+    (above 1 for a repeat hold, see next_unserved_hold_count). ``served`` is
+    the planner's: the routes this deployment serves and probes."""
     now = now or datetime.now(UTC)
     manifests: list[tuple[str, list[Any]]] = []
     for stem, raw_rows in _manifest_rows(manifest_dir):
         rows = copy.deepcopy(raw_rows)
-        lift_expired_unserved_holds(rows, now=now)
+        served = served_with_lifted(served, stem, lift_expired_unserved_holds(rows, now=now))
         manifests.append((stem, rows))
     planned, _notes = plan_unserved_route_holds(
-        evidence, manifests, manifest_stems=[stem for stem, _ in manifests], now=now,
+        evidence, manifests, manifest_stems=[stem for stem, _ in manifests], now=now, served=served,
     )
     return {
         (manifests[index][0], str(row["id"])): next_unserved_hold_count(row, now=now)

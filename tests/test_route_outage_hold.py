@@ -357,6 +357,41 @@ def test_route_health_pass_keeps_paging_when_the_refresh_caps_refuse_the_hold(
     ]
 
 
+def test_route_health_pass_counts_the_routes_it_probes_not_the_rows_listed(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    # The same two outages among three probed routes, in a manifest that also
+    # lists six rows this deployment does not serve. Two of nine rows would
+    # be held; two of the three served routes is a provider-wide problem, so
+    # the refresh holds neither and both keep paging.
+    second = ("chutes", "other/a")
+    events: list[list[str]] = []
+    monkeypatch.setattr(
+        "trusted_router.synthetic.alerts.ops_alert",
+        lambda message, *, fingerprint, tags=None, **_claim: events.append(fingerprint) or True,
+    )
+    second_outage = [
+        _sample(second, minutes_ago=sample_minutes)
+        for sample_minutes in range(1, 13 * 60 + 1, 60)
+    ]
+    samples = _shift_to_now(_outage() + second_outage + [_sibling_success()])
+    client = _route_health_client(
+        monkeypatch, samples, tmp_path,
+        flags=[_availability_flag(), _availability_flag(second)],
+        manifest_models=[ROUTE[1], second[1], SIBLING[1], *[f"listed/only-{index}" for index in range(6)]],
+    )
+    monkeypatch.setattr(route_health, "rotation_candidates",
+                        lambda: {"chutes": [ROUTE[1], second[1], SIBLING[1]]})
+    response = client.post(
+        "/v1/internal/synthetic/route-health",
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+    )
+    assert response.status_code == 200, response.text
+    assert sorted(fp for fp in events if fp[0].startswith("route-")) == [
+        ["route-availability", *second], ["route-availability", *ROUTE],
+    ]
+
+
 def test_a_502_outage_mixed_with_model_not_served_answers_counts() -> None:
     samples = [
         _sample(ROUTE, minutes_ago=1 + 60 * i)
