@@ -2,7 +2,7 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-11-27T06:45:26Z",
+  "generated_at": "2026-11-27T09:50:13Z",
   "model_count": 117,
   "models": [
     {
@@ -2258,7 +2258,11 @@
       "context_length": 262144,
       "input_token_price_per_m": 834000,
       "output_token_price_per_m": 2501000,
-      "cached_input_token_price_per_m": 42000
+      "cached_input_token_price_per_m": 42000,
+      "routable": false,
+      "routable_reason": "provider-route-unserved",
+      "unserved_held_at": "2026-11-27T09:50:14Z",
+      "unserved_hold_count": 1
     },
     {
       "display_name": "ZAI: GLM-5.3",

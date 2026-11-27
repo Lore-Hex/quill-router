@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-27T06:45:26Z",
+  "generated_at": "2026-11-27T09:50:13Z",
   "model_count": 188,
   "models": [
     {
@@ -1506,7 +1506,9 @@
       ],
       "status": 1,
       "upstream_id": "minimaxai/minimax-m1-80k",
-      "missing_since": "2026-11-27"
+      "missing_since": "2026-11-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "mistralai/mistral-nemo",
@@ -3223,7 +3225,9 @@
       "status": 1,
       "upstream_id": "zai-org/glm-4.7-flash",
       "cached_input_token_price_per_m": 100,
-      "missing_since": "2026-11-27"
+      "missing_since": "2026-11-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "zai-org/glm-5",

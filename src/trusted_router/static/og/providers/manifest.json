@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -337,7 +337,7 @@
     "model_count": 48,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 55,
+    "route_count": 54,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -640,10 +640,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 49,
+    "model_count": 47,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 98,
+    "route_count": 94,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -721,10 +721,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 4,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 6,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
