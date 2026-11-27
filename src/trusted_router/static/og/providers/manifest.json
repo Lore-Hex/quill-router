@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
