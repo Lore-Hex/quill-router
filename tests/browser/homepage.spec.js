@@ -1,5 +1,6 @@
 const { test, expect } = require("@playwright/test");
 const { devices } = require("@playwright/test");
+const { lifecycleNow } = require("./lifecycle_clock");
 
 // The default project is Desktop Chrome. The same scenarios run again as an
 // iPhone 13 (Chromium with the phone's viewport, touch and user agent).
@@ -11,7 +12,7 @@ const scenarios = () => {
   test("homepage banner fits and links to the active promotion", async ({ page }, testInfo) => {
     await page.goto("/?utm_source=homepage-browser-test");
     // The route suspension takes effect before the advertised promotion ends.
-    const suspended = Date.now() >= Date.parse("2026-11-27T00:00:00Z");
+    const suspended = lifecycleNow() >= Date.parse("2026-11-27T00:00:00Z");
     const banner = page.locator(suspended ? '[data-token-exchange-banner]' : '[data-glm-offer-banner]');
     await expect(banner).toBeVisible();
     expect(await banner.boundingBox()).toMatchObject({x:0});

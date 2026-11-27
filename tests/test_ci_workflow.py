@@ -574,7 +574,7 @@ def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
     assert "coverage-heavy-*) lane=$((lane + 1)) ;;" in command
 
 
-ALWAYS_RUN_JOBS = {"scope", "lint", "production-import", "test", "browser", "ci"}
+ALWAYS_RUN_JOBS = {"scope", "lint", "production-import", "test", "browser", "browser-post-cutover", "ci"}
 
 
 def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
@@ -629,6 +629,31 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     assert "update_model_changes.py --check" in commands["lint"]
     assert "import trusted_router.main" in commands["production-import"]
     assert "npm run test:browser" in commands["browser"]
+    assert "npm run test:browser" in commands["browser-post-cutover"]
+
+
+def test_the_browser_smoke_also_runs_past_every_scheduled_cutover():
+    # A spec that expects the near side of a scheduled suspension fails on the
+    # day it arrives (#2852): browser-post-cutover is `browser` with
+    # test-post-cutover's own clock pin before the specs, and nothing else.
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    browser, post = jobs["browser"], jobs["browser-post-cutover"]
+    pin = next(step for step in jobs["test-post-cutover"]["steps"]
+               if "TR_LIFECYCLE_CLOCK_OVERRIDE=" in step.get("run", ""))
+    assert {key: value for key, value in post.items() if key != "steps"} == \
+        {key: value for key, value in browser.items() if key != "steps"}
+    assert post["steps"].index(pin) < next(
+        index for index, step in enumerate(post["steps"]) if step.get("run") == "npm run test:browser"
+    )
+    without_pin = [step for step in post["steps"] if step != pin]
+    assert [step.get("run") or step.get("uses") for step in without_pin] == \
+        [step.get("run") or step.get("uses") for step in browser["steps"]]
+    assert [{k: v for k, v in step.items() if k != "name"} for step in without_pin] == \
+        [{k: v for k, v in step.items() if k != "name"} for step in browser["steps"]]
+    assert "browser-post-cutover" in jobs["ci"]["needs"]
+    # The specs read the same pin (tests/browser/lifecycle_clock.js).
+    clock = (ROOT / "tests/browser/lifecycle_clock.js").read_text()
+    assert "process.env.TR_LIFECYCLE_CLOCK_OVERRIDE" in clock
 
 
 def test_path_scoped_jobs_skip_only_on_their_own_flag():

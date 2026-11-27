@@ -1069,6 +1069,53 @@ jobs:
       - name: Browser smoke
         run: npm run test:browser
 
+  # The browser smoke again with the provider-lifecycle clock pinned past every
+  # scheduled cutover, for the reason test-post-cutover runs the Python suite
+  # so: the page a spec drives is rendered by an app on the post-cutover clock
+  # (playwright.config.js starts it with TR_ENVIRONMENT=test, under which the
+  # override is honoured), so a spec that expects the near side of a scheduled
+  # suspension or retirement fails on the pull request that writes it, not on
+  # the day the cutover arrives. The homepage offer spec hard-coded a promotion
+  # end that the Fortanix suspension pre-empted (#2852, #2989), and turned the
+  # price refresh red that day. A spec that decides from a scheduled date asks
+  # tests/browser/lifecycle_clock.js, which reads the same pin.
+  #
+  # Always run, like `browser`, not path-scoped: the suite is one unsharded job
+  # of about seven minutes that runs beside the twelve test shards, so it adds
+  # no wall time, and a browser-only change is exactly the change that can add
+  # such a spec. tests/test_ci_workflow.py keeps its steps equal to `browser`'s
+  # plus test-post-cutover's pin.
+  browser-post-cutover:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
+      - name: Sync
+        run: uv sync --frozen
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ".node-version"
+      - name: Install npm deps
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Pin the lifecycle clock past the latest scheduled cutover
+        run: |
+          uv run python -c '
+          import os
+          from datetime import UTC, datetime, timedelta
+          from trusted_router.provider_lifecycle import latest_scheduled_cutover
+          clock = max(latest_scheduled_cutover(), datetime.now(UTC)) + timedelta(days=1)
+          stamp = clock.strftime("%Y-%m-%dT%H:%M:%SZ")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"TR_LIFECYCLE_CLOCK_OVERRIDE={stamp}\n")
+          print(f"lifecycle clock pinned to {stamp}")
+          '
+      - name: Homepage JavaScript regression checks
+        run: node --test tests/js/homepage_*.test.cjs
+      - name: Browser smoke with every scheduled cutover already past
+        run: npm run test:browser
+
   # The BYOK envelope ordering constraint, checked against the DIFF rather than
   # against a deploy.
   #
@@ -1331,6 +1378,7 @@ jobs:
       - test-post-cutover
       - proof-oracle
       - browser
+      - browser-post-cutover
       - byok-format-ordering
       - fastpath
       - fastpath-spanner
