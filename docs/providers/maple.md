@@ -21,15 +21,11 @@ i02 deployment, not the inference host. It does not alias stock DeepSeek.
 Only this exact model/native-ID pair under the managed credential qualifies;
 unknown models, alternate native IDs and BYOK cannot inherit its privacy claims.
 
-### Trusted operator decision (2026-11-20)
+### Current tier: Confidential (2026-11-27)
 
-TrustedRouter's operator signed off on Maple's physical-security and
-operating-history review for this managed route. This
-is TrustedRouter's operator assessment, not independent certification of the
-facility, hardware supplier, or current serving hardware. The route still
-has to pass the same confidential-compute, encryption, retention, model and
-regional admission checks. The decision does not qualify any other Maple
-model, credential or region.
+The exact managed route remains eligible for Confidential. Maple is not in the
+Trusted operator set, including as a fallback. This supersedes the November 20
+operator decision; upgrades require a new review before any promotion.
 
 The public [Maple provider page](https://trustedrouter.com/providers/maple#maple-api)
 and [model page](https://trustedrouter.com/models/dealignai/deepseek-v4.1-flash-1017-uncensored#maple-api)
