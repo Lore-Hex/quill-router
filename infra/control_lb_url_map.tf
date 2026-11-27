@@ -183,6 +183,19 @@ resource "google_compute_url_map" "control" {
       name            = path_matcher.value.name
       default_service = path_matcher.value.redirect == null ? local.exchange_bucket : null
 
+      # Use a matcher-level error policy, not the shared bucket's website fallback.
+      dynamic "default_custom_error_response_policy" {
+        for_each = path_matcher.value.name == "exchange-new-york" && path_matcher.value.redirect == null ? [1] : []
+        content {
+          error_service = local.exchange_bucket
+          error_response_rule {
+            match_response_codes   = ["404"]
+            path                   = "/new-york/404.html"
+            override_response_code = 404
+          }
+        }
+      }
+
       dynamic "default_url_redirect" {
         for_each = path_matcher.value.redirect == null ? [] : [path_matcher.value.redirect]
         content {
