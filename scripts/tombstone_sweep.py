@@ -87,6 +87,32 @@ files later refresh steps derive from the manifests, stay as committed.
 `--files` sweeps those test files instead of the release suite. It resumes from
 OUT/holds.json, and only with the same files and routable rows.
 
+Some changes a single refresh makes are not about any one provider. It writes
+the manifests a second or so apart, so their generated_at stamps differ by
+seconds and can straddle a minute (a cost-guide caption grouped by the exact
+stamp failed the refresh on 2026-11-25). `run --stamps` rewrites every manifest
+the hourly refresh wrote (stamped within two days of the newest) one second
+apart, the first at the last second of a minute, so the stamps differ and
+cross minutes. And between two refreshes several unrelated providers delist one
+route each, or change the id their API lists a model under (a key limit test
+rode on one host's only bring-your-own-key route, and a lifecycle test pinned an
+upstream id the cutover changed, 2026-11-26). `run --sample SEED` delists a
+random FRACTION (--fraction, default 0.08) of the routable rows, as one
+provider's second miss does, but per row: the row is tombstoned and that
+provider's endpoint for the model is dropped from the snapshot (a model left
+with none is dropped too); and renames another disjoint FRACTION's upstream_id.
+--record PATH writes the rows it chose. Read failures with the refresh in
+mind: most providers' parsers derive the model id from the upstream id, so a
+real rename arrives as a new row and a delisting, and a rename on the same row
+happens where an alias map keeps the id (a lifecycle notice's short name); a
+test pinning a reviewed upstream id (provider precision, a notice map) is
+meant to fail. Likewise a provider whose fetch fails closed when a curated
+model goes missing (featherless) never tombstones that row; the refresh holds
+the provider instead. A random sample finds a coupled test
+with a fair chance per run, not with certainty: run a few seeds, then
+attribute each failure by reading it, or by running the named rows alone with
+--delist-rows / --rename-rows provider:model,...
+
 A sweep starts from a passing release suite, so every failure under a
 delisting is that delisting's. It resumes from OUT/state.json, and only with the
 groups it was written with. Phase 2 runs whole files, not node ids: a delisting can shrink a
@@ -102,12 +128,14 @@ import argparse
 import ast
 import json
 import os
+import random
 import re
 import subprocess
 import sys
 import tempfile
 import time
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -294,6 +322,117 @@ def perturb(providers: list[str], *, down: bool = False, skew: bool = False) -> 
                 counts["fields"] += changed
     SNAPSHOT.write_text(json.dumps(snapshot), encoding="utf-8")
     return counts
+
+
+FRESH_MANIFEST_WINDOW = timedelta(days=2)
+RENAMED_UPSTREAM_SUFFIX = "-renamed-upstream"
+
+
+def _stamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def skew_stamps() -> dict[str, Any]:
+    """Stamp every manifest the hourly refresh wrote one second apart, starting
+    at the last second of the newest stamp's minute: what one refresh writing
+    its manifests in turn can leave. Curated manifests the refresh does not
+    rewrite (stamped more than FRESH_MANIFEST_WINDOW before the newest) keep
+    their stamps."""
+    paths = sorted(MANIFESTS.glob("*.json"))
+    raws = {path: json.loads(path.read_text(encoding="utf-8")) for path in paths}
+    stamps = {path: _stamp(raw.get("generated_at")) for path, raw in raws.items() if isinstance(raw, dict)}
+    known = [stamp for stamp in stamps.values() if stamp is not None]
+    if not known:
+        return {"manifests": 0}
+    newest = max(known)
+    first = newest.replace(second=59, microsecond=0)
+    fresh = [path for path in paths if (stamp := stamps.get(path)) is not None and newest - stamp <= FRESH_MANIFEST_WINDOW]
+    for offset, path in enumerate(fresh):
+        raws[path]["generated_at"] = (first + timedelta(seconds=offset)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.write_text(json.dumps(raws[path], indent=2) + "\n", encoding="utf-8")
+    return {"manifests": len(fresh), "first": raws[fresh[0]]["generated_at"] if fresh else None,
+            "last": raws[fresh[-1]]["generated_at"] if fresh else None}
+
+
+def routable_rows() -> list[tuple[str, str]]:
+    """Every (provider, model id) row a refresh could delist or rename: listed
+    and not already unroutable, in a stable order."""
+    rows = []
+    for path in sorted(MANIFESTS.glob("*.json")):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        for row in raw.get("models", []) if isinstance(raw, dict) else []:
+            if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("routable") is not False:
+                rows.append((path.stem, row["id"]))
+    return sorted(set(rows))
+
+
+def sample_rows(seed: int, fraction: float) -> dict[str, list[list[str]]]:
+    """Two disjoint random samples of routable rows, each `fraction` of them:
+    rows to delist and rows whose upstream id to rename."""
+    rows = routable_rows()
+    count = max(1, round(len(rows) * fraction)) if rows else 0
+    chosen = random.Random(seed).sample(rows, min(len(rows), 2 * count))  # noqa: S311 - a reproducible test sample
+    return {"delist": [list(row) for row in sorted(chosen[:count])],
+            "rename": [list(row) for row in sorted(chosen[count:])]}
+
+
+def _edit_rows(routes: list[list[str]], edit: Any) -> int:
+    by_provider: dict[str, set[str]] = defaultdict(set)
+    for provider, model_id in routes:
+        by_provider[provider].add(model_id)
+    changed = 0
+    for provider, model_ids in by_provider.items():
+        path = MANIFESTS / f"{provider}.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        for row in raw.get("models", []):
+            if isinstance(row, dict) and row.get("id") in model_ids and row.get("routable") is not False:
+                edit(row)
+                changed += 1
+        path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    return changed
+
+
+def delist_rows(routes: list[list[str]]) -> dict[str, int]:
+    """Delist each (provider, model) row as that provider's second miss does,
+    one route at a time: tombstone the row, and drop the provider's snapshot
+    endpoint for the model (a model left with none is dropped too)."""
+
+    def tombstone(row: dict[str, Any]) -> None:
+        row.update(routable=False, routable_reason="delisted-upstream")
+        row.setdefault("missing_since", time.strftime("%Y-%m-%d"))
+
+    counts = {"rows": _edit_rows(routes, tombstone), "endpoints": 0, "models_dropped": 0}
+    gone = {(provider, model_id) for provider, model_id in routes}
+    snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    kept = []
+    for model in snapshot.get("models", []):
+        endpoints = model.get("endpoints") or []
+        remaining = [e for e in endpoints if (e.get("tr_provider_slug"), model.get("id")) not in gone]
+        counts["endpoints"] += len(endpoints) - len(remaining)
+        if endpoints and not remaining:
+            counts["models_dropped"] += 1
+            continue
+        model["endpoints"] = remaining
+        kept.append(model)
+    snapshot["models"] = kept
+    SNAPSHOT.write_text(json.dumps(snapshot), encoding="utf-8")
+    return counts
+
+
+def rename_upstreams(routes: list[list[str]]) -> dict[str, int]:
+    """Give each (provider, model) row a new upstream id, as a provider that
+    starts listing the model under another name does."""
+
+    def rename(row: dict[str, Any]) -> None:
+        row["upstream_id"] = f"{row.get('upstream_id') or row['id']}{RENAMED_UPSTREAM_SUFFIX}"
+
+    return {"rows": _edit_rows(routes, rename)}
 
 
 def _holds_step(command: str, **request: Any) -> dict[str, Any]:
@@ -728,6 +867,15 @@ def main() -> None:
     run_parser.add_argument("--perturb", action="store_true", help="change prices and limits, not delist")
     run_parser.add_argument("--down", action="store_true", help="with --perturb, lower prices and raise limits")
     run_parser.add_argument("--skew", action="store_true", help="with --perturb, move prices and limits apart and far")
+    run_parser.add_argument("--stamps", action="store_true",
+                            help="stamp the refreshed manifests one second apart, across minutes")
+    run_parser.add_argument("--sample", type=int, default=None, metavar="SEED",
+                            help="delist one random sample of routable rows and rename another's upstream ids")
+    run_parser.add_argument("--fraction", type=float, default=0.08, help="with --sample, each sample's share")
+    run_parser.add_argument("--delist-rows", default="", help="comma-separated provider:model rows to delist")
+    run_parser.add_argument("--rename-rows", default="",
+                            help="comma-separated provider:model rows whose upstream id to rename")
+    run_parser.add_argument("--record", type=Path, default=None, help="write the rows changed here (JSON)")
     run_parser.add_argument("--hold", default="",
                             help="comma-separated provider:model rows to hold as the refresh's unserved-route step does")
     values_parser = commands.add_parser("values")
@@ -770,6 +918,17 @@ def main() -> None:
                   perturb(providers, down=args.down, skew=args.skew) if args.perturb else delist(providers))
         for model_id in filter(None, args.vanish.split(",")):
             print("vanished:", model_id, delist_model(model_id))
+        rows = sample_rows(args.sample, args.fraction) if args.sample is not None else {"delist": [], "rename": []}
+        rows["delist"] += [route.split(":", 1) for route in filter(None, args.delist_rows.split(","))]
+        rows["rename"] += [route.split(":", 1) for route in filter(None, args.rename_rows.split(","))]
+        if rows["delist"]:
+            print("delisted rows:", len(rows["delist"]), delist_rows(rows["delist"]))
+        if rows["rename"]:
+            print("renamed upstream ids:", len(rows["rename"]), rename_upstreams(rows["rename"]))
+        if args.stamps:
+            print("stamps:", skew_stamps())
+        if args.record:
+            args.record.write_text(json.dumps(rows, indent=1), encoding="utf-8")
         if args.hold:
             held = hold_routes([route.split(":", 1) for route in args.hold.split(",")])
             print("held:", held["notes"])

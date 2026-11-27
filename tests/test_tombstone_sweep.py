@@ -851,3 +851,92 @@ def test_a_holds_step_that_fails_is_never_an_empty_answer(monkeypatch: pytest.Mo
 
     with pytest.raises(SystemExit, match="would not hold"):
         sweep.hold_routes([["alpha", "maker/a-0"]])
+
+
+def _stamped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stamps: dict[str, str]) -> Path:
+    manifests = tmp_path / "provider_models"
+    manifests.mkdir()
+    for provider, stamp in stamps.items():
+        (manifests / f"{provider}.json").write_text(
+            json.dumps({"generated_at": stamp, "models": [{"id": f"maker/{provider}"}]}), encoding="utf-8"
+        )
+    monkeypatch.setattr(sweep, "MANIFESTS", manifests)
+    return manifests
+
+
+def test_skewed_stamps_are_a_second_apart_across_a_minute_and_leave_curated_manifests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifests = _stamped(monkeypatch, tmp_path, {
+        "alpha": "2026-11-26T12:29:04Z",
+        "beta": "2026-11-26T12:29:05Z",
+        "curated": "2026-11-20T00:00:00Z",
+        "gamma": "2026-11-26T11:00:00Z",
+    })
+
+    assert sweep.skew_stamps() == {"manifests": 3, "first": "2026-11-26T12:29:59Z", "last": "2026-11-26T12:30:01Z"}
+
+    stamps = {path.stem: json.loads(path.read_text())["generated_at"] for path in manifests.glob("*.json")}
+    assert stamps == {
+        "alpha": "2026-11-26T12:29:59Z",
+        "beta": "2026-11-26T12:30:00Z",
+        "curated": "2026-11-20T00:00:00Z",
+        "gamma": "2026-11-26T12:30:01Z",
+    }
+
+
+def test_a_sample_is_reproducible_disjoint_and_only_routable_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _data(monkeypatch, tmp_path)
+    routable = {("alpha", "maker/model-a"), ("alpha", "maker/model-b"), ("beta", "maker/model-a"),
+                ("beta", "maker/model-a-fast")}
+    assert set(sweep.routable_rows()) == routable
+
+    sample = sweep.sample_rows(7, 0.5)
+
+    assert sample == sweep.sample_rows(7, 0.5)
+    assert len(sample["delist"]) == len(sample["rename"]) == 2
+    chosen = [tuple(row) for row in sample["delist"] + sample["rename"]]
+    assert len(set(chosen)) == 4
+    assert set(chosen) == routable
+
+
+def test_a_delisted_row_drops_only_that_providers_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = _data(monkeypatch, tmp_path)
+    snapshot_path = root / "openrouter_snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text())
+    snapshot["models"][0]["endpoints"].append({"tr_provider_slug": "beta"})
+    snapshot_path.write_text(json.dumps(snapshot))
+
+    counts = sweep.delist_rows([["alpha", "maker/model-a"], ["beta", "maker/model-a-fast"]])
+
+    assert counts == {"rows": 2, "endpoints": 2, "models_dropped": 1}
+    alpha = json.loads((root / "provider_models" / "alpha.json").read_text())["models"]
+    beta = json.loads((root / "provider_models" / "beta.json").read_text())["models"]
+    assert (alpha[0]["routable"], alpha[0]["routable_reason"]) == (False, "delisted-upstream")
+    assert alpha[0]["missing_since"]
+    assert "routable" not in alpha[1]
+    # The same model on another host still routes.
+    assert "routable" not in beta[0]
+    assert beta[1]["routable_reason"] == "delisted-upstream"
+    snapshot = json.loads(snapshot_path.read_text())
+    assert snapshot["models"] == [{"id": "maker/model-a", "endpoints": [{"tr_provider_slug": "beta"}]}]
+
+
+def test_a_renamed_row_lists_the_model_under_a_new_upstream_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _data(monkeypatch, tmp_path)
+    path = root / "provider_models" / "alpha.json"
+    raw = json.loads(path.read_text())
+    raw["models"][0]["upstream_id"] = "model-a"
+    path.write_text(json.dumps(raw))
+
+    assert sweep.rename_upstreams([["alpha", "maker/model-a"], ["alpha", "maker/model-b"],
+                                   ["beta", "maker/gone"]]) == {"rows": 2}
+
+    rows = json.loads(path.read_text())["models"]
+    assert [row["upstream_id"] for row in rows] == ["model-a-renamed-upstream", "maker/model-b-renamed-upstream"]
+    gone = json.loads((root / "provider_models" / "beta.json").read_text())["models"][2]
+    assert "upstream_id" not in gone
