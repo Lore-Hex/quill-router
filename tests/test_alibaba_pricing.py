@@ -83,7 +83,12 @@ def test_qwen4_max_price_is_for_the_exact_frankfurt_sku() -> None:
         assert alibaba._price(unreviewed) is None
 
 
-def test_committed_qwen4_max_prepaid_route_applies_standard_markup_once() -> None:
+def test_committed_qwen4_max_prepaid_route_applies_standard_markup_once(monkeypatch, tmp_path) -> None:
+    from tests.pinned_manifests import serve_committed_route
+
+    # The committed row's tariff, whether or not the hourly refresh has the
+    # route down this hour.
+    serve_committed_route(monkeypatch, tmp_path, "qwen/qwen4-max@alibaba/prepaid")
     route = MODEL_ENDPOINTS["qwen/qwen4-max@alibaba/prepaid"]
     assert route.upstream_id == "qwen4-max"
     tier, = route.price_tiers

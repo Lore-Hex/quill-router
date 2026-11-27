@@ -429,6 +429,137 @@
    ],
    "upstream_id": "gpt-4.1-mini",
    "usage_type": "Credits"
+  },
+  {
+   "catalog_valid_until": null,
+   "completion_price_microdollars_per_million_tokens": 11288500,
+   "completion_timeout_seconds": null,
+   "context_length": 0,
+   "first_token_timeout_seconds": null,
+   "id": "bytedance/seedance-2.5@byteplus/prepaid",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "max_completion_tokens": null,
+   "model_id": "bytedance/seedance-2.5",
+   "output_token_price_per_m_by_resolution": {
+    "1080p": 12343500,
+    "480p": 11288500,
+    "720p": 11288500
+   },
+   "price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 11288500,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": null,
+     "prompt_price_microdollars_per_million_tokens": 0
+    }
+   ],
+   "prompt_price_microdollars_per_million_tokens": 0,
+   "provider": "byteplus",
+   "published_completion_price_microdollars_per_million_tokens": 11288500,
+   "published_price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 11288500,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": null,
+     "prompt_price_microdollars_per_million_tokens": 0
+    }
+   ],
+   "published_prompt_price_microdollars_per_million_tokens": 0,
+   "request_price_microdollars": 0,
+   "stream_idle_timeout_seconds": null,
+   "supported_parameters": [],
+   "upstream_id": "dreamina-seedance-2-5-260628",
+   "usage_type": "Credits"
+  },
+  {
+   "catalog_valid_until": null,
+   "completion_price_microdollars_per_million_tokens": 7385000,
+   "completion_timeout_seconds": null,
+   "context_length": 0,
+   "first_token_timeout_seconds": null,
+   "id": "bytedance/seedance-2.0@byteplus/prepaid",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "max_completion_tokens": null,
+   "model_id": "bytedance/seedance-2.0",
+   "output_token_price_per_m_by_resolution": {
+    "1080p": 8123500,
+    "480p": 7385000,
+    "720p": 7385000
+   },
+   "price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 7385000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": null,
+     "prompt_price_microdollars_per_million_tokens": 0
+    }
+   ],
+   "prompt_price_microdollars_per_million_tokens": 0,
+   "provider": "byteplus",
+   "published_completion_price_microdollars_per_million_tokens": 7385000,
+   "published_price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 7385000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": null,
+     "prompt_price_microdollars_per_million_tokens": 0
+    }
+   ],
+   "published_prompt_price_microdollars_per_million_tokens": 0,
+   "request_price_microdollars": 0,
+   "stream_idle_timeout_seconds": null,
+   "supported_parameters": [],
+   "upstream_id": "dreamina-seedance-2-0-260128",
+   "usage_type": "Credits"
+  },
+  {
+   "catalog_valid_until": null,
+   "completion_price_microdollars_per_million_tokens": 5908000,
+   "completion_timeout_seconds": null,
+   "context_length": 0,
+   "first_token_timeout_seconds": null,
+   "id": "bytedance/seedance-2.0-fast@byteplus/prepaid",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "max_completion_tokens": null,
+   "model_id": "bytedance/seedance-2.0-fast",
+   "output_token_price_per_m_by_resolution": {
+    "480p": 5908000,
+    "720p": 5908000
+   },
+   "price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5908000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": null,
+     "prompt_price_microdollars_per_million_tokens": 0
+    }
+   ],
+   "prompt_price_microdollars_per_million_tokens": 0,
+   "provider": "byteplus",
+   "published_completion_price_microdollars_per_million_tokens": 5908000,
+   "published_price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5908000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": null,
+     "prompt_price_microdollars_per_million_tokens": 0
+    }
+   ],
+   "published_prompt_price_microdollars_per_million_tokens": 0,
+   "request_price_microdollars": 0,
+   "stream_idle_timeout_seconds": null,
+   "supported_parameters": [],
+   "upstream_id": "dreamina-seedance-2-0-fast-260128",
+   "usage_type": "Credits"
   }
  ],
  "models": [
@@ -791,6 +922,116 @@
    "supports_messages": false,
    "supports_rerank": false,
    "supports_video": false,
+   "upstream_id": null
+  },
+  {
+   "byok_available": false,
+   "completion_price_microdollars_per_million_tokens": 0,
+   "context_length": 15000,
+   "documentation": null,
+   "hidden_public_metadata": false,
+   "id": "bytedance/seedance-2.5",
+   "input_modalities": [
+    "text",
+    "image",
+    "audio"
+   ],
+   "internal_only": false,
+   "max_completion_tokens": null,
+   "minimum_charge_microdollars": 0,
+   "name": "ByteDance Seedance 2.5",
+   "output_modalities": [
+    "video"
+   ],
+   "prepaid_available": true,
+   "price_tiers": [],
+   "prompt_price_microdollars_per_million_tokens": 0,
+   "provider": "venice",
+   "published_completion_price_microdollars_per_million_tokens": 0,
+   "published_price_tiers": [],
+   "published_prompt_price_microdollars_per_million_tokens": 0,
+   "request_price_microdollars": 0,
+   "supported_parameters": [],
+   "supports_chat": false,
+   "supports_decide": false,
+   "supports_embeddings": false,
+   "supports_messages": false,
+   "supports_rerank": false,
+   "supports_video": true,
+   "upstream_id": null
+  },
+  {
+   "byok_available": false,
+   "completion_price_microdollars_per_million_tokens": 0,
+   "context_length": 10000,
+   "documentation": null,
+   "hidden_public_metadata": false,
+   "id": "bytedance/seedance-2.0",
+   "input_modalities": [
+    "text",
+    "image",
+    "audio",
+    "video"
+   ],
+   "internal_only": false,
+   "max_completion_tokens": null,
+   "minimum_charge_microdollars": 0,
+   "name": "ByteDance Seedance 2.0",
+   "output_modalities": [
+    "video"
+   ],
+   "prepaid_available": true,
+   "price_tiers": [],
+   "prompt_price_microdollars_per_million_tokens": 0,
+   "provider": "venice",
+   "published_completion_price_microdollars_per_million_tokens": 0,
+   "published_price_tiers": [],
+   "published_prompt_price_microdollars_per_million_tokens": 0,
+   "request_price_microdollars": 0,
+   "supported_parameters": [],
+   "supports_chat": false,
+   "supports_decide": false,
+   "supports_embeddings": false,
+   "supports_messages": false,
+   "supports_rerank": false,
+   "supports_video": true,
+   "upstream_id": null
+  },
+  {
+   "byok_available": false,
+   "completion_price_microdollars_per_million_tokens": 0,
+   "context_length": 10000,
+   "documentation": null,
+   "hidden_public_metadata": false,
+   "id": "bytedance/seedance-2.0-fast",
+   "input_modalities": [
+    "text",
+    "image",
+    "audio",
+    "video"
+   ],
+   "internal_only": false,
+   "max_completion_tokens": null,
+   "minimum_charge_microdollars": 0,
+   "name": "ByteDance Seedance 2.0 Fast",
+   "output_modalities": [
+    "video"
+   ],
+   "prepaid_available": true,
+   "price_tiers": [],
+   "prompt_price_microdollars_per_million_tokens": 0,
+   "provider": "venice",
+   "published_completion_price_microdollars_per_million_tokens": 0,
+   "published_price_tiers": [],
+   "published_prompt_price_microdollars_per_million_tokens": 0,
+   "request_price_microdollars": 0,
+   "supported_parameters": [],
+   "supports_chat": false,
+   "supports_decide": false,
+   "supports_embeddings": false,
+   "supports_messages": false,
+   "supports_rerank": false,
+   "supports_video": true,
    "upstream_id": null
   }
  ],

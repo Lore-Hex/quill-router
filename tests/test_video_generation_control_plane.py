@@ -126,6 +126,7 @@ def _manifest_dark_routes() -> set[tuple[str, str]]:
     return dark
 
 
+@pytest.mark.catalog_as_built
 def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
     # The launch routes are an explicit list. One leaves the catalog only when
     # its own provider's committed manifest marks the row dark, or the
@@ -165,6 +166,7 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
     assert MODELS["minimax/h3-max"].input_modalities == ("text", "image")
 
 
+@pytest.mark.catalog_as_built
 def test_closed_video_models_route_only_through_their_makers() -> None:
     for model_id in ("openai/sora-2", "openai/sora-2-pro"):
         direct = endpoint_for_id(f"{model_id}@openai/prepaid")

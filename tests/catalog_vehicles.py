@@ -50,6 +50,11 @@ VEHICLE_ENDPOINT_IDS = (
     "openai/gpt-5.5@openai/byok",
     "openai/gpt-4.1@openai/prepaid",
     "openai/gpt-4.1-mini@openai/prepaid",
+    # BytePlus's token-billed Seedance routes, the only first-party video
+    # routes the video billing, replay and idempotency tests ride.
+    "bytedance/seedance-2.5@byteplus/prepaid",
+    "bytedance/seedance-2.0@byteplus/prepaid",
+    "bytedance/seedance-2.0-fast@byteplus/prepaid",
 )
 
 # Chosen from `scripts/tombstone_sweep.py models` (2026-09-29): the models whose

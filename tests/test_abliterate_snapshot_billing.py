@@ -26,9 +26,13 @@ from trusted_router.stage_d import (
 @pytest.mark.parametrize("stream", [False, True])
 def test_abliterate_freezes_prices_without_enabling_heartbeats(
     prod_store: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch,
-    model: str, route: str, stream: bool,
+    model: str, route: str, stream: bool, tmp_path: Any,
 ) -> None:
     store, _db, key = prod_store
+    # Abliterate's committed route, whether or not the hourly refresh has it
+    # down this hour.
+    from tests.pinned_manifests import serve_committed_route
+    serve_committed_route(monkeypatch, tmp_path, f"{model}@abliterate/prepaid")
     data = gateway._authorize_gateway_sync(
         Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
         GatewayAuthorizeRequest(
