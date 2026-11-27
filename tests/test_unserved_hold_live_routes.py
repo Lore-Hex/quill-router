@@ -391,23 +391,28 @@ def test_a_model_one_provider_serves_is_not_served_by_another_that_lists_it(tmp_
     assert pending == held == {(OTHER, models[0])}
 
 
-def test_a_lifted_hold_counts_for_its_own_provider_only(tmp_path: Path) -> None:
-    # The second manifest has two holds that ran out; the first lists one of
-    # those models without serving it. The lifted routes are the second
-    # provider's again, and nobody else's.
+@pytest.mark.parametrize(("holder", "lister"), [(OTHER, PROVIDER), (PROVIDER, OTHER)],
+                         ids=["holds-in-the-last-manifest", "holds-in-the-first-manifest"])
+def test_a_lifted_hold_counts_for_its_own_provider_only(tmp_path: Path, holder: str, lister: str) -> None:
+    # One manifest has two holds that ran out; the other lists one of those
+    # models without serving it. The lifted routes are the first provider's
+    # again and nobody else's, whichever manifest is read first.
     ran_out = NOW - timedelta(hours=planner.HOLD_HOURS + 1)
-    _manifest(tmp_path, PROVIDER, [_row("vendor/back-1"), _row("vendor/x"), _row("vendor/y")])
-    _manifest(tmp_path, OTHER, [
+    _manifest(tmp_path, lister, [_row("vendor/back-1"), _row("vendor/x"), _row("vendor/y")])
+    _manifest(tmp_path, holder, [
         _held_row("vendor/back-1", ran_out), _held_row("vendor/back-2", ran_out),
         _row("vendor/a"), _row("vendor/b"), _row("vendor/c"),
     ])
-    served = _routes("vendor/x", "vendor/y") | {(OTHER, model) for model in ("vendor/a", "vendor/b", "vendor/c")}
-    evidence = {(OTHER, "vendor/a"), (OTHER, "vendor/b"), (PROVIDER, "vendor/back-1")}
+    served = frozenset(
+        {(lister, model) for model in ("vendor/x", "vendor/y")}
+        | {(holder, model) for model in ("vendor/a", "vendor/b", "vendor/c")}
+    )
+    evidence = {(holder, "vendor/a"), (holder, "vendor/b"), (lister, "vendor/back-1")}
 
     pending, held = _two_sides(tmp_path, evidence, served)
 
-    # Two of the second provider's five routes; nothing of the first's.
-    assert pending == held == {(OTHER, "vendor/a"), (OTHER, "vendor/b")}
+    # Two of the holding provider's five routes; nothing of the other's.
+    assert pending == held == {(holder, "vendor/a"), (holder, "vendor/b")}
 
 
 # --- the refresh's own run ---------------------------------------------------
@@ -467,7 +472,7 @@ def test_the_refresh_holds_nothing_when_it_cannot_tell_what_is_served(
     # Nothing new is held, and the hold that ran out still lifts.
     assert _held_ids(path) == set()
     # The run's summary is its stdout: it names this cause, and does not
-    # blame the evidence, which was read.
+    # blame the evidence, which in this run was read.
     summary = capsys.readouterr().out
     assert "served routes unavailable (RuntimeError); holding nothing" in summary
     assert "evidence unavailable" not in summary
