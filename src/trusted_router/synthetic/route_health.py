@@ -331,6 +331,18 @@ def _qualified_at(
     return run[0][0]
 
 
+def probed_routes() -> frozenset[tuple[str, str]]:
+    """Every (provider, model) the configured-route probes watch: the chat
+    routes a provider serves on our own key in this catalog. Unserved-route
+    evidence can only name these, and the unserved-route hold counts a
+    provider's routes from the same list (unserved_route_hold_plan)."""
+    return frozenset(
+        (provider, model)
+        for provider, models in rotation_candidates().items()
+        for model in models
+    )
+
+
 def evaluate_unserved_routes(
     store: Store,
     *,

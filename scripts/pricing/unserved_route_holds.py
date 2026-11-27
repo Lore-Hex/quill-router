@@ -31,8 +31,11 @@ manifests:
   route-health alert asks a human to consider a permanent operator hold;
 * when the evidence cannot be read, is malformed or stale, nothing is held;
 * a provider is never held wholesale: a run that would leave more than half
-  of a provider's rows held by this step (counting earlier holds), or would
-  hold its last routable row, holds none of that provider's rows; a run
+  of the routes a provider serves held by this step (counting earlier holds),
+  or would hold the last route it serves, holds none of that provider's
+  rows. A provider's routes are the ones the catalog serves on our own key
+  and the route probes watch, not every row its manifest lists; a row past
+  its scheduled retirement is not one of them. A run
   listing more than ``MAX_ROUTES`` routes holds nothing, and no new hold is
   placed while it would leave more than ``MAX_ROUTES`` rows held in total;
 * an expired hold on a row discovery has since delisted or left unpriced
@@ -48,6 +51,7 @@ import argparse
 import importlib
 import json
 import sys
+from collections.abc import Set
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -70,6 +74,7 @@ from trusted_router.unserved_route_hold_plan import (
     lift_expired_unserved_holds,
     next_unserved_hold_count,
     plan_unserved_route_holds,
+    served_with_lifted,
     unserved_hold_hours,
 )
 
@@ -144,6 +149,7 @@ def apply_unserved_route_holds(
     manifest_dir: Path = MANIFEST_DIR,
     now: datetime | None = None,
     frozen: frozenset[str] = frozenset(),
+    served: Set[Route] | None = None,
 ) -> list[str]:
     """Lift expired holds, then hold the evidenced routes. Returns notes.
 
@@ -151,6 +157,10 @@ def apply_unserved_route_holds(
     byte: a quarantined provider's committed manifest (scripts/pricing/
     quarantine.py). Lifting an expired hold there would re-enable a route
     the quarantine is keeping exactly as published.
+
+    ``served`` is the planner's: the routes the catalog built from these
+    manifests serves and probes. Only they are held or counted. ``None``
+    counts every live row (a caller with no catalog for ``manifest_dir``).
     """
     now = now or datetime.now(UTC)
     notes: list[str] = []
@@ -171,6 +181,7 @@ def apply_unserved_route_holds(
             continue
         before = json.dumps(raw["models"], sort_keys=True)
         lifted = lift_expired_unserved_holds(raw["models"], now=now)
+        served = served_with_lifted(served, path.stem, lifted)
         if lifted:
             notes.append(f"{path.stem}: lifted expired unserved-route hold on {', '.join(sorted(lifted))}")
         # A lift, or clearing a stale repeat-hold record, changes the file.
@@ -182,6 +193,7 @@ def apply_unserved_route_holds(
         manifest_stems=manifest_stems,
         extra_held=frozen_held,
         now=now,
+        served=served,
     )
     notes.extend(plan_notes)
 
@@ -223,6 +235,15 @@ def quarantined_manifests() -> frozenset[str]:
     return frozenset(stems)
 
 
+def served_routes() -> frozenset[Route]:
+    """The routes the catalog built from this checkout's manifests serves on
+    our own key and probes. Built here, in this step's own process, after the
+    provider refresh has written the manifests."""
+    from trusted_router.synthetic.route_health import probed_routes
+
+    return probed_routes()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", default=SOURCE)
@@ -239,8 +260,19 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - any failure means no evidence, never "all healthy"
         print(f"unserved-route evidence unavailable ({type(exc).__name__})", file=sys.stderr)
         evidence = None
+    served: Set[Route] | None = None
+    if args.manifest_dir.resolve() == MANIFEST_DIR.resolve():
+        try:
+            served = served_routes()
+        except Exception as exc:  # noqa: BLE001 - no catalog means no count to hold against
+            # Without the served routes the per-provider limits cannot be
+            # measured, so nothing new is held. Expired holds still lift.
+            print(f"served routes unavailable ({type(exc).__name__}); holding nothing", file=sys.stderr)
+            evidence = None
     frozen = quarantined_manifests()
-    for note in apply_unserved_route_holds(evidence, manifest_dir=args.manifest_dir, now=now, frozen=frozen):
+    for note in apply_unserved_route_holds(
+        evidence, manifest_dir=args.manifest_dir, now=now, frozen=frozen, served=served,
+    ):
         print(note)
     return 0
 

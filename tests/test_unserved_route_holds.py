@@ -505,7 +505,7 @@ def test_the_provider_cap_cannot_ratchet_across_runs(tmp_path: Path) -> None:
     # Five held of ten already; one more would make a majority.
     notes = holds.apply_unserved_route_holds({("wide", "m/5")}, manifest_dir=tmp_path, now=NOW)
     assert path.read_bytes() == before
-    assert any("6 of 10 rows unserved" in note for note in notes)
+    assert any("6 of 10 routes unserved" in note for note in notes)
 
 
 def test_lift_never_publishes_an_unpriced_or_delisted_row(tmp_path: Path) -> None:
