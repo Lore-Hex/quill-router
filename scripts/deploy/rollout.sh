@@ -532,6 +532,7 @@ ENV_VARS=(
   # inside it, and nothing else. A literal, so no revision inherits it; 0 is
   # the way back.
   "TR_WORKSPACE_BILLING_GATE_WIDTH=1"
+  "TR_GATEWAY_AUTHORIZE_RESERVE_BACKPRESSURE=true"
   "TR_RELEASE=${RELEASE_ID}"
   "TR_SOURCE_REVISION=${SOURCE_REVISION}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled

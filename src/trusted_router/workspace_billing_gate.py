@@ -94,7 +94,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -126,6 +126,43 @@ REENTRANT = "reentrant"
 NO_BUDGET = "no_budget"
 ALLOWANCE_SPENT = "allowance_spent"
 OFF = "off"
+
+
+# The threadpool copies the request's lookup subject. Only a reserve that
+# actually reaches storage and runs past its workspace queue counts.
+_RESERVE_SUBJECT: ContextVar[str | None] = ContextVar("reserve_subject", default=None)
+_BYPASS_LOCK = threading.Lock()
+_BYPASSING: dict[str, int] = {}
+
+
+@contextmanager
+def observe_reserve_pressure(subject: str) -> Iterator[None]:
+    token = _RESERVE_SUBJECT.set(subject)
+    try:
+        yield
+    finally:
+        _RESERVE_SUBJECT.reset(token)
+
+
+def reserve_under_pressure(subject: str) -> bool:
+    with _BYPASS_LOCK:
+        return subject in _BYPASSING
+
+
+@contextmanager
+def _count_bypass(subject: str) -> Iterator[None]:
+    with _BYPASS_LOCK:
+        _BYPASSING[subject] = _BYPASSING.get(subject, 0) + 1
+    try:
+        yield
+    finally:
+        with _BYPASS_LOCK:
+            remaining = _BYPASSING[subject] - 1
+            if remaining:
+                _BYPASSING[subject] = remaining
+            else:
+                del _BYPASSING[subject]
+
 # A request's waits are counted together for this long after its first one.
 # No billing request lives longer (the gateway stops waiting at 25 seconds),
 # so a context that outlives it (a worker thread, a test) starts afresh.
@@ -452,7 +489,13 @@ def workspace_billing_gate(
     try:
         if passed.outcome != FREE:
             _write_line(passed, kind)
-        yield passed
+        subject = _RESERVE_SUBJECT.get() if kind == "authorize" else None
+        crowded = (
+            (passed.outcome == TIMEOUT and passed.wait_seconds >= 1.0)
+            or (passed.outcome == WAITERS_FULL and passed.queued >= max_waiters)
+        )
+        with _count_bypass(subject) if subject is not None and crowded else nullcontext():
+            yield passed
     finally:
         if token is not None:
             held.discard(workspace_id)

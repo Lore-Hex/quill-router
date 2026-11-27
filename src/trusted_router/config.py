@@ -802,6 +802,8 @@ class Settings(BaseSettings):
     # key no longer meets 429s at ordinary batch rates (4 refused about 0.3% of
     # one customer's ~3.5 req/s), and other keys keep a quarter of the instance.
     gateway_authorize_max_in_flight_per_key: int = 12
+    # Only synchronous Spanner reserves that bypass their own crowded row gate.
+    gateway_authorize_reserve_backpressure: bool = False
     # Settlement has a wider gate because it closes already-issued holds, but
     # one hot key must not consume every Spanner session in an instance.
     settle_per_key_inflight_limit: int = 16

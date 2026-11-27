@@ -379,6 +379,31 @@ a retry. That exchange is the point of the gate: the settle's 503 pages and
 rolls deploys back; a few seconds on the bursting workspace's own reserves
 does neither.
 
+**November 27: backpressure on new authorizations.** In the 17:14-17:15 UTC
+minute, 12 GCP instances served authorization traffic. 2,411 calls got a 429;
+273 of 275 successful calls still took at least a second. The local credit-row
+queues reported 614 reserve timeouts and 164 full-queue reserve bypasses.
+Across 17:13-17:29 UTC one workspace's single credit row accounted for
+150,385 cumulative lock-wait seconds. This is concurrent wait, not downtime.
+The lock, API failure and slow billing call alerts resolved before any fix.
+
+With `TR_GATEWAY_AUTHORIZE_RESERVE_BACKPRESSURE=true`, when a reserve on
+this instance waits at least a second and times out, or finds its *own*
+workspace queue full, it still runs the original transaction. Until the last
+such transaction for its key exits, new authorizations for that key have a
+per-process concurrency limit of two (never higher than the configured limit).
+Excess new calls get 429 with `Retry-After: 1` before creating a hold.
+Settles, refunds and existing requests keep their slots. A full global queue
+alone does not trigger the change. This does not serialize different keys or
+instances and is not a promise to eliminate contention.
+
+On a comparable burst, compare successful throughput and latency, HTTP 429
+and 5xx counts, lock waits, settle aborts, and outbox drain age. A fall in
+lock waits caused only by rejecting more useful work is not success.
+`billing.authorize_reserve_backpressure` distinguishes these refusals from
+the static per-key limit. Roll back by setting the flag false in the GCP
+rollout. No alert or transaction deadline changes.
+
 The model that ships with the gate
 (`tests/test_workspace_billing_gate_storm_model.py`) compares these
 mechanisms. It is a model, not Spanner: the lock queue's order (wound-wait,

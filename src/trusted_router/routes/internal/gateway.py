@@ -23,6 +23,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import replace
 from functools import lru_cache
 from itertools import product
@@ -294,6 +295,7 @@ from trusted_router.web_fetch import (
     FETCH_ROUTE_TYPE,
     FETCH_UPSTREAM_COST_MICRODOLLARS,
 )
+from trusted_router.workspace_billing_gate import observe_reserve_pressure, reserve_under_pressure
 from trusted_router.workspace_origin_policy import POLICIES, eligible_candidates
 
 logger = logging.getLogger(__name__)
@@ -596,21 +598,30 @@ async def authorize_gateway(
     """
     subject = body.api_key_lookup_hash or body.api_key_hash
     assert subject is not None  # GatewayAuthorizeRequest validates one identifier.
+    observe = (
+        settings.gateway_authorize_reserve_backpressure
+        and settings.storage_backend == "spanner-clickhouse"
+    )
+    limit = settings.gateway_authorize_max_in_flight_per_key
+    narrowed = observe and limit > 2 and reserve_under_pressure(subject)
+    if narrowed:
+        limit = 2
     if not _AUTHORIZE_ADMISSION.try_acquire(
         subject,
-        limit=settings.gateway_authorize_max_in_flight_per_key,
+        limit=limit,
     ):
         logger.warning(
-            "billing.authorize_admission_limited",
+            "billing.authorize_reserve_backpressure" if narrowed else "billing.authorize_admission_limited",
             extra={
                 "request_id": getattr(request.state, "request_id", None),
                 "key_subject_fingerprint": hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16],
-                "limit": settings.gateway_authorize_max_in_flight_per_key,
+                "limit": limit,
             },
         )
         raise api_error(
             429,
-            "Too many concurrent requests for this API key",
+            "Too many concurrent reserves for this API key"
+            if narrowed else "Too many concurrent requests for this API key",
             ErrorType.RATE_LIMITED,
             headers={"Retry-After": "1"},
         )
@@ -622,14 +633,15 @@ async def authorize_gateway(
             # channel. Real routed requests always provide the exact cached bytes.
             raw_body = b""
         continuation = worker_continuation() if settings.speculative_provider_shadow_enabled else None
-        return await run_in_threadpool(
-            cast(Any, _authorize_gateway_sync),  # wrapper consumes the private handoff keyword
-            request,
-            body,
-            settings,
-            raw_body,
-            **({"_shadow_continuation": continuation} if continuation is not None else {}),
-        )
+        with observe_reserve_pressure(subject) if observe else nullcontext():
+            return await run_in_threadpool(
+                cast(Any, _authorize_gateway_sync),  # wrapper consumes the private handoff keyword
+                request,
+                body,
+                settings,
+                raw_body,
+                **({"_shadow_continuation": continuation} if continuation is not None else {}),
+            )
     finally:
         _AUTHORIZE_ADMISSION.release(subject)
 
