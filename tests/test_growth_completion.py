@@ -253,9 +253,13 @@ def test_directory_failure_preserves_verified_snapshot_and_conversion_export(mon
     owners = [{'workspace_fingerprint': 'b'*64, 'billing_account_fingerprint': 'a'*64,
                'billing_owner_observed_at': NOW.isoformat()}] if has_cache else []
     original['billing_owners'] = owners
+    if has_cache:
+        original['billing_directory_read_at'] = (NOW-dt.timedelta(days=1)).isoformat()
     io = IO([event()])
     updated, _ = cycle(original, io, NOW)
     assert updated['billing_owners'] == owners
+    assert updated['billing_owner_status'] == io.sent[-1]['billing_owner_status']
+    assert updated.get('billing_directory_read_at') == original.get('billing_directory_read_at')
     assert io.sent[-1]['billing_owner_status'] == ('stale' if has_cache else 'unavailable')
     assert any(r['event'] == 'acquisition.signup_completed' for r in io.sent)
     assert 'private' not in capsys.readouterr().out

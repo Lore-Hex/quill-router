@@ -111,11 +111,20 @@ def sample(snapshot, since):
     return groups
 
 
-def component_check(snapshot):
+_BILLING_FIELDS = frozenset(('billing_account_fingerprint', 'billing_identity_basis',
+                            'billing_owner_observed_at', 'billing_source'))
+
+
+def component_receipt(snapshot):
     # This oracle deliberately reads the legacy history. Only the incremental
     # candidate reads a dirty component. No source rows leave the verifier.
     end = m.date(snapshot['watermark'])
     rows, reverse = {}, defaultdict(list)
+    status = snapshot.get('billing_owner_status', 'not_recorded')
+    owners = snapshot.get('billing_owners', []) if status in {'current', 'stale', 'unavailable'} else None
+    if status == 'current' and ('billing_owners' not in snapshot or not snapshot.get('billing_directory_read_at')):
+        raise ValueError('missing successful owner-directory read evidence')
+    directory = {r['workspace_fingerprint']: r['billing_account_fingerprint'] for r in owners or ()}
 
     def raw_edges(kind, row):
         fields = [('w', 'workspace_fingerprint'), ('w', 'marketing_workspace_fingerprint')]
@@ -133,6 +142,12 @@ def component_check(snapshot):
                 reverse[edge].append(key)
     pivot = m.digest(end.isoformat())
     seeds = nsmallest(4, rows, key=lambda k: (k < pivot, k))
+    if owners is not None:
+        # Include a commercial projection on every populated check. Rotate
+        # matched and unmatched usage independently of the general source seeds.
+        for linked in (True, False):
+            seeds.extend(nsmallest(1, (r['event_id'] for r in snapshot['daily']
+                if (r.get('workspace_fingerprint') in directory) == linked), key=lambda k: (k < pivot, k)))
     todo, selected, expanded = deque(seeds), set(), set()
     while todo:
         key = todo.popleft()
@@ -141,7 +156,13 @@ def component_check(snapshot):
         selected.add(key)
         if len(selected) > incremental.MAX_COMPONENT:
             raise ValueError('oracle component exceeds qualification budget')
-        for edge in raw_edges(*rows[key]) - expanded:
+        kind, row = rows[key]
+        relevant = raw_edges(kind, row)
+        if kind == 'usage' and (owner := directory.get(row.get('workspace_fingerprint'))):
+            # The commercial owner can be someone other than the caller and
+            # their source may be ambiguous across unrelated visitor journeys.
+            relevant.add(('a', owner))
+        for edge in relevant - expanded:
             expanded.add(edge)
             todo.extend(reverse[edge])
     del reverse
@@ -159,16 +180,24 @@ def component_check(snapshot):
         def get(self, ref):
             return self.objects[ref]
 
-    changes = [(kind, key, row) for key, (kind, row) in rows.items() if key in selected]
+    changes = [(kind, key, {k: v for k, v in row.items() if k not in _BILLING_FIELDS}
+                if kind == 'usage' and owners is not None else row)
+               for key, (kind, row) in rows.items() if key in selected]
     delta = incremental.project(ps.Transaction(Scratch()), changes, end,
                                 milestones=snapshot.get('gateway_milestones', {}))
+    usage = [delta[key] for kind, key, _ in changes if kind == 'usage']
+    if owners is not None:
+        m.link_billing_accounts(usage, owners, [r for r in delta.values() if r['event'] == 'growth.journey'])
     expected = set(selected)
     expected.update(m.digest('journey:' + row['anonymous_fingerprint']) for kind, _, row in changes
                     if kind == 'fact' and row['event'].startswith('acquisition.')
                     and m.HASH.fullmatch(row.get('anonymous_fingerprint') or ''))
     if expected != delta.keys() or any(content_hash(delta[k]) != snapshot['hashes'].get(k) for k in expected):
         raise ValueError('incremental projection differs from committed legacy oracle')
-    return len(expected)
+    return {'component_projections_checked': len(expected), 'billing_directory_status': status,
+            'billing_usage_checked': len(usage) if owners is not None else 0,
+            'billing_linked_checked': sum(bool(r.get('billing_account_fingerprint')) for r in usage)
+            if owners is not None else 0, 'billing_directory_read_at': snapshot.get('billing_directory_read_at')}
 
 
 def reconcile(store, snapshot, *, days=2):
@@ -241,14 +270,14 @@ def main():
         lag = (now - m.date(state['watermark'])).total_seconds()
         if not 0 <= lag <= 15*60:
             raise ValueError('legacy checkpoint is stale or from the future')
-        verified = component_check(state)
-        if not verified:
+        verified = component_receipt(state)
+        if not verified['component_projections_checked']:
             raise ValueError('no component parity evidence')
         epoch = now.strftime('%G-W%V')
         store = ShadowObjects(http, credentials, dest, PREFIX + epoch + '/')
         receipt = reconcile(store, state)
         print(json.dumps({'event': 'growth.partition_shadow_verified', 'source_generation': generation,
-                          'component_projections_checked': verified, 'source_lag_seconds': round(lag),
+                          **verified, 'source_lag_seconds': round(lag),
                           **receipt}), flush=True)
 
 

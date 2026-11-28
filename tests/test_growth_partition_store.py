@@ -189,11 +189,50 @@ def test_dirty_projection_matches_reference_on_late_link_ambiguity_and_expiry(st
         reference = m.with_verified_domains(history.values(), journeys, chain(history.values(), rows, journeys))
         assert delivered == {r['event_id']: content_hash(r) for r in reference}
         snapshot = {'watermark': MARK, 'events': list(history.values()), 'daily': rows, 'hashes': delivered}
-        assert shadow.component_check(snapshot) == len(delivered)
+        assert shadow.component_receipt(snapshot)['component_projections_checked'] == len(delivered)
         if delivered:
             with pytest.raises(ValueError, match='oracle'):
-                shadow.component_check({**snapshot, 'hashes': {}})
+                shadow.component_receipt({**snapshot, 'hashes': {}})
         assert inc.project(p.Transaction(store), changes, end) == {}
+
+
+@pytest.mark.parametrize('ambiguous', [False, True])
+def test_commercial_projection_rebuilt_even_when_cached_billing_fields_lie(ambiguous):
+    from scripts.axiom_growth import model as m
+    from scripts.axiom_growth.runtime import checkpoint_facts, content_hash
+
+    owner, workspace = m.digest('commercial-owner'), m.digest('caller-workspace')
+    facts = [m.project_event({'event': 'acquisition.signup_completed', '_time': MARK,
+             'anonymous_fingerprint': m.digest(str(i)), 'workspace_fingerprint': m.digest(f'other{i}'),
+             'account_fingerprint': owner, 'utm_source': f'campaign{i}'}, source='axiom')
+             for i in range(2 if ambiguous else 1)]
+    pivot = int(m.digest(m.date(MARK).isoformat()), 16)
+    for i in range(4):
+        # The four ordinary seeds select unrelated visitors, not the owner's facts.
+        other = m.project_event({'event': 'acquisition.landing_viewed', '_time': MARK,
+                                 'anonymous_fingerprint': m.digest(f'decoy{i}')}, source='cloud_logging')
+        facts.append({**other, 'event_id': f'{pivot+i:064x}'})
+    daily = [{'event_id': m.digest('usage'), 'event': 'growth.daily_usage', '_time': MARK,
+              'workspace_fingerprint': workspace, 'successful_calls': 3, 'input_tokens': 12, 'output_tokens': 6}]
+    owners = [{'workspace_fingerprint': workspace, 'billing_account_fingerprint': owner,
+               'billing_owner_observed_at': MARK}]
+    journeys = m.build_journeys(facts, daily, m.date(MARK))
+    m.link_billing_accounts(daily, owners, journeys)
+    assert daily[0]['billing_source'] == ('(unattributed)' if ambiguous else 'campaign0')
+    hashes = {r['event_id']: content_hash(r) for r in [*facts, *daily, *journeys]}
+    bad = {**daily[0], 'billing_source': 'wrong'}
+    state = checkpoint_facts({'events': facts, 'daily': [bad], 'watermark': MARK, 'hashes': hashes,
+                              'billing_directory_read_at': MARK, 'billing_owner_status': 'current',
+                              'billing_owners': owners})
+    receipt = shadow.component_receipt(state)
+    assert (receipt['billing_usage_checked'], receipt['billing_linked_checked']) == (1, 1)
+    assert receipt['billing_directory_read_at'] == MARK
+    with pytest.raises(ValueError, match='oracle'):
+        shadow.component_receipt({**state, 'hashes': {**hashes, bad['event_id']: content_hash(bad)}})
+    with pytest.raises(ValueError, match='read evidence'):
+        shadow.component_receipt({**state, 'billing_directory_read_at': None})
+    with pytest.raises(ValueError, match='oracle'):
+        shadow.component_receipt({**state, 'billing_owners': []})
 
 
 def test_broad_dirty_identity_fanout_is_packed_without_raising_io_guard(store):

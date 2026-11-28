@@ -8,7 +8,7 @@ import io as streams
 import json
 import os
 import time
-from itertools import chain
+from itertools import chain, islice
 from urllib.parse import quote
 
 import google.auth
@@ -56,6 +56,44 @@ def ingest_payloads(rows):
         yield len(batch), b'[' + b','.join(batch) + b']'
 
 
+def checkpoint_chunks(value):
+    """Use the C encoder on bounded records, not on the entire retained history."""
+    encoder = json.JSONEncoder(separators=(',', ':'), ensure_ascii=True)
+    if not isinstance(value, dict) or not all(type(k) is str for k in value):
+        yield from encoder.iterencode(value)
+        return
+    yield '{'
+    for i, (key, part) in enumerate(value.items()):
+        yield (',' if i else '') + encoder.encode(key) + ':'
+        if key in {'events', 'daily', 'billing_owners', 'gateway_audits'} and isinstance(part, list):
+            yield '['
+            for n, row in enumerate(part):
+                if n:
+                    yield ','
+                # Unusual, nested or large records retain the streaming path.
+                if type(row) is dict and len(row) <= 80 and all(
+                    type(k) is str and len(k) <= 80 and
+                    (type(v) is str and len(v) <= 512 or type(v) in (int, float, bool, type(None)))
+                    for k, v in row.items()
+                ):
+                    yield encoder.encode(row)
+                else:
+                    yield from encoder.iterencode(row)
+            yield ']'
+        elif key == 'hashes' and type(part) is dict and all(
+                type(k) is str and type(v) is str and len(k) == len(v) == 64 for k, v in part.items()):
+            yield '{'
+            items = iter(part.items())
+            separator = ''
+            while chunk := dict(islice(items, 128)):
+                yield separator + encoder.encode(chunk)[1:-1]
+                separator = ','
+            yield '}'
+        else:
+            yield from encoder.iterencode(part)
+    yield '}'
+
+
 def pack_checkpoint(value):
     """Write the existing gzip/JSON format without simultaneous full JSON text and bytes."""
     packed = streams.BytesIO()
@@ -63,7 +101,7 @@ def pack_checkpoint(value):
     parts = []
     pending = 0
     with gzip.GzipFile(fileobj=packed, mode='wb', compresslevel=3, mtime=0) as dest:
-        for part in json.JSONEncoder(separators=(',', ':'), ensure_ascii=True).iterencode(value):
+        for part in checkpoint_chunks(value):
             size += len(part)  # ASCII JSON: characters and bytes have identical lengths.
             if size > MAX_STATE_BYTES:
                 raise ValueError('State size limit exceeded')
@@ -213,6 +251,7 @@ def prepare_cycle(state, io, now):
             owners = io.billing_owners()
             m.link_billing_accounts(daily_rows, owners, journeys)
             state['billing_owners'] = owners
+            state['billing_directory_read_at'] = now.isoformat()
             billing_status = 'current'
         except Exception as exc:  # noqa: BLE001 - a directory outage must not stop conversion export.
             owners = state.get('billing_owners', [])
@@ -250,7 +289,7 @@ def prepare_cycle(state, io, now):
                  'billing_owner_status': billing_status,
                  'gateway_observed_through': state.get('gateway_watermark'),
                  'billing_owners_observed_through': max((r.get('billing_owner_observed_at', '') for r in owners or []), default='')}
-    state.update(events=list(events.values()), daily=daily_rows, hashes=hashes,
+    state.update(events=list(events.values()), daily=daily_rows, hashes=hashes, billing_owner_status=billing_status,
                  watermark=end.isoformat())
     if plan := state.get('source_windows'):
         heartbeat.update(source_window_mode='segmented', acquisition_repair_next=plan['event_next'],
@@ -469,7 +508,9 @@ class Sources:
         return json.loads(raw), meta['generation']
 
     def save(self, name, value, generation):
+        started = time.monotonic()
         data, raw_size = pack_checkpoint(checkpoint_facts(value) if name == 'state.json.gz' else value)
+        pack_ms = round(1000 * (time.monotonic() - started))
         result = self.google('POST', f'https://storage.googleapis.com/upload/storage/v1/b/{self.bucket}/o',
             params={'name': name, 'uploadType': 'media', 'ifGenerationMatch': generation},
             content=data).json()
@@ -480,6 +521,7 @@ class Sources:
             print(json.dumps({'event': 'growth.checkpoint_committed',
                               'severity': 'WARNING' if utilization >= 0.7 else 'INFO',
                               'observed_through': value['watermark'], 'state_bytes': raw_size,
+                              'checkpoint_pack_ms': pack_ms,
                               'compressed_bytes': len(data), 'event_rows': events,
                               'usage_rows': daily, 'max_limit_pct': round(100 * utilization, 1)}),
                   flush=True)

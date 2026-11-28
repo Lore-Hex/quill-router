@@ -145,6 +145,21 @@ def test_checkpoint_codec_roundtrip_and_both_size_limits(monkeypatch):
         runtime.pack_checkpoint(value)
 
 
+@pytest.mark.parametrize('value', [
+    {'events': [], 'daily': [], 'hashes': {}},
+    {'events': [{'path': '\u00e9/"quoted"', 'maybe': None, 'flag': False, 'n': 0}],
+     'daily': [{'nested': ['x', 1, None]}], 'billing_owners': [{'large': 'x'*70_000}],
+     'gateway_audits': [[], {'x': []}], 'hashes': {str(i).zfill(64): 'b'*64 for i in range(387)},
+     'source_windows': {'pending': [[1, 2]]}},
+    {'hashes': {2: False, 'a': [None, 'b']}, 'watermark': '2026-11-28T12:00:00Z'},
+])
+def test_fast_checkpoint_is_byte_identical_to_legacy_json(value):
+    expected = json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode('ascii')
+    blob, size = runtime.pack_checkpoint(value)
+    assert gzip.decompress(blob) == expected
+    assert size == len(expected)
+
+
 def test_compact_daily_replays_previous_projection_and_late_ambiguity():
     old = usage(event_id='usage', _time='2026-09-06T00:00:00Z', workspace_fingerprint='d'*64)
     signup = event(workspace_fingerprint='d'*64, account_fingerprint='b'*64)
