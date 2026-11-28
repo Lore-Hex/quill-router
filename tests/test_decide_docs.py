@@ -325,7 +325,7 @@ def test_with_every_chain_live_each_row_shows_its_first_hosts_figure(
     assert len(CHAINS[ZEV]) == 2
     assert rows[ZEV][1] == (
         "A larger fast model. GLM 5.3 Fast, which reasons briefly, with failover to a "
-        "second host. About four times the price of the others here."
+        "second host. About four times trev's price."
     )
     assert rows[GEMMEV][1] == (
         "An open Gemma model: Gemma 4 26B with 4B parameters active, answering without "
@@ -750,7 +750,8 @@ def test_costs_are_written_to_two_significant_figures(dollars: str, shown: str) 
 def test_the_billing_card_says_which_host_the_table_cost_is_for(client: TestClient) -> None:
     billing = _paragraph(_page(client), "typesafe-ai/jev bills input tokens only")
     assert billing.endswith(
-        "A trustedrouter/ name lists the rate of its most expensive host. The cost in "
+        "A trustedrouter/ name lists, for input and for output separately, the highest "
+        "rate any host in its chain charges. The cost in "
         "the table above is for the first host serving it; a request served by a "
         "fallback host may cost more or less."
     )

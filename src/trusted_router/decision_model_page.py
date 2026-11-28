@@ -287,7 +287,7 @@ def _zev(hosts: DecisionModelHosts) -> str:
         failover = ""
     return (
         f"A larger fast model. GLM 5.3 Fast, which reasons briefly{failover}. "
-        "About four times the price of the others here."
+        "About four times trev's price."
     )
 
 
