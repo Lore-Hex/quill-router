@@ -847,6 +847,20 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
         ("0.00017", "0.00034", "about half of trev's price"),
         ("0.00034", "0.00034", "about trev's price"),
         ("0.0014", "0.00021", "about seven times trev's price"),
+        # Within 10% is "trev's price"; beyond that and short of two times or
+        # half there is no close plain word, so nothing is said.
+        ("1.1", "1", "about trev's price"),
+        ("0.9", "1", "about trev's price"),
+        ("1.11", "1", None),
+        ("1.49", "1", None),
+        ("1.5", "1", "about two times trev's price"),
+        ("0.89", "1", None),
+        ("0.67", "1", None),
+        ("0.66", "1", "about half of trev's price"),
+        ("10.49", "1", "about ten times trev's price"),
+        ("10.5", "1", None),
+        ("0.0955", "1", "about a tenth of trev's price"),
+        ("0.0950", "1", None),
         ("0.0014", "0.0001", None),
         ("0.00002", "0.00034", None),
         (None, "0.00034", None),
@@ -862,11 +876,19 @@ def test_price_comparisons_follow_the_costs(cost: str | None, trev_cost: str | N
 def test_the_rows_compare_with_the_trev_cost_the_table_shows(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
 ) -> None:
-    # trev falls back to a cheaper host: zev's and mev's comparisons move with it.
-    _serve(monkeypatch, TREV, CHAINS[TREV][1:])
+    # trev falls back to a host at a quarter of its first host's price, and
+    # mev costs more than trev there: the comparisons move with trev's cost.
+    first, fallback = CHAINS[TREV][0], CHAINS[TREV][1]
+    _serve(monkeypatch, TREV, CHAINS[TREV], {first: (4_000_000, 12_000_000), fallback: (1_000_000, 3_000_000)})
+    before = {hosts.model_id: hosts.cost for hosts in decision_model_page.decision_model_hosts()}
+    _serve(monkeypatch, TREV, CHAINS[TREV][1:], {fallback: (1_000_000, 3_000_000)})
+    _serve(monkeypatch, MEV, CHAINS[MEV], {CHAINS[MEV][0]: (9_000_000, 30_000_000)})
     rows = _model_rows(_page(client))
     costs = {hosts.model_id: hosts.cost for hosts in decision_model_page.decision_model_hosts()}
-    assert costs[TREV] is not None
+    assert costs[TREV] is not None and before[TREV] is not None and costs[TREV] < before[TREV]
+    assert costs[MEV] is not None and costs[MEV] > costs[TREV]
+    # mev pricier than trev: no "speed at N times" claim.
+    assert rows[MEV][1].startswith("Speed. ")
     for model in (ZEV, MEV):
         words = decision_model_page.trev_price_comparison(costs[model], costs[TREV])
         if model == ZEV:

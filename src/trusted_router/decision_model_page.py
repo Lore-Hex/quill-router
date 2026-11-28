@@ -260,27 +260,28 @@ def _trev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     return f"The default. An open-weight 120B reasoning model{hardware}{failover}."
 
 
+_TIMES_WORDS = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven",
+                8: "eight", 9: "nine", 10: "ten"}
 _FRACTION_WORDS = {2: "half", 3: "a third", 4: "a quarter", 5: "a fifth", 6: "a sixth",
                    7: "a seventh", 8: "an eighth", 9: "a ninth", 10: "a tenth"}
 
 
 def trev_price_comparison(cost: Decimal | None, trev_cost: Decimal | None) -> str | None:
     """How one decision's cost compares with trev's, in words, from the two
-    costs the table shows. None when either is unknown or the ratio has no
-    plain wording (beyond ten times or a tenth)."""
+    costs the table shows. None when either is unknown, or when no plain
+    wording is close: beyond ten times or a tenth, or between "trev's price"
+    (within 10%) and "two times" or "half"."""
     if cost is None or trev_cost is None or cost <= 0 or trev_cost <= 0:
         return None
     ratio = cost / trev_cost
-    if ratio >= 1:
+    if Decimal("0.9") <= ratio <= Decimal("1.1"):
+        return "about trev's price"
+    if ratio > 1:
         times = int((ratio + Decimal("0.5")).to_integral_value(rounding=ROUND_FLOOR))
-        if times == 1:
-            return "about trev's price"
-        if times <= 10:
-            return f"about {count_word(times)} times trev's price"
+        if 2 <= times <= 10:
+            return f"about {_TIMES_WORDS[times]} times trev's price"
         return None
     parts = int((1 / ratio + Decimal("0.5")).to_integral_value(rounding=ROUND_FLOOR))
-    if parts == 1:
-        return "about trev's price"
     if parts in _FRACTION_WORDS:
         return f"about {_FRACTION_WORDS[parts]} of trev's price"
     return None
