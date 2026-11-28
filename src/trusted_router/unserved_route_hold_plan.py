@@ -29,6 +29,8 @@ from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HOLD_COUNT_FIELD,
     UNSERVED_ROUTE_HOLD_REASON,
     UNSERVED_ROUTE_LIFTED_AT_FIELD,
+    UNSERVED_ROUTE_PRIOR_REASON_FIELD,
+    UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD,
     provider_manifest_row_price_is_valid,
 )
 
@@ -101,11 +103,33 @@ def _forget_stale_hold_history(row: dict[str, Any], now: datetime) -> None:
         row.pop(UNSERVED_ROUTE_LIFTED_AT_FIELD, None)
 
 
+def record_routability_before_hold(row: dict[str, Any]) -> None:
+    """Record on ``row`` its routability before an unserved-route hold, for
+    lift_expired_unserved_holds to restore. Call before the hold overwrites
+    ``routable`` and ``routable_reason``."""
+    prior = row.get("routable") is not False
+    row[UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD] = prior
+    reason = row.get("routable_reason")
+    if not prior and isinstance(reason, str) and reason != UNSERVED_ROUTE_HOLD_REASON:
+        row[UNSERVED_ROUTE_PRIOR_REASON_FIELD] = reason
+    else:
+        row.pop(UNSERVED_ROUTE_PRIOR_REASON_FIELD, None)
+
+
+def _forget_prior_routability(row: dict[str, Any]) -> None:
+    row.pop(UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD, None)
+    row.pop(UNSERVED_ROUTE_PRIOR_REASON_FIELD, None)
+
+
 def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[str]:
     """Lift every expired hold in place; return the lifted model ids.
 
     A lifted row keeps its hold count and records when it lifted, so a quick
-    re-qualification escalates the next hold. The record of a row that is not
+    re-qualification escalates the next hold. Its routability is restored to
+    what it was when the hold was placed (record_routability_before_hold):
+    ``routable: true`` for a routable row, written explicitly, unless it has
+    since been delisted or lost its price; never routable for a row that was
+    not. The record of a row that is not
     held is cleared once the re-qualify window has passed.
     """
     lifted = []
@@ -114,12 +138,18 @@ def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[s
             continue
         if row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
             _forget_stale_hold_history(row, now)
+            # Left behind when another hold replaced this one (a failed canary).
+            _forget_prior_routability(row)
             continue
         # A missing, malformed or future-dated stamp cannot prove the hold is
         # young; lift it rather than risk a hold that never expires.
         if _hold_is_live(row, now):
             continue
         row.pop(UNSERVED_ROUTE_HELD_AT_FIELD, None)
+        # A hold placed before the prior state was recorded was placed on a
+        # routable row: the planner holds only routable rows (_live).
+        prior_routable = row.pop(UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD, True) is not False
+        prior_reason = row.pop(UNSERVED_ROUTE_PRIOR_REASON_FIELD, None)
         row[UNSERVED_ROUTE_HOLD_COUNT_FIELD] = _hold_count(row)
         row[UNSERVED_ROUTE_LIFTED_AT_FIELD] = _iso(now)
         # While held, discovery could not record its own state (the hold
@@ -128,14 +158,24 @@ def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[s
         # Judge the price as the row would be published once lifted: some
         # validators accept fields only on a row that is not routable.
         as_lifted = {key: value for key, value in row.items() if key not in {"routable", "routable_reason"}}
-        if row.get("missing_since"):
+        if not prior_routable:
+            # The hold never made this row unroutable; the lift must not make
+            # it routable.
+            row["routable"] = False
+            if isinstance(prior_reason, str) and prior_reason:
+                row["routable_reason"] = prior_reason
+            else:
+                row.pop("routable_reason", None)
+        elif row.get("missing_since"):
             row["routable"] = False
             row["routable_reason"] = "delisted-upstream"
         elif not provider_manifest_row_price_is_valid(as_lifted):
             row["routable"] = False
             row["routable_reason"] = "price-unavailable"
         else:
-            row.pop("routable", None)
+            # Explicit, as discovery and the strictest manifest checks write a
+            # routable row; popping the key left it ambiguous.
+            row["routable"] = True
             row.pop("routable_reason", None)
         lifted.append(str(row.get("id")))
     return lifted

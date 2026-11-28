@@ -81,6 +81,13 @@ UNSERVED_ROUTE_HELD_AT_FIELD = "unserved_held_at"
 # route has stayed out of the hold for the whole window.
 UNSERVED_ROUTE_HOLD_COUNT_FIELD = "unserved_hold_count"
 UNSERVED_ROUTE_LIFTED_AT_FIELD = "unserved_lifted_at"
+# The row's routability when the hold was placed, so the lift restores it
+# exactly: `routable` as an explicit bool, never popped (an absent key reads as
+# routable in the catalog, but some manifests pin an explicit `true`), and the
+# prior `routable_reason` when the row was not routable. Only meaningful while
+# the row carries UNSERVED_ROUTE_HOLD_REASON; the lift removes both.
+UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD = "unserved_prior_routable"
+UNSERVED_ROUTE_PRIOR_REASON_FIELD = "unserved_prior_routable_reason"
 _CANARY_QUARANTINE_REASONS = frozenset({
     "provider-canary-failed", "upstream-usage-unavailable", "upstream-output-limit-unenforced",
     UNSERVED_ROUTE_HOLD_REASON,

@@ -62,8 +62,9 @@ that size; that gate is deliberate and not a test.)
 The refresh also holds routes itself. Its step
 scripts/pricing/unserved_route_holds.py marks a listed route the provider
 refuses to serve routable=false with routable_reason="provider-route-unserved",
-unserved_held_at and unserved_hold_count, on any routable row of any provider,
-and the shared manifest writers carry the hold forward until that step lifts it.
+unserved_held_at, unserved_hold_count and unserved_prior_routable, on any
+routable row of any provider, and the shared manifest writers carry the hold
+forward until that step lifts it.
 The row stays listed, so this is not a delisting: a test that reads a committed
 row and expects it to route, or lists the states a row may be in, fails on the
 refresh's own snapshot. On 2026-11-26 the step held one Cloudflare row
