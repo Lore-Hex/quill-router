@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -154,10 +154,10 @@
   },
   "cloudflare-workers-ai": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Cloudflare Workers AI",
     "privacy": "Zero retention",
-    "route_count": 14,
+    "route_count": 15,
     "route_mode": "Prepaid",
     "slug": "cloudflare-workers-ai"
   },
