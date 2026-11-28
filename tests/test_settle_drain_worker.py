@@ -151,13 +151,13 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     assert routes.count(unserved_route) == int(routing_evidence)
     if routing_evidence:
         routes.remove(unserved_route)
-    # Account for exactly the wallet email-attach link target (and its /v1
-    # alias), only on surfaces that serve the wallet auth routes.
+    # Both aliases retain a non-mutating legacy GET and accept the session-bound code via POST.
     for path in ("/auth/wallet/email/verify", "/v1/auth/wallet/email/verify"):
-        verify_route = [path, ["GET"], "register_wallet_oauth_routes.<locals>.wallet_email_verify"]
-        assert routes.count(verify_route) == int(wallet_email_verify)
-        if wallet_email_verify:
-            routes.remove(verify_route)
+        for method, fn in (("GET", "wallet_email_legacy_link"), ("POST", "wallet_email_verify")):
+            verify_route = [path, [method], f"register_wallet_oauth_routes.<locals>.{fn}"]
+            assert routes.count(verify_route) == int(wallet_email_verify)
+            if wallet_email_verify:
+                routes.remove(verify_route)
     # Account for exactly the new guarded console POST, only on console surfaces.
     # All other routes, lifecycle hooks and state remain pinned to the baseline.
     management_route = ["/console/api-keys/management", ["POST"],

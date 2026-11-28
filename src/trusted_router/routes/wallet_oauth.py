@@ -9,12 +9,9 @@ credit is reserved for email and OAuth signups.
 `pending_email` one) attach an email. Wallet-only accounts need a verified
 email to unlock non-stablecoin billing and BYOK, so this is the path the
 console points them to. The address is NOT written to the account when the
-form is submitted: the emailed link carries it, the one-shot token is bound
-to it, and only a click on that link attaches it, already verified. Writing
-an unverified address first would reserve it in the email index, and a later
-OAuth sign-in with that address would land in the wallet account. An
-address another account owns gets a notice instead of a link, and the form
-answers the same way, so it never says which addresses have accounts.
+form is submitted. Attaching it requires the emailed code in that same
+wallet session. If another account owns the address, the mailbox gets a
+notice rather than a code, with the same response to the requesting wallet.
 """
 
 from __future__ import annotations
@@ -24,9 +21,6 @@ import hashlib
 import hmac
 import secrets
 import threading
-import time
-from collections import OrderedDict
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -44,7 +38,7 @@ from trusted_router.auth import (
 )
 from trusted_router.billing_policy import WALLET_EMAIL_ATTACH_PATH
 from trusted_router.config import Settings
-from trusted_router.domains import request_control_domain, request_control_origin
+from trusted_router.domains import request_control_domain
 from trusted_router.errors import api_error
 from trusted_router.request_limits import (
     UNTRUSTED_LOAD_BALANCER_SUBJECT,
@@ -54,7 +48,7 @@ from trusted_router.request_limits import (
 )
 from trusted_router.services.email import (
     build_email_in_use_notice,
-    build_verification_email,
+    build_wallet_email_code,
     get_email_service,
 )
 from trusted_router.signup_gate import (
@@ -80,19 +74,11 @@ from trusted_router.wallet_auth import (
 )
 
 CHALLENGE_TTL_SECONDS = 300  # 5 minutes
-VERIFICATION_TTL_SECONDS = 60 * 60 * 24  # 24 hours
+VERIFICATION_TTL_SECONDS = 10 * 60
 WALLET_EMAIL_VERIFY_PATH = "/auth/wallet/email/verify"
 _ATTACH_SESSION_STATES = frozenset({"active", "pending_email"})
-_ATTACH_PURPOSE_PREFIX = "wallet_email_attach:"
-_RESERVED_WALLET_EMAILS = frozenset({"admin@trustedrouter.com", "security@trustedrouter.com"})
-# Verification sends per user per hour. Wallet accounts are free to create,
-# so the form must not become an open relay for mail to arbitrary addresses.
-# Per process: a soft cap, like the other in-memory limiters here.
-_ATTACH_SENDS_PER_WINDOW = 5
-_ATTACH_WINDOW_SECONDS = 60 * 60
-_ATTACH_MAX_TRACKED_USERS = 4096
-_attach_sends: OrderedDict[str, list[float]] = OrderedDict()
-_attach_sends_lock = threading.Lock()
+_ATTACH_SENDS_PER_HOUR = 5
+_ATTACH_TRIES_PER_WINDOW = 5
 
 
 class WalletChallengeRequest(BaseModel):
@@ -121,7 +107,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         domain = request_control_domain(request, settings)
         origin = request.headers.get("origin")
         if origin and origin not in {f"https://{domain}", f"https://www.{domain}"} and not (
-            _inline_link_allowed(settings) and origin == str(request.base_url).rstrip("/")
+            str(settings.environment).lower() in {"local", "test"} and origin == str(request.base_url).rstrip("/")
         ):
             raise api_error(403, "Wallet sign-in requires a first-party origin", ErrorType.FORBIDDEN)
         if domain == settings.trusted_domain and settings.siwe_domain:
@@ -266,7 +252,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         csrf_token: str = Form("", max_length=128),
     ) -> Response:
         session, user = _require_wallet_session(request)
-        if not hmac.compare_digest(csrf_token.encode(), _attach_csrf_token(session).encode()):
+        if not _valid_attach_csrf(session, csrf_token):
             return HTMLResponse(
                 _form_page(session=session, error="This form expired. Try again."),
                 status_code=403,
@@ -281,7 +267,10 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
             )
         # Counted before the ownership check, so a taken address costs the
         # same send as a free one and the cap cannot tell them apart.
-        if not _attach_send_allowed(user.id):
+        if not STORE.hit_rate_limit(
+            namespace="wallet_email_send_user", subject=fingerprint_subject(user.id),
+            limit=_ATTACH_SENDS_PER_HOUR, window_seconds=3600,
+        ).allowed:
             return HTMLResponse(
                 _form_page(
                     session=session,
@@ -290,13 +279,16 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 status_code=429,
             )
 
-        # Keep the usual response and rate limit, but never mail a link or an
-        # account-in-use notice to these operator mailboxes.
-        if email_normalized in _RESERVED_WALLET_EMAILS:
-            return _email_sent_response(email_normalized)
+        # Do not expose that other wallets have recently requested this address.
+        destination = STORE.hit_rate_limit(
+            namespace="wallet_email_send_recipient", subject=fingerprint_subject(email_normalized),
+            limit=_ATTACH_SENDS_PER_HOUR, window_seconds=3600,
+        )
+        if not destination.allowed:
+            return _code_form(session, email_normalized, secrets.token_urlsafe(32))
         existing = STORE.find_user_by_email(email_normalized)
-        verify_url: str | None = None
         if existing is not None and existing.id != user.id:
+            challenge = secrets.token_urlsafe(32)
             # The response must not say the address has an account: any wallet
             # session could then test addresses one by one. The mailbox owner
             # learns it from this notice instead, and nothing is attached.
@@ -305,28 +297,25 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 from_name=settings.ses_from_name,
             )
         else:
-            # The token is bound to this exact address through its purpose, so
-            # a link minted for one address can never verify a different one.
-            raw_token, _ = STORE.create_verification_token(
+            code = f"{secrets.randbelow(100_000_000):08d}"
+            # The browser gets the opaque token; the mailbox gets only the code.
+            challenge, _ = STORE.create_verification_token(
                 user_id=user.id,
-                purpose=_attach_purpose(email_normalized),
+                purpose=_code_purpose(session, email_normalized, code),
                 ttl_seconds=VERIFICATION_TTL_SECONDS,
             )
-            verify_url = _verify_url(request, settings, raw_token, email_normalized)
             attribution = request_attribution(request)
             touch = attribution.last_touch if attribution is not None else {}
-            message = build_verification_email(
+            message = build_wallet_email_code(
                 to=email_normalized,
-                verification_url=verify_url,
+                code=code,
+                ttl_minutes=VERIFICATION_TTL_SECONDS // 60,
                 from_name=settings.ses_from_name,
                 acquisition_source=touch.get("utm_source"),
                 acquisition_medium=touch.get("utm_medium"),
                 acquisition_campaign=touch.get("utm_campaign"),
             )
-        sent = get_email_service(settings).send(message)
-        if not sent and not _inline_link_allowed(settings):
-            # Showing the link inline would verify an address without access
-            # to its mailbox. Only local/test environments may do that.
+        if not get_email_service(settings).send(message):
             return HTMLResponse(
                 _form_page(
                     session=session,
@@ -334,31 +323,44 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 ),
                 status_code=503,
             )
-        return _email_sent_response(email_normalized, None if sent else verify_url)
+        return _code_form(session, email_normalized, challenge)
 
     @router.get(WALLET_EMAIL_VERIFY_PATH)
-    def wallet_email_verify(
-        request: Request,
-        settings: SettingsDep,
-        token: str = "",
-        email: str = "",
-    ) -> Response:
-        email_normalized = email.strip().lower()
-        if email_normalized in _RESERVED_WALLET_EMAILS:
-            return HTMLResponse(_invalid_page(), status_code=400)
-        consumed = (
-            STORE.consume_verification_token(token, purpose=_attach_purpose(email_normalized))
-            if token and email_normalized and not is_disposable_email(email_normalized)
-            else None
+    def wallet_email_legacy_link() -> Response:
+        # Old email links, including scanner previews, must never consume tokens.
+        return HTMLResponse(
+            render_template("auth/wallet_email_conflict.html", page_title="Request a code",
+                            message="Verification links have been retired. Request a code in your wallet session."),
+            status_code=410, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
         )
-        if consumed is None:
-            return HTMLResponse(_invalid_page(), status_code=400)
-        user = STORE.get_user(consumed.user_id)
-        if user is None or user.disabled:
-            return HTMLResponse(_invalid_page(), status_code=400)
+
+    @router.post(WALLET_EMAIL_VERIFY_PATH)
+    def wallet_email_verify(
+        request: Request, settings: SettingsDep,
+        email: str = Form(..., min_length=3, max_length=320),
+        challenge: str = Form(..., min_length=1, max_length=128),
+        code: str = Form(..., min_length=1, max_length=32),
+        csrf_token: str = Form("", max_length=128),
+    ) -> Response:
+        session, user = _require_wallet_session(request)
+        if not _valid_attach_csrf(session, csrf_token):
+            return HTMLResponse(_form_page(session=session, error="This form expired. Try again."), status_code=403)
+        email_normalized = email.strip().lower()
+        require_capacity(STORE.hit_rate_limit(
+            namespace="wallet_email_verify_user", subject=fingerprint_subject(user.id),
+            limit=_ATTACH_TRIES_PER_WINDOW, window_seconds=VERIFICATION_TTL_SECONDS,
+        ))
+        code = code.strip()
+        consumed = (
+            STORE.consume_verification_token(challenge, purpose=_code_purpose(session, email_normalized, code))
+            if _plausible_email(email_normalized) and not is_disposable_email(email_normalized)
+            and len(code) == 8 and code.isascii() and code.isdecimal() else None
+        )
+        if consumed is None or consumed.user_id != user.id:
+            return _code_form(session, email_normalized, challenge, error="Invalid or expired verification code.")
         # One conditional transaction: refuses an address another user owns
         # and never replaces an email this account has already verified
-        # (for example via a concurrently redeemed link for another address).
+        # (for example via a concurrently confirmed code for another address).
         outcome = STORE.attach_verified_email(user.id, email_normalized)
         if outcome == EMAIL_ATTACH_TAKEN:
             return HTMLResponse(
@@ -373,32 +375,21 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if outcome != EMAIL_ATTACH_ATTACHED:
             return HTMLResponse(_invalid_page(), status_code=400)
 
-        done = HTMLResponse(
-            render_template("auth/verify_email_done.html", page_title="Email verified"),
-            status_code=200,
-        )
-        cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-        session = STORE.get_auth_session_by_raw(cookie_token) if cookie_token else None
-        if cookie_token is None or session is None or session.user_id != user.id:
-            return done
         if session.state == "pending_email":
+            cookie_token = request.cookies[SESSION_COOKIE_NAME]
             if STORE.upgrade_auth_session(cookie_token, state="active") is None:
-                return done
+                return HTMLResponse(render_template("auth/verify_email_done.html", page_title="Email verified"))
             response = RedirectResponse(url="/console/welcome?first=1", status_code=302)
             set_session_cookie(response, cookie_token, settings)
             return response
-        if session.state != "active":
-            return done
         return RedirectResponse(url="/console/credits", status_code=302)
 
 
-def _email_sent_response(email: str, dev_link: str | None = None) -> HTMLResponse:
+def _code_form(session: AuthSession, email: str, challenge: str, *, error: str | None = None) -> HTMLResponse:
     return HTMLResponse(render_template(
-        "auth/wallet_email_sent.html",
-        page_title="Check your email",
-        email=email,
-        dev_link=dev_link,
-    ))
+        "auth/wallet_email_sent.html", page_title="Verify your email",
+        email=email, challenge=challenge, csrf_token=_attach_csrf_token(session), error=error,
+    ), status_code=400 if error else 200, headers={"Cache-Control": "no-store"})
 
 
 def _require_wallet_session(request: Request) -> tuple[AuthSession, User]:
@@ -416,10 +407,6 @@ def _require_wallet_session(request: Request) -> tuple[AuthSession, User]:
     if user is None or user.disabled or not user.wallet_address:
         raise api_error(401, "Wallet sign-in required", ErrorType.UNAUTHORIZED)
     return session, user
-
-
-def _inline_link_allowed(settings: Settings) -> bool:
-    return str(settings.environment).lower() in {"local", "test"}
 
 
 def _has_verified_email(user: User) -> bool:
@@ -443,9 +430,15 @@ def _attach_csrf_token(session: AuthSession) -> str:
     ).hexdigest()
 
 
-def _attach_purpose(email_normalized: str) -> str:
-    digest = hashlib.sha256(email_normalized.encode()).hexdigest()
-    return f"{_ATTACH_PURPOSE_PREFIX}{digest}"
+def _valid_attach_csrf(session: AuthSession, token: str) -> bool:
+    return hmac.compare_digest(token.encode(), _attach_csrf_token(session).encode())
+
+
+def _code_purpose(session: AuthSession, email: str, code: str) -> str:
+    digest = hmac.new(
+        session.secret_hash.encode(), f"{session.hash}:{session.user_id}:{email}:{code}".encode(), hashlib.sha256,
+    ).hexdigest()
+    return f"wallet_email_code:{digest}"
 
 
 def _plausible_email(email: str) -> bool:
@@ -459,33 +452,6 @@ def _plausible_email(email: str) -> bool:
         and not domain.endswith(".")
         and not any(ch.isspace() for ch in email)
     )
-
-
-def _attach_send_allowed(user_id: str, *, now: float | None = None) -> bool:
-    now = time.monotonic() if now is None else now
-    cutoff = now - _ATTACH_WINDOW_SECONDS
-    with _attach_sends_lock:
-        hits = [hit for hit in _attach_sends.get(user_id, ()) if hit > cutoff]
-        allowed = len(hits) < _ATTACH_SENDS_PER_WINDOW
-        if allowed:
-            hits.append(now)
-        _attach_sends[user_id] = hits
-        _attach_sends.move_to_end(user_id)
-        while len(_attach_sends) > _ATTACH_MAX_TRACKED_USERS:
-            _attach_sends.popitem(last=False)
-        return allowed
-
-
-def reset_attach_send_limits() -> None:
-    """Test hook: clear the per-process send counters."""
-    with _attach_sends_lock:
-        _attach_sends.clear()
-
-
-def _verify_url(request: Request, settings: Settings, raw_token: str, email_normalized: str) -> str:
-    base = str(request.base_url).rstrip("/") if _inline_link_allowed(settings) else request_control_origin(request, settings)
-    query = urlencode({"token": raw_token, "email": email_normalized})
-    return f"{base}{WALLET_EMAIL_VERIFY_PATH}?{query}"
 
 
 def _form_page(*, session: AuthSession, error: str | None) -> str:

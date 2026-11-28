@@ -9,7 +9,6 @@ share fixtures.
 from __future__ import annotations
 
 import datetime as dt
-import html
 import logging
 import re
 from collections.abc import Iterator
@@ -25,6 +24,7 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 from fastapi.testclient import TestClient
 
+from tests.wallet_email_helpers import WalletMailbox
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.console.activity import _USAGE_CACHE
@@ -868,7 +868,8 @@ def _wallet_email_csrf(client: TestClient) -> str:
     return match.group(1)
 
 
-def test_wallet_email_submit_does_not_attach_or_reveal_a_taken_email(client: TestClient) -> None:
+def test_wallet_email_submit_does_not_attach_or_reveal_a_taken_email(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trusted_router.routes.wallet_oauth.get_email_service", lambda _: WalletMailbox())
     STORE.ensure_user("taken@example.com")
     user = STORE.create_wallet_user("0x" + "7" * 40)
     raw_token, _ = STORE.create_auth_session(
@@ -887,13 +888,15 @@ def test_wallet_email_submit_does_not_attach_or_reveal_a_taken_email(client: Tes
 
     assert response.status_code == 200
     assert "already has an account" not in response.text
-    assert "/auth/wallet/email/verify" not in response.text
+    assert 'action="/auth/wallet/email/verify"' in response.text
     assert STORE.get_user(user.id).email is None
 
 
-def test_wallet_email_submit_returns_dev_verify_link_and_does_not_preverify(
-    client: TestClient,
+def test_wallet_email_code_upgrades_only_the_pending_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    mailbox = WalletMailbox()
+    monkeypatch.setattr("trusted_router.routes.wallet_oauth.get_email_service", lambda _: mailbox)
     user = STORE.create_wallet_user("0x" + "8" * 40)
     raw_token, session = STORE.create_auth_session(
         user_id=user.id,
@@ -910,18 +913,10 @@ def test_wallet_email_submit_returns_dev_verify_link_and_does_not_preverify(
     )
 
     assert response.status_code == 200
-    assert "Email delivery is not configured" in response.text
-    # Nothing is written to the account until the emailed link is clicked.
+    fields = mailbox.confirmation(response.text)
     updated = STORE.get_user(user.id)
-    assert updated is not None
-    assert updated.email is None
-    assert updated.email_verified is False
-    link_match = re.search(r'href="([^"]*/auth/wallet/email/verify\?[^"]+)"', response.text)
-    assert link_match is not None
-    verify_url = html.unescape(link_match.group(1))
-
-    verify = client.get(verify_url, follow_redirects=False)
-
+    assert updated.email is None and not updated.email_verified
+    verify = client.post("/auth/wallet/email/verify", data=fields, follow_redirects=False)
     assert verify.status_code == 302
     assert verify.headers["location"] == "/console/welcome?first=1"
     refreshed = STORE.get_user(user.id)

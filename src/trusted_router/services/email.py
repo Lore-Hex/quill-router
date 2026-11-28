@@ -227,8 +227,25 @@ def build_verification_email(
     )
 
 
+def build_wallet_email_code(
+    *, to: str, code: str, ttl_minutes: int, from_name: str = "TrustedRouter",
+    acquisition_source: str | None = None, acquisition_medium: str | None = None,
+    acquisition_campaign: str | None = None,
+) -> EmailMessage:
+    return EmailMessage(
+        to=to, subject=f"Your {from_name} wallet verification code",
+        text_body=(
+            f"Your verification code is {code}.\n\n"
+            f"Enter it in the wallet session where you requested it within {ttl_minutes} minutes. "
+            "Do not share this code. If you did not request it, ignore this email; nothing has changed."
+        ),
+        mail_class="email_verification", acquisition_source=acquisition_source,
+        acquisition_medium=acquisition_medium, acquisition_campaign=acquisition_campaign,
+    )
+
+
 def build_email_in_use_notice(*, to: str, from_name: str = "TrustedRouter") -> EmailMessage:
-    """Sent instead of a verification link when a wallet account asks to add
+    """Sent instead of a verification code when a wallet account asks to add
     an address another account already owns, so the form itself never says
     whether an address has an account."""
     subject = f"Your email address and {from_name}"
