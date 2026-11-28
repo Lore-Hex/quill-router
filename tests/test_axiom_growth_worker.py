@@ -1,15 +1,20 @@
 """Continuity, replay, failure and privacy contracts for the off-path worker."""
 import copy
 import datetime as dt
+import gzip
 import json
 import re
+from functools import partial
 from pathlib import Path
 
 import httpx
 import pytest
 
 from scripts.axiom_growth import model as m
-from scripts.axiom_growth.runtime import Sources, complete, content_hash, cycle, project
+from scripts.axiom_growth import runtime
+from scripts.axiom_growth.runtime import Sources, complete, content_hash, project
+
+cycle = partial(runtime.cycle, generation='test-generation')
 
 NOW = dt.datetime(2026, 9, 16, 22, tzinfo=dt.UTC)
 
@@ -41,6 +46,10 @@ class FakeIO:
         self.sent = []
         self.windows = []
 
+    def save(self, name, value, generation):
+        assert name == 'state.json.gz' and generation == 'test-generation'
+        self.committed_through = value['watermark']
+
     def events(self, start, end):
         self.windows.append((start, end))
         return copy.deepcopy(self.rows)
@@ -51,6 +60,9 @@ class FakeIO:
     def ingest(self, rows):
         if self.fail:
             raise RuntimeError('test delivery failure')
+        for row in rows:
+            if row.get('event') == 'growth.sync_completed':
+                assert self.committed_through == row['observed_through']
         self.sent.extend(rows)
 
 
@@ -82,6 +94,55 @@ def test_failed_ingest_does_not_mutate_checkpoint_or_emit_success():
         cycle(original, io, NOW)
     assert original == before
     assert not io.sent
+
+
+def test_failed_checkpoint_never_publishes_success_and_replay_converges():
+    class Conflict(FakeIO):
+        def save(self, name, value, generation):
+            raise RuntimeError('generation conflict')
+
+    original = state()
+    before = copy.deepcopy(original)
+    io = Conflict([event()])
+    with pytest.raises(RuntimeError, match='generation conflict'):
+        cycle(original, io, NOW)
+    assert original == before
+    assert io.sent and all(r['event'] != 'growth.sync_completed' for r in io.sent)
+    retry = FakeIO([event()])
+    cycle(original, retry, NOW)
+    assert [r['event_id'] for r in retry.sent[:-1]] == [r['event_id'] for r in io.sent]
+    assert retry.sent[-1]['event'] == 'growth.sync_completed'
+
+
+def test_burst_of_ten_batches_is_bounded_and_replays_without_duplicates():
+    class Bounded(FakeIO):
+        def ingest(self, rows):
+            assert len(rows) <= runtime.INGEST_BATCH
+            super().ingest(rows)
+
+    base = event()
+    rows = [{**base, 'event_id': str(i)} for i in range(10 * runtime.INGEST_BATCH)]
+    io = Bounded(rows)
+    updated, count = cycle(state(), io, NOW)
+    assert count == len(rows) + 1
+    assert len({r['event_id'] for r in io.sent[:-1]}) == count
+    io.sent.clear()
+    assert cycle(updated, io, NOW + dt.timedelta(minutes=5))[1] == 0
+    assert [r['event'] for r in io.sent] == ['growth.sync_completed']
+
+
+def test_checkpoint_codec_roundtrip_and_both_size_limits(monkeypatch):
+    value = {'rows': [{'value': '\u00e9' * 80000}]}
+    packed, size = runtime.pack_checkpoint(value)
+    assert size == len(gzip.decompress(packed))
+    assert json.loads(gzip.decompress(packed)) == value
+    with monkeypatch.context() as mp:
+        mp.setattr(runtime, 'MAX_STATE_BYTES', 1024)
+        with pytest.raises(ValueError, match='State size'):
+            runtime.pack_checkpoint(value)
+    monkeypatch.setattr(runtime, 'MAX_COMPRESSED_BYTES', len(packed) - 1)
+    with pytest.raises(ValueError, match='Compressed state'):
+        runtime.pack_checkpoint(value)
 
 
 def test_verified_domains_reproject_without_persisting_inferred_evidence():
@@ -384,17 +445,27 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     assert 'resource.type="cloud_run_revision"' in value
 
 
-def test_control_plane_nyte_event_reaches_the_sanitized_worker_projection(monkeypatch):
+@pytest.mark.parametrize('ip_enabled', [False, True])
+def test_control_plane_nyte_event_reaches_the_sanitized_worker_projection(monkeypatch, ip_enabled):
     from scripts.axiom_growth.provision import source_filter
 
     sources = object.__new__(Sources)
     sources.project = 'quill-cloud-proxy'
-    monkeypatch.setattr(Sources, 'query', lambda self, apl, start, end:
-                        [{'n': 0}] if '| summarize n=count()' in apl else [])
+    monkeypatch.delenv('GROWTH_WEBSITE_IP_ENABLED', raising=False)
+    if ip_enabled:
+        monkeypatch.setenv('GROWTH_WEBSITE_IP_ENABLED', 'true')
+
+    def query(self, apl, start, end):
+        if '| summarize n=count()' in apl:
+            return [{'n': 0}]
+        assert ('website_client_ip' in apl) == ip_enabled
+        return []
+
+    monkeypatch.setattr(Sources, 'query', query)
     entry = {'timestamp': (NOW - dt.timedelta(minutes=1)).isoformat(), 'jsonPayload': {
         'event': 'acquisition.nyte.buy_completed', 'anonymous_fingerprint': 'a' * 64,
         'site_domain': 'nytokenexchange.com', 'page_path': '/buy',
-        'unit': 'blocks', 'underlying_kind': 'facility', 'grade': 'none',
+        'unit': 'blocks', 'underlying_kind': 'facility', 'grade': 'none', 'website_client_ip': '8.8.8.8',
         'email': 'private@example.com', 'prompt': 'private', 'body': {'private': 'data'},
     }}
 
@@ -417,6 +488,7 @@ def test_control_plane_nyte_event_reaches_the_sanitized_worker_projection(monkey
     assert rows[0]['page_path'] == '/buy'
     assert rows[0]['source'] == 'cloud_logging'
     assert rows[0]['underlying_kind'] == 'facility'
+    assert ('website_client_ip' in rows[0]) == ip_enabled
     assert not {'email', 'prompt', 'body'} & rows[0].keys()
 
 
