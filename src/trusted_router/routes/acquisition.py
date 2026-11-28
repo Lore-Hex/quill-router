@@ -6,12 +6,43 @@ from fastapi import APIRouter, Request, Response
 from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
 
 from trusted_router.acquisition import log_browser_funnel_event
+from trusted_router.catalog import MODELS, PROVIDERS
+
+
+class CatalogEventDetails(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_id: str | None = Field(default=None, max_length=256)
+    provider_id: str | None = Field(default=None, max_length=128)
+    pick: Literal["glm 5.3", "kimi k3", "deepseek"] | None = None
+    filter: Literal["all", "trusted", "e2e", "zdr", "open", "us", "eu"] | None = None
+    sort: Literal["featured", "input", "cached", "output", "context", "providers", "name"] | None = None
+
+    @model_validator(mode="after")
+    def public_identifiers_only(self) -> Self:
+        if self.model_id is not None:
+            model = MODELS.get(self.model_id)
+            if model is None or model.internal_only:
+                raise ValueError("Unknown public model")
+        if self.provider_id is not None:
+            provider = PROVIDERS.get(self.provider_id)
+            if provider is None or provider.internal_only:
+                raise ValueError("Unknown public provider")
+        return self
 
 
 class MarketingEventRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event: Literal[
+        "models.search_used",
+        "models.search_zero_results",
+        "models.popular_pick_clicked",
+        "models.filter_changed",
+        "models.sort_changed",
+        "models.model_clicked",
+        "models.provider_clicked",
+        "models.comparison_expanded",
         # Homepage events carry names only. Interaction properties stay in the browser.
         "home.catalog_filter",
         "home.alias_copied",
@@ -36,6 +67,7 @@ class MarketingEventRequest(BaseModel):
         "onboarding_call_succeeded",
         "onboarding_call_failed",
     ]
+    catalog: CatalogEventDetails | None = None
     attempt_id: UUID4 | None = None
     http_status: int | None = Field(default=None, ge=0, le=599, strict=True)
     elapsed_ms: int | None = Field(default=None, ge=0, le=120_000, strict=True)
@@ -46,8 +78,22 @@ class MarketingEventRequest(BaseModel):
     finish_reason: Literal["stop", "length", "content_filter", "tool_calls", "unknown"] | None = None
 
     @model_validator(mode="after")
-    def validate_attempt(self) -> Self:
-        details = self.model_dump(exclude={"event"}, exclude_none=True)
+    def validate_event(self) -> Self:
+        details = self.model_dump(exclude={"event", "catalog"}, exclude_none=True)
+        if self.event.startswith("models."):
+            required = {
+                "models.search_used": set(), "models.search_zero_results": set(),
+                "models.popular_pick_clicked": {"pick"}, "models.filter_changed": {"filter"},
+                "models.sort_changed": {"sort"}, "models.model_clicked": {"model_id"},
+                "models.provider_clicked": {"model_id", "provider_id"},
+                "models.comparison_expanded": {"model_id"},
+            }[self.event]
+            fields = self.catalog.model_dump(exclude_none=True) if self.catalog else {}
+            if set(fields) != required or details:
+                raise ValueError("Invalid catalog event metadata")
+            return self
+        if self.catalog is not None:
+            raise ValueError("Catalog metadata requires a catalog event")
         if not self.event.startswith("onboarding_call_"):
             if details:
                 raise ValueError("Attempt metadata requires an onboarding event")
@@ -78,5 +124,6 @@ def register_acquisition_routes(router: APIRouter) -> None:
             attempt_id=str(body.attempt_id) if body.attempt_id else None,
             http_status=body.http_status, elapsed_ms=body.elapsed_ms,
             failure_reason=body.failure_reason, finish_reason=body.finish_reason,
+            catalog=body.catalog.model_dump(exclude_none=True) if body.catalog else None,
         )
         return Response(status_code=204)

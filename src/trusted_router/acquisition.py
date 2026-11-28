@@ -632,10 +632,13 @@ def log_browser_funnel_event(
     http_status: int | None = None, elapsed_ms: int | None = None,
     failure_reason: str | None = None, finish_reason: str | None = None,
     requester_domain: str = "",
+    catalog: dict[str, object] | None = None,
 ) -> None:
     _log_attributed_event(request, event, {
         **({"requester_domain": requester_domain} if requester_domain and
            event in {"enterprise_brief_delivered", "enterprise_security_pack_delivered"} else {}),
+        **({"page_path": "/models", **{f"catalog_{key}": value for key, value in (catalog or {}).items()}}
+           if event.startswith("models.") else {}),
         # Page counts describe the sender, not the visitor's original landing.
         **({"page_path": same_site_referer_path(request) or ""}
            if event in {"landing_viewed", "landing_engaged"} else {}),

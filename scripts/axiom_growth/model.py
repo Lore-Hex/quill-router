@@ -41,6 +41,9 @@ ACQUISITION_SERVICE_FILTER = (
 )
 BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
+        "models.search_used", "models.search_zero_results", "models.popular_pick_clicked",
+        "models.filter_changed", "models.sort_changed", "models.model_clicked",
+        "models.provider_clicked", "models.comparison_expanded",
         "landing_viewed", "landing_engaged", "sign_in_opened",
         "signin_mode_switched", "signup_mode_switched",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
@@ -83,7 +86,8 @@ FIRST_FIELDS = ("first_utm_source", "first_utm_medium", "first_utm_campaign", "f
 EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_domain_basis",
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
-FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain", "requester_domain", "website_client_ip",
+CATALOG_FIELDS = ("catalog_model_id", "catalog_provider_id", "catalog_pick", "catalog_filter", "catalog_sort")
+FIELDS = (*CATALOG_FIELDS, "event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain", "requester_domain", "website_client_ip",
           "market", "exchange_market", "exchange_visitor_fingerprint", "page_path", "cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade", "device_category", "reward_placement", "reward_action", "observation_id",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
@@ -210,6 +214,11 @@ def project_event(
         output["signup_path"] = safe_path(row["signup_path"])
     if event in {"acquisition.landing_viewed", "acquisition.landing_engaged"}:
         output["page_path"] = safe_path(row.get("page_path"))
+    if event.startswith("acquisition.models."):
+        output["page_path"] = "/models"
+        for field in CATALOG_FIELDS:
+            if row.get(field):
+                output[field] = safe_label(row[field])
     output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
     if exchange:
         if event in {"acquisition.enterprise_brief_delivered", "acquisition.enterprise_security_pack_delivered"}:

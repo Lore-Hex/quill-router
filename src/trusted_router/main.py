@@ -143,6 +143,7 @@ _ACQUISITION_CLOUD_FIELDS = (
     "first_creative_id",
     "landing_path",
     "page_path",
+    "catalog_model_id", "catalog_provider_id", "catalog_pick", "catalog_filter", "catalog_sort",
     "device_category",
     "reward_action",
     "cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade",
