@@ -181,6 +181,52 @@ def test_attach_does_not_reveal_that_an_email_has_an_account(
     assert owner is not None and owner.id == other.id
 
 
+@pytest.mark.parametrize("email,occupied", [("AdMin@TrustedRouter.com", True), ("Security@TrustedRouter.COM", False)])
+def test_operator_mailbox_never_receives_wallet_mail(
+    wallet_client: tuple[TestClient, User], monkeypatch: pytest.MonkeyPatch, email: str, occupied: bool,
+) -> None:
+    from trusted_router.routes import wallet_oauth
+    from trusted_router.storage import InMemoryStore
+
+    client, user = wallet_client
+    normalized = email.lower()
+    expected = STORE.ensure_user(normalized, email=normalized, email_verified=False) if occupied else None
+    mail = _RecordingEmail()
+    monkeypatch.setattr(wallet_oauth, "get_email_service", lambda _settings: mail)
+    csrf = _csrf(client)
+    ordinary = "neighbor@trustedrouter.com"
+    baseline = client.post("/auth/wallet/email", data={"email": ordinary, "csrf_token": csrf})
+    assert [m.to for m in mail.sent] == [ordinary]
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        pytest.fail("Reserved address must not mint a token")
+
+    monkeypatch.setattr(InMemoryStore, "create_verification_token", unexpected)
+    result = client.post("/auth/wallet/email", data={"email": email, "csrf_token": csrf})
+    assert result.status_code == baseline.status_code == 200
+    assert result.text.replace(normalized, "ADDR") == baseline.text.replace(ordinary, "ADDR")
+    assert [m.to for m in mail.sent] == [ordinary]
+    assert STORE.find_user_by_email(normalized) == expected
+    assert is_wallet_only_user(STORE.get_user(user.id))
+
+
+@pytest.mark.parametrize("email", ["ADMIN@trustedrouter.com", "Security@trustedrouter.com"])
+def test_preexisting_wallet_link_cannot_claim_operator_mailbox(
+    wallet_client: tuple[TestClient, User], email: str,
+) -> None:
+    from trusted_router.routes.wallet_oauth import _attach_purpose
+
+    client, user = wallet_client
+    purpose = _attach_purpose(email.lower())
+    token, _ = STORE.create_verification_token(user_id=user.id, purpose=purpose, ttl_seconds=900)
+    result = client.get("/auth/wallet/email/verify", params={"token": token, "email": email})
+    assert result.status_code == 400
+    assert STORE.find_user_by_email(email.lower()) is None
+    assert is_wallet_only_user(STORE.get_user(user.id))
+    # The route rejected the destination before consuming the synthetic token.
+    assert STORE.consume_verification_token(token, purpose=purpose) is not None
+
+
 def test_taken_address_counts_against_the_send_cap(
     wallet_client: tuple[TestClient, User], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -84,6 +84,7 @@ VERIFICATION_TTL_SECONDS = 60 * 60 * 24  # 24 hours
 WALLET_EMAIL_VERIFY_PATH = "/auth/wallet/email/verify"
 _ATTACH_SESSION_STATES = frozenset({"active", "pending_email"})
 _ATTACH_PURPOSE_PREFIX = "wallet_email_attach:"
+_RESERVED_WALLET_EMAILS = frozenset({"admin@trustedrouter.com", "security@trustedrouter.com"})
 # Verification sends per user per hour. Wallet accounts are free to create,
 # so the form must not become an open relay for mail to arbitrary addresses.
 # Per process: a soft cap, like the other in-memory limiters here.
@@ -289,6 +290,10 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 status_code=429,
             )
 
+        # Keep the usual response and rate limit, but never mail a link or an
+        # account-in-use notice to these operator mailboxes.
+        if email_normalized in _RESERVED_WALLET_EMAILS:
+            return _email_sent_response(email_normalized)
         existing = STORE.find_user_by_email(email_normalized)
         verify_url: str | None = None
         if existing is not None and existing.id != user.id:
@@ -329,12 +334,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 ),
                 status_code=503,
             )
-        return HTMLResponse(render_template(
-            "auth/wallet_email_sent.html",
-            page_title="Check your email",
-            email=email_normalized,
-            dev_link=None if sent else verify_url,
-        ))
+        return _email_sent_response(email_normalized, None if sent else verify_url)
 
     @router.get(WALLET_EMAIL_VERIFY_PATH)
     def wallet_email_verify(
@@ -344,6 +344,8 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         email: str = "",
     ) -> Response:
         email_normalized = email.strip().lower()
+        if email_normalized in _RESERVED_WALLET_EMAILS:
+            return HTMLResponse(_invalid_page(), status_code=400)
         consumed = (
             STORE.consume_verification_token(token, purpose=_attach_purpose(email_normalized))
             if token and email_normalized and not is_disposable_email(email_normalized)
@@ -388,6 +390,15 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if session.state != "active":
             return done
         return RedirectResponse(url="/console/credits", status_code=302)
+
+
+def _email_sent_response(email: str, dev_link: str | None = None) -> HTMLResponse:
+    return HTMLResponse(render_template(
+        "auth/wallet_email_sent.html",
+        page_title="Check your email",
+        email=email,
+        dev_link=dev_link,
+    ))
 
 
 def _require_wallet_session(request: Request) -> tuple[AuthSession, User]:
