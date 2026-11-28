@@ -3142,6 +3142,16 @@
       ],
       "default_effort": "high"
     },
+    "z-ai/glm-5.2:batch": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "z-ai/glm-5.3": {
       "mandatory": true,
       "default_enabled": true,
