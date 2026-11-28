@@ -109,6 +109,7 @@ from trusted_router.content.legal import (
 )
 from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
+from trusted_router.decision_model_page import decide_page_context
 from trusted_router.domains import canonical_public_url
 from trusted_router.fortanix_launch import COMPARISON_MODEL_ID as LAUNCH_OFFER_BASE_MODEL_ID
 from trusted_router.fortanix_launch import MODEL_ID as LAUNCH_OFFER_MODEL_ID
@@ -3398,6 +3399,7 @@ def public_page_html(
             else claude_code_context() if page_key == "docs/claude-code"
             else gateway_cost_context()
             if page_key in {"llm-gateway-pricing", "docs/cut-llm-api-costs"}
+            else decide_page_context() if page_key == "docs/decide"
             else _green_tokens_context() if page_key == "green-tokens"
             else token_index_context() if page_key == "index"
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES
