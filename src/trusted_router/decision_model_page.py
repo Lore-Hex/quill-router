@@ -206,13 +206,17 @@ def _mev(hosts: DecisionModelHosts) -> str:
 
 
 def _lev(hosts: DecisionModelHosts) -> str:
-    # The 565 ms answer was SambaNova's: it is shown only while SambaNova,
-    # the chain's first host, is the one that answers first.
-    slowest = ", so its slowest answer in the eval took 565 ms" if hosts.on_first_host else ""
-    return (
-        f"The steadiest tail. Llama 3.3 70B does not deliberate{slowest}."
-        f"{_failover_sentence(hosts)}"
-    )
+    # "The steadiest tail" and the 565 ms answer were both measured on
+    # SambaNova: they are shown only while SambaNova, the chain's first host,
+    # is the one that answers first.
+    if hosts.on_first_host:
+        lead = (
+            "The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest "
+            "answer in the eval took 565 ms."
+        )
+    else:
+        lead = "Llama 3.3 70B, answering without deliberating."
+    return f"{lead}{_failover_sentence(hosts)}"
 
 
 def _zev(hosts: DecisionModelHosts) -> str:

@@ -458,7 +458,13 @@ def test_levs_slowest_answer_is_shown_only_while_its_first_host_answers_first(
         _serve(monkeypatch, LEV, live)
         row = _model_rows(_page(client))[LEV]
         assert ("its slowest answer in the eval took 565 ms" in row[1]) is shown, live
-        assert row[1].startswith("The steadiest tail. Llama 3.3 70B does not deliberate"), live
+        # "The steadiest tail" rests on the same SambaNova measurement, so the
+        # two claims appear together or not at all.
+        assert ("The steadiest tail." in row[1]) is shown, live
+        assert row[1].startswith(
+            "The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer"
+            if shown else "Llama 3.3 70B, answering without deliberating."
+        ), live
 
 
 def test_the_table_is_ordered_by_the_latency_shown(
@@ -601,6 +607,7 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
         if backing in runs_on:
             assert runs_on[backing] == (", then ".join(_names(hosts)) or "None at present")
     assert ("565 ms" in rows[LEV][1]) is (live[LEV][:1] == list(CHAINS[LEV][:1]))
+    assert ("steadiest tail" in rows[LEV][1]) is (live[LEV][:1] == list(CHAINS[LEV][:1]))
 
     shown = [_shown_ms(row[2]) for row in rows.values()]
     figures_shown = [ms for ms in shown if ms is not None]
