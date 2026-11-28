@@ -100,6 +100,13 @@ def read(state, io, previous, target, now):
         exc.lane = lane
         exc.base = base
         raise
+    span_key = lane + '_seconds'
+    span = int((right-start).total_seconds())
+    if span >= p[span_key] and len(incoming) < m.MAX_ROWS*0.75:
+        # Recover throughput after bisecting a dense interval. Aim below the
+        # unchanged row cap, and grow slowly when the next interval is unknown.
+        suggested = int(span*m.MAX_ROWS*0.8/max(1, len(incoming)))
+        p[span_key] = max(p[span_key], min(1200, p[span_key]*5//4+1, suggested))
     day = dt.date.fromisoformat(job['day'])
     left = dt.datetime.combine(day, dt.time(), dt.UTC)
     lo, hi = job['ranges'][0]

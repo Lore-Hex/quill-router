@@ -201,3 +201,11 @@ inspect `source_window_mode`, `observed_through`, `acquisition_repair_next`,
 `usage_repair_next`, and `usage_live_day`. A partly refreshed day is not a
 consistent point-in-time usage snapshot. These source controls do not waive
 the separate retained-state limits or the partition shadow promotion gates.
+
+Offline receipt: `python -m scripts.axiom_growth.source_bench` drives 6,300
+arrivals per five minutes and 111,000 distinct usage groups per day. Both the
+24-hour event sweep and the 30-day usage sweep finished in 248 scheduled
+cycles (20h40m simulated) with zero final forward lag. Largest successful
+reads were 19,530 events and 28,075 usage groups; eight capacity replans
+advanced no cursor. This tests the planner and shard membership, not live
+ClickHouse query cost.
