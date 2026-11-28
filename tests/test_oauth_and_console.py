@@ -869,7 +869,7 @@ def _wallet_email_csrf(client: TestClient) -> str:
 
 
 def test_wallet_email_submit_does_not_attach_or_reveal_a_taken_email(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("trusted_router.routes.wallet_oauth.get_email_service", lambda _: WalletMailbox())
+    monkeypatch.setattr("trusted_router.routes.email_verify.get_email_service", lambda _: WalletMailbox())
     STORE.ensure_user("taken@example.com")
     user = STORE.create_wallet_user("0x" + "7" * 40)
     raw_token, _ = STORE.create_auth_session(
@@ -888,7 +888,7 @@ def test_wallet_email_submit_does_not_attach_or_reveal_a_taken_email(client: Tes
 
     assert response.status_code == 200
     assert "already has an account" not in response.text
-    assert 'action="/auth/wallet/email/verify"' in response.text
+    assert 'action="/auth/verify-email"' in response.text
     assert STORE.get_user(user.id).email is None
 
 
@@ -896,7 +896,7 @@ def test_wallet_email_code_upgrades_only_the_pending_session(
     client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mailbox = WalletMailbox()
-    monkeypatch.setattr("trusted_router.routes.wallet_oauth.get_email_service", lambda _: mailbox)
+    monkeypatch.setattr("trusted_router.routes.email_verify.get_email_service", lambda _: mailbox)
     user = STORE.create_wallet_user("0x" + "8" * 40)
     raw_token, session = STORE.create_auth_session(
         user_id=user.id,
@@ -929,36 +929,57 @@ def test_wallet_email_code_upgrades_only_the_pending_session(
 # ── Email verification ──────────────────────────────────────────────────────
 
 
-def test_email_verify_invalid_token_404s(client: TestClient) -> None:
-    resp = client.get("/auth/verify-email?token=not-a-real-token", follow_redirects=False)
-    assert resp.status_code == 400
-    assert "expired" in resp.text
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_legacy_signup_link_never_verifies_or_upgrades_session(client: TestClient, prefix: str) -> None:
+    user = STORE.ensure_user("legacy@example.com", email="legacy@example.com", email_verified=False)
+    raw, _ = STORE.create_auth_session(user_id=user.id, provider="email", label="legacy@example.com",
+                                       ttl_seconds=3600, state="pending_email")
+    client.cookies.set("tr_session", raw)
+    token, _ = STORE.create_verification_token(user_id=user.id, purpose="signup", ttl_seconds=3600)
+    result = client.get(prefix + "/auth/verify-email", params={"token": token}, follow_redirects=False)
+    assert result.status_code == 410 and token not in result.text
+    assert not STORE.get_user(user.id).email_verified
+    assert STORE.get_auth_session_by_raw(raw).state == "pending_email"
+    assert STORE.consume_verification_token(token, purpose="signup") is not None
 
 
-def test_email_verify_marks_user_and_upgrades_session() -> None:
-    """End-to-end: create user → make a pending session → mint token →
-    visit URL → assert state flips to active and email_verified=True."""
-    settings = Settings(environment="local")
-    app = create_app(settings, init_observability=False)
-    with TestClient(app) as client:
-        user = STORE.create_wallet_user("0x" + "9" * 40)
-        STORE.set_user_email(user.id, "wallet-user@example.com")
-        raw_token, _ = STORE.create_auth_session(
-            user_id=user.id,
-            provider="metamask",
-            label="0x" + "9" * 40,
-            ttl_seconds=3600,
-            state="pending_email",
-        )
-        client.cookies.set("tr_session", raw_token)
-        verify_token, _ = STORE.create_verification_token(
-            user_id=user.id, purpose="signup", ttl_seconds=3600
-        )
-        resp = client.get(f"/auth/verify-email?token={verify_token}", follow_redirects=False)
-    assert resp.status_code == 302
-    assert resp.headers["location"] == "/console/welcome?first=1"
-    refreshed = STORE.get_user(user.id)
-    assert refreshed is not None and refreshed.email_verified is True
+def test_signed_in_non_wallet_verifies_only_address_on_file(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    mailbox = WalletMailbox()
+    monkeypatch.setattr("trusted_router.routes.email_verify.get_email_service", lambda _: mailbox)
+    user = STORE.ensure_user("existing@example.com", email="existing@example.com", email_verified=False)
+    raw, _ = STORE.create_auth_session(user_id=user.id, provider="email", label="existing@example.com",
+                                       ttl_seconds=3600, state="active")
+    assert client.get("/auth/verify-email").status_code == 401
+    client.cookies.set("tr_session", raw)
+    assert 'href="/auth/verify-email"' in client.get("/console/account/preferences").text
+    form = client.get("/auth/verify-email")
+    assert form.status_code == 200 and 'value="existing@example.com"' in form.text
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', form.text)
+    assert csrf is not None
+    request_path = "/auth/verify-email/request"
+    assert client.post(request_path, data={"email": user.email, "csrf_token": "wrong"}).status_code == 403
+    assert client.post(request_path, data={"email": "other@example.com", "csrf_token": csrf[1]}).status_code == 400
+    assert not mailbox.sent
+    issued = client.post(request_path, data={"email": user.email, "csrf_token": csrf[1]})
+    assert issued.status_code == 200
+    fields = mailbox.confirmation(issued.text)
+    assert not STORE.get_user(user.id).email_verified
+    client.cookies.clear()
+    assert client.post("/auth/verify-email", data=fields).status_code == 401
+    other_raw, _ = STORE.create_auth_session(user_id=user.id, provider="email", label="existing@example.com",
+                                             ttl_seconds=3600, state="active")
+    client.cookies.set("tr_session", other_raw)
+    other_form = client.get("/auth/verify-email")
+    other_csrf = re.search(r'name="csrf_token" value="([^"]+)"', other_form.text)
+    assert other_csrf is not None and other_csrf[1] != fields["csrf_token"]
+    assert client.post("/auth/verify-email", data={**fields, "csrf_token": other_csrf[1]}).status_code == 400
+    assert not STORE.get_user(user.id).email_verified
+    client.cookies.set("tr_session", raw)
+    assert client.post("/auth/verify-email", data={**fields, "csrf_token": ""}).status_code == 403
+    assert client.post("/auth/verify-email", data={**fields, "email": "other@example.com"}).status_code == 400
+    assert client.post("/auth/verify-email", data=fields, follow_redirects=False).status_code == 303
+    assert STORE.get_user(user.id).email == "existing@example.com" and STORE.get_user(user.id).email_verified
+    assert client.post("/auth/verify-email", data=fields).status_code == 400
 
 
 # ── Console pages ───────────────────────────────────────────────────────────

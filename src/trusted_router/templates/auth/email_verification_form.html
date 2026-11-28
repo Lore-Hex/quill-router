@@ -1,0 +1,12 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<h1>{% if wallet %}Add and verify an email{% else %}Verify your email{% endif %}</h1>
+{% if wallet %}<p>Wallet <code>{{ wallet }}</code></p>{% endif %}
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+<form method="post" action="/auth/verify-email/request">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="verification-email">Email address</label>
+  <input type="email" id="verification-email" name="email" value="{{ email }}" required {% if not wallet %}readonly{% endif %} autocomplete="email">
+  <button class="btn" type="submit">Send verification code</button>
+</form>
+{% endblock %}

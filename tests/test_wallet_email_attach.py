@@ -22,7 +22,7 @@ from tests.wallet_email_helpers import WalletMailbox
 from trusted_router.billing_policy import is_wallet_only_user
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.routes import wallet_oauth
+from trusted_router.routes import email_verify
 from trusted_router.storage import STORE, User
 
 PRIVATE_KEY = "0x" + "4" * 64
@@ -72,7 +72,7 @@ def _csrf(client: TestClient) -> str:
 @pytest.fixture
 def mailbox(monkeypatch: pytest.MonkeyPatch) -> WalletMailbox:
     box = WalletMailbox()
-    monkeypatch.setattr(wallet_oauth, "get_email_service", lambda _: box)
+    monkeypatch.setattr(email_verify, "get_email_service", lambda _: box)
     return box
 
 
@@ -112,7 +112,7 @@ def test_active_wallet_session_attaches_verified_email_and_unlocks_byok(
 
     verify = _confirm(client, fields)
 
-    assert verify.status_code == 302, verify.text
+    assert verify.status_code == 303, verify.text
     assert verify.headers["location"] == "/console/credits"
     verified = STORE.get_user(user.id)
     assert verified is not None
@@ -292,7 +292,7 @@ def test_second_code_cannot_replace_an_already_verified_email(
     first = _request_code(client, "first@example.com", mailbox)
     second = _request_code(client, "second@example.com", mailbox)
 
-    assert _confirm(client, first).status_code == 302
+    assert _confirm(client, first).status_code == 303
     replaced = _confirm(client, second)
 
     assert replaced.status_code == 409
@@ -336,7 +336,7 @@ def test_confirmation_requires_original_wallet_session_and_csrf(
     client.cookies.set("tr_session", original)
     assert _confirm(client, {**fields, "csrf_token": ""}).status_code == 403
     assert STORE.find_user_by_email(fields["email"]) is None
-    assert _confirm(client, fields).status_code == 302
+    assert _confirm(client, fields).status_code == 303
 
 
 def test_confirmation_attempts_are_bounded(

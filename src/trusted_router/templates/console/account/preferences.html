@@ -11,6 +11,7 @@
           {% else %}
           not set
           {% endif %}
+          {% if not user.email_verified and (user.email or user.wallet_address) %}<a href="/auth/verify-email">Verify email</a>{% endif %}
         </td></tr>
         <tr><th>Sign-in method</th><td>{{ provider }}</td></tr>
         {% if user.wallet_address %}

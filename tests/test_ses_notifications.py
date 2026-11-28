@@ -322,7 +322,7 @@ def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
     sent = service.send(
         build_verification_email(
             to="user@example.com",
-            verification_url="https://trustedrouter.com/auth/verify-email?token=tok",
+            code="01234567", ttl_minutes=10,
             from_name="TrustedRouter Test",
         )
     )
@@ -332,13 +332,14 @@ def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
     call = calls[0]
     # Behaviour assertions: we want a from-address with the configured display
     # name, the recipient in the To line, the right subject, and the message
-    # body to actually carry the verification link. Don't lock in the literal
+    # body to actually carry the verification code. Don't lock in the literal
     # boto3 kwarg shape — that would re-fail every time AWS adds a parameter.
     assert call["Source"] == "TrustedRouter Test <noreply@example.com>"
     assert call["Destination"]["ToAddresses"] == ["user@example.com"]
-    assert call["Message"]["Subject"]["Data"] == "Confirm your TrustedRouter Test account"
-    assert "https://trustedrouter.com/auth/verify-email?token=tok" in call["Message"]["Body"]["Text"]["Data"]
-    assert "Confirm my email" in call["Message"]["Body"]["Html"]["Data"]
+    assert call["Message"]["Subject"]["Data"] == "Your TrustedRouter Test email verification code"
+    body = call["Message"]["Body"]["Text"]["Data"]
+    assert "01234567" in body and "10 minutes" in body
+    assert "http" not in body and "Html" not in call["Message"]["Body"]
     # Routes the send through the configuration set so SES emits bounce +
     # complaint events to the SNS topic our /internal/ses/notifications owns.
     assert call.get("ConfigurationSetName") == "trustedrouter-default"
