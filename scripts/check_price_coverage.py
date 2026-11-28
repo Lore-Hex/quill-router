@@ -912,6 +912,14 @@ _REVIEWED_UNPRICED_PROVIDER_GLM_IDS: frozenset[tuple[str, str]] = frozenset({
     # the GLM-5.3 Flash Parasail already serves; its pricing page lists no rate
     # for it (2026-11-02). It blocked every provider's catalog publication.
     ("parasail", "z-ai/glm-5.3-flash-fast"),
+    # GLM-5.4 at Z.AI itself: listed by the account's model API, but sold only
+    # inside the GLM Coding Plan subscription. Z.AI's model page says "The
+    # Model API will be made available upon completion of the security
+    # assessment" (docs.z.ai/guides/llm/glm-5.4), and its pricing page has no
+    # GLM-5.4 row (docs.z.ai/guides/overview/pricing), both checked
+    # 2026-11-28. There is no per-token price to publish. When the pricing
+    # page gains the row, the Z.AI parser reads it and the model publishes.
+    ("zai", "z-ai/glm-5.4"),
 })
 
 

@@ -329,6 +329,112 @@ def test_fireworks_parser_distinguishes_fast_routes_and_replacements() -> None:
     assert parsed["qwen/qwen3.8-max"]["completion_micro_per_m"] == 6_000_000
 
 
+_GLM53_MODE_ROWS = """
+| [GLM 5.3 Flash](https://app.fireworks.ai/models/fireworks/glm-5p3-flash) | $0.15 / $0.03 / $0.50 | $0.1875 / $0.0375 / $0.625 |
+| [GLM 5.3 Flash Flex](https://app.fireworks.ai/models/fireworks/glm-5p3-flash) | $0.075 / $0.015 / $0.25 | - |
+| [GLM 5.3 Flash (US)](https://app.fireworks.ai/models/fireworks/glm-5p3-flash) | $0.225 / $0.045 / $0.75 | $0.28125 / $0.05625 / $0.9375 |
+| [GLM 5.3](https://app.fireworks.ai/models/fireworks/glm-5p3) | $1.40 / $0.26 / $4.40 | $1.75 / $0.325 / $5.50 |
+| [GLM 5.3 Flex](https://app.fireworks.ai/models/fireworks/glm-5p3) | $0.70 / $0.13 / $2.20 | - |
+| [GLM 5.3 (US)](https://app.fireworks.ai/models/fireworks/glm-5p3) | $2.10 / $0.39 / $6.60 | $2.625 / $0.4875 / $8.25 |
+| [GLM 5.3 Fast](https://app.fireworks.ai/models/fireworks/glm-5p3) | $2.10 / $0.39 / $6.60 | - |
+| [GLM 5.3 Spot](https://app.fireworks.ai/models/fireworks/glm-5p3) | $0.70 / $0.13 / $2.20 | - |
+"""
+_GLM53_MODE_PRICES = {
+    # (input, cached input, output) in microdollars per million tokens.
+    "z-ai/glm-5.3-flash": (150_000, 30_000, 500_000),
+    "z-ai/glm-5.3-flash-flex": (75_000, 15_000, 250_000),
+    "z-ai/glm-5.3": (1_400_000, 260_000, 4_400_000),
+    "z-ai/glm-5.3-flex": (700_000, 130_000, 2_200_000),
+    "z-ai/glm-5.3-fast": (2_100_000, 390_000, 6_600_000),
+    "z-ai/glm-5.3-spot": (700_000, 130_000, 2_200_000),
+}
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["page-order", "reversed"])
+def test_fireworks_parser_reads_flex_and_spot_as_models_of_their_own(reverse: bool) -> None:
+    # Fireworks sells Flex and Spot under their own model ids at half the
+    # Standard rate, in rows that link to the standard model's page. Each row
+    # is its own model, and none of them is the standard model's price,
+    # whatever order the page lists them in.
+    rows = [row for row in _GLM53_MODE_ROWS.splitlines() if row.strip()]
+    parsed = fireworks_parser.parse("\n".join(reversed(rows) if reverse else rows))
+
+    assert {
+        model_id: (
+            row["prompt_micro_per_m"], row["prompt_cached_micro_per_m"], row["completion_micro_per_m"],
+        )
+        for model_id, row in parsed.items() if model_id.startswith("z-ai/")
+    } == _GLM53_MODE_PRICES
+
+
+@pytest.mark.parametrize("mode", ["Flex", "Spot"])
+def test_fireworks_parser_never_reads_a_half_price_row_as_the_standard_model(mode: str) -> None:
+    # A model the label table does not name: its Flex or Spot row comes first
+    # and links to the standard page. Only the standard row prices the model.
+    parsed = fireworks_parser.parse(
+        f"""
+        | [Qwen 3.9 Max {mode}](https://app.fireworks.ai/models/fireworks/qwen3p9-max) |
+          $0.25 / $0.025 / $0.75 |
+        | [Qwen 3.9 Max](https://app.fireworks.ai/models/fireworks/qwen3p9-max) |
+          $0.50 / $0.05 / $1.50 |
+        """
+    )
+
+    assert parsed["qwen/qwen3.9-max"]["prompt_micro_per_m"] == 500_000
+    assert parsed["qwen/qwen3.9-max"]["completion_micro_per_m"] == 1_500_000
+    # With no standard row at all, the half-price row publishes nothing.
+    alone = fireworks_parser.parse(
+        f"| [Qwen 3.9 Max {mode}](https://app.fireworks.ai/models/fireworks/qwen3p9-max) |"
+        " $0.25 / $0.025 / $0.75 |"
+    )
+    assert not any(model_id.startswith("qwen/") for model_id in alone)
+
+
+def test_fireworks_fetch_publishes_flex_and_spot_under_their_own_native_ids(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    modes = {
+        "z-ai/glm-5.3-flex": "accounts/fireworks/routers/glm-5p3-flex",
+        "z-ai/glm-5.3-flash-flex": "accounts/fireworks/routers/glm-5p3-flash-flex",
+        "z-ai/glm-5.3-spot": "accounts/fireworks/models/glm-5p3-spot",
+    }
+    parsed = fireworks_parser.parse(_GLM53_MODE_ROWS)
+    prices = {model_id: _price() for model_id in fireworks.EXPECTED_MODELS}
+    prices.update({
+        model_id: ModelPrice(
+            parsed[model_id]["prompt_micro_per_m"],
+            parsed[model_id]["completion_micro_per_m"],
+            prompt_cached_micro_per_m=parsed[model_id]["prompt_cached_micro_per_m"],
+        )
+        for model_id in modes
+    })
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-key")
+    monkeypatch.setattr(
+        fireworks, "fetch_provider",
+        lambda **_kwargs: ProviderPricingResult(slug="fireworks", prices=dict(prices), source="deterministic"),
+    )
+    live_rows = [
+        {"id": fireworks.UPSTREAM_ID_MAP[model_id]}
+        for model_id in fireworks.EXPECTED_MODELS
+        if model_id not in fireworks.VERIFIED_PRICED_LAUNCH_MODELS
+    ] + [{"id": native_id} for native_id in modes.values()]
+    monkeypatch.setattr(fireworks, "fetch_json", lambda *_args, **_kwargs: {"data": live_rows})
+
+    result = fireworks.fetch()
+
+    rows = fireworks._DISCOVERED_MANIFEST_ROWS
+    for model_id, native_id in modes.items():
+        assert rows[model_id]["upstream_id"] == native_id
+        assert result.prices[model_id].prompt_micro_per_m == _GLM53_MODE_PRICES[model_id][0]
+        assert result.prices[model_id].completion_micro_per_m == _GLM53_MODE_PRICES[model_id][2]
+    assert rows["z-ai/glm-5.3-flex"]["display_name"] == "GLM 5.3 Flex on Fireworks"
+    assert rows["z-ai/glm-5.3-flash-flex"]["display_name"] == "GLM 5.3 Flash Flex on Fireworks"
+    assert rows["z-ai/glm-5.3-spot"]["display_name"] == "GLM 5.3 Spot on Fireworks"
+    # The standard models keep their own native ids and prices.
+    assert rows["z-ai/glm-5.3"]["upstream_id"] == "accounts/fireworks/models/glm-5p3"
+    assert rows["z-ai/glm-5.3-flash"]["upstream_id"] == "accounts/fireworks/models/glm-5p3-flash"
+
+
 def test_fireworks_parser_auto_discovers_linked_standard_family_rows() -> None:
     parsed = fireworks_parser.parse(
         """
