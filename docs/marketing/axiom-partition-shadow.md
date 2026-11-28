@@ -24,7 +24,7 @@ are v2 contracts; they do not change v1's existing publication ordering.
 1. Require a normal green main release of the growth worker image containing
    the shadow entry point. Record its Artifact Registry digest from
    **Deploy marketing analytics worker**. Keep both live collector flags.
-2. Use the isolated Terraform root in `infra/growth-shadow` with that image:
+2. Use the isolated Terraform root in `ops/growth-partition-shadow` with that image:
    `terraform init`, `terraform plan -var verified_image=REGISTRY@sha256:DIGEST -out=shadow.plan`.
    Inspect the saved plan; no IAM policy replacement or changes to the live
    worker, its token, its scheduler, or its retention are expected. Apply only
@@ -54,3 +54,17 @@ fencing and a compensating *visible* rollback against an isolated destination.
 A current billing-owner directory carried by the legacy checkpoint is not an
 independently advancing billing collector. A successful hash mirror or local
 benchmark is not permission to cut over.
+
+### November 28 transport receipt
+
+The busiest of 48 recent production cycles changed 73 projected rows. On a
+local disk-backed object adapter, with synthetic payloads and mocked final
+receipts, 12 update/commit/drain cycles including forced compaction measured:
+
+| Retained rows | Changes / cycle | p95 | Peak process RSS | Max logical compressed bytes / cycle |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,886,940 | 730 | 0.53 s | 67.9 MiB | 1,760,381 |
+| 18,869,400 | 7,300 | 1.35 s | 146.8 MiB | 17,282,014 |
+
+RSS includes seeding. Time excludes seeding. These are not production timings
+or a 100x end-to-end result.

@@ -42,7 +42,7 @@ class Overlay:
         delta = self.changed.get((day, kind), {})
         if key in delta:
             return delta[key]
-        slot = kind + ':' + key[0]
+        slot = ps.slot_for(day, kind, key)
         if (day, slot) not in self.cache:
             if day not in self.manifests:
                 self.manifests[day] = self.tx.day(day)
@@ -73,6 +73,14 @@ def project(tx, changes, end, *, milestones=None):
     Both sides of removed edges must be revisited, even months after an event.
     Commercial ownership and gateway milestones are not in this projector yet.
     """
+    try:
+        return _project(tx, changes, end, milestones)
+    except Exception:
+        tx.failed = True
+        raise
+
+
+def _project(tx, changes, end, milestones):
     view = Overlay(tx)
     sequence = tx.head.get('source_sequence', 0)
     dirty, dirty_edges, visitors = set(), set(), set()

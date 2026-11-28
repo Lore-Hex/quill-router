@@ -44,6 +44,12 @@ def empty():
     return {'schema': SCHEMA, 'days': {}, 'watermarks': {}}
 
 
+def slot_for(day, kind, key):
+    # Directory partitions already consume the first two hex digits. Using
+    # the first digit again would funnel an entire directory into one page.
+    return kind + ':' + key[2 if day.startswith('index-') else 0]
+
+
 class Transaction:
     """Objects are immutable. Only a successful root CAS grants visibility.
 
@@ -117,7 +123,7 @@ class Transaction:
         for key, value in changes.items():
             if not ID.fullmatch(key):
                 raise ValueError('invalid partition key')
-            groups[kind + ':' + key[0]][key] = value
+            groups[slot_for(day, kind, key)][key] = value
         pages = self.day(day)
         for slot, patch in groups.items():
             refs = pages.get(slot, [])
