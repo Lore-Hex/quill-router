@@ -17,6 +17,7 @@ from google.auth.transport.requests import Request
 
 from scripts.axiom_growth import gateway_attempts
 from scripts.axiom_growth import model as m
+from scripts.axiom_growth import source_windows as windows
 
 MAX_EVENTS = 300_000
 MAX_DAILY = 100_000
@@ -157,14 +158,24 @@ def prepare_cycle(state, io, now):
     if end <= previous:
         return state, None
     repair = state.get('repair_day') != now.date().isoformat()
-    start = previous - dt.timedelta(hours=24 if repair else 1)
-    incoming = io.events(start, end)
-    if len(incoming) > m.MAX_ROWS:
-        raise ValueError('Event budget exceeded')
+    if state.get('source_windows'):
+        start, source_end, end, incoming, fresh_daily, replaced = windows.read(state, io, previous, end, now)
+    else:
+        start = previous - dt.timedelta(hours=24 if repair else 1)
+        source_end = end
+        incoming = io.events(start, end)
+        if len(incoming) > m.MAX_ROWS:
+            raise windows.Capacity('events', 'Event budget exceeded')
+        usage_start = (end - dt.timedelta(days=30 if repair else 1)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        fresh_daily = io.usage(usage_start, end)
+        def replaced(row):
+            return m.date(row['_time']) >= usage_start
+        state['repair_day'] = now.date().isoformat()
     cutoff = now - dt.timedelta(days=365)
     events = {r['event_id']: r for r in state['events'] if m.date(r['_time']) >= cutoff}
     for row in incoming:
-        if not start <= m.date(row['_time']) < end:
+        if not start <= m.date(row['_time']) < source_end:
             raise ValueError('Event outside requested interval')
         # Preserve previously recovered domain evidence on an overlapping refresh.
         prior = events.get(row['event_id'], {})
@@ -179,10 +190,7 @@ def prepare_cycle(state, io, now):
         events[row['event_id']] = row
     if len(events) > MAX_EVENTS:
         raise ValueError('State bound reached; partition before continuing')
-    usage_start = (end - dt.timedelta(days=30 if repair else 1)).replace(
-        hour=0, minute=0, second=0, microsecond=0)
-    fresh_daily = io.usage(usage_start, end)
-    daily = {r['event_id']: dict(r) for r in state['daily'] if cutoff <= m.date(r['_time']) < usage_start}
+    daily = {r['event_id']: dict(r) for r in state['daily'] if cutoff <= m.date(r['_time']) and not replaced(r)}
     daily.update({r['event_id']: r for r in fresh_daily})
     if len(daily) > MAX_DAILY:
         raise ValueError('Usage state bound reached')
@@ -233,13 +241,25 @@ def prepare_cycle(state, io, now):
                  'gateway_observed_through': state.get('gateway_watermark'),
                  'billing_owners_observed_through': max((r.get('billing_owner_observed_at', '') for r in owners or []), default='')}
     state.update(events=list(events.values()), daily=daily_rows, hashes=hashes,
-                 watermark=end.isoformat(), repair_day=now.date().isoformat())
+                 watermark=end.isoformat())
+    if plan := state.get('source_windows'):
+        heartbeat.update(source_window_mode='segmented', acquisition_repair_next=plan['event_next'],
+                         usage_repair_next=plan['usage_next'], usage_live_day=plan.get('last_live_usage_day'))
+        heartbeat['event_id'] = m.digest('sync:' + now.isoformat() + ':' + end.isoformat())
     return state, heartbeat
 
 
 def cycle(state, io, now, *, generation):
     """Publish success only after accepted data AND a durable compare-and-swap."""
-    updated, heartbeat = prepare_cycle(state, io, now)
+    try:
+        updated, heartbeat = prepare_cycle(state, io, now)
+    except windows.Capacity as exc:
+        updated = {**state, 'source_windows': windows.narrower(state.get('source_windows'),
+                                                               m.date(state['watermark']), exc)}
+        io.save('state.json.gz', updated, generation)
+        print(json.dumps({'event': 'growth.source_replanned', 'source': exc.source,
+                          'observed_through': state['watermark']}), flush=True)
+        return updated, 0
     if heartbeat is None:
         return updated, 0
     io.save('state.json.gz', updated, generation)
@@ -294,11 +314,11 @@ class Sources:
             left, right = pending.pop()
             queries += 2
             if queries > 126:
-                raise ValueError('Query budget exceeded')
+                raise windows.Capacity('events', 'Query budget exceeded')
             count = self.query(base + ' | summarize n=count()', left, right)[0]['n']
             if count >= 1000:
                 if right - left < dt.timedelta(seconds=1):
-                    raise ValueError('Source too dense for bounded query')
+                    raise windows.Capacity('events', 'Source too dense for bounded query')
                 mid = left + (right - left)/2
                 pending.extend([(left, mid), (mid, right)])
                 continue
@@ -306,6 +326,8 @@ class Sources:
             if len(batch) != count:
                 raise ValueError('Source changed or truncated; retry window')
             rows.extend(project(row, 'axiom') for row in batch)
+            if len(rows) > m.MAX_ROWS:
+                raise windows.Capacity('events', 'Source row cap exceeded')
         browser = ' OR '.join(f'jsonPayload.event="{e}"' for e in sorted(m.BROWSER_EVENTS))
         log_filter = ('resource.type="cloud_run_revision" '
             f'{m.ACQUISITION_SERVICE_FILTER} '
@@ -320,13 +342,23 @@ class Sources:
                 row = {f: raw.get(f) for f in fields}
                 rows.append(project({**row, '_time': entry['timestamp']}, 'cloud_logging'))
             if len(rows) > m.MAX_ROWS:
-                raise ValueError('Source row cap exceeded')
+                raise windows.Capacity('events', 'Source row cap exceeded')
             if not result.get('nextPageToken'):
                 return rows
             body['pageToken'] = result['nextPageToken']
-        raise ValueError('Cloud Logging pagination budget exceeded')
+        raise windows.Capacity('events', 'Cloud Logging pagination budget exceeded')
 
-    def usage(self, start, end):
+    def usage(self, start, end, *, bucket=(0, windows.SPACE)):
+        lo, hi = bucket
+        if not (isinstance(lo, int) and isinstance(hi, int) and 0 <= lo < hi <= windows.SPACE):
+            raise ValueError('Invalid usage shard interval')
+        extra = ''
+        if bucket != (0, windows.SPACE):
+            # Same first two big-endian SHA bytes as windows.usage_bucket.
+            b = "lower(substring(hex(SHA256(concat(workspace_fingerprint, ':', model, ':', provider))), 1, 4))"
+            extra = f" AND {b} >= '{lo:04x}'"
+            if hi < windows.SPACE:
+                extra += f" AND {b} < '{hi:04x}'"
         sql = f"""SELECT toString(day, 'UTC') AS usage_day, workspace_fingerprint,
         marketing_workspace_fingerprint, model, provider, successful_calls,
         input_tokens, output_tokens, usage_microdollars,
@@ -334,14 +366,14 @@ class Sources:
         FROM tr.growth_daily_usage
         WHERE day >= toDateTime('{start:%Y-%m-%d %H:%M:%S}', 'UTC')
         AND day < toStartOfDay(toDateTime('{end:%Y-%m-%d %H:%M:%S}', 'UTC')) + INTERVAL 1 DAY
-        LIMIT 50001 FORMAT JSONEachRow"""  # noqa: S608 - aware datetime values only, never user SQL.
+        {extra} LIMIT 50001 FORMAT JSONEachRow"""  # noqa: S608 - bounded integers and aware datetime values only.
         result = self.checked(self.http.post('http://10.128.0.96:8123', content=sql,
             auth=('tr_growth_read', os.environ['GROWTH_CH_PASSWORD']),
             params={'readonly': 1, 'max_execution_time': 45, 'max_threads': 2,
                     'max_memory_usage': 536870912})).text
         values = [json.loads(line) for line in result.splitlines() if line]
         if len(values) > 50000:
-            raise ValueError('ClickHouse aggregate cap exceeded')
+            raise windows.Capacity('usage', 'ClickHouse aggregate cap exceeded')
         for row in values:
             for f in ('successful_calls', 'input_tokens', 'output_tokens', 'usage_microdollars'):
                 row[f] = int(row[f])
@@ -456,7 +488,8 @@ def main():
     try:
         state, generation = io.load('state.json.gz')
         updated, changed = cycle(state, io, now, generation=generation)
-        print(json.dumps({'event': 'growth.sync_success', 'changed_rows': changed,
+        event = 'growth.sync_success' if updated.get('watermark') != state.get('watermark') else 'growth.sync_no_forward_progress'
+        print(json.dumps({'event': event, 'changed_rows': changed,
                           'observed_through': updated['watermark'],
                           'seconds': round(time.monotonic()-started, 2)}))
     finally:

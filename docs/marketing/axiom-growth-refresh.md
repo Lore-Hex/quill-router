@@ -177,3 +177,27 @@ heartbeat alone do not prove source delivery.
 The optional operator tool `scripts.axiom_growth.alerts` configures a debounced
 email monitor. It has not been enabled: notification delivery requires separate
 approval. Freshness warnings on all four dashboards are active.
+
+## Dense-source recovery
+
+A requested source window that exceeds a recognized row, query, or pagination
+budget now switches the worker into segmented mode. The transition saves only
+the query plan under the existing checkpoint generation; it does not ingest,
+emit a success heartbeat, or advance an acquisition/usage cursor. Authentication,
+incomplete results, and unexpected upstream errors are not capacity signals.
+
+Segmented runs retain the original source quotas and issue at most one
+acquisition window and one bounded ClickHouse usage query per execution.
+Forward acquisitions alternate with a resumable 24-hour late-arrival sweep.
+An older backlog gets priority without erasing the pending sweep. Usage reads
+alternate completed live days with a rolling 30-day repair, independently of
+the acquisition lane. A dense usage day bisects a stable SHA-256 key range;
+only a completely read range replaces its old rows. A failed read or CAS does
+not skip a slice. Learned widths are retained. Crossing source retention or
+exhausting the smallest slice requires intervention, never dropping data.
+
+`growth.source_replanned` is not evidence of delivery. On actual delivery
+inspect `source_window_mode`, `observed_through`, `acquisition_repair_next`,
+`usage_repair_next`, and `usage_live_day`. A partly refreshed day is not a
+consistent point-in-time usage snapshot. These source controls do not waive
+the separate retained-state limits or the partition shadow promotion gates.

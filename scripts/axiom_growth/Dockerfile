@@ -8,6 +8,7 @@ RUN apt-get update \
 RUN pip install --no-cache-dir 'certifi>=2026.10.19' google-auth[requests]==2.40.3 httpx==0.28.1
 WORKDIR /app
 COPY __init__.py model.py gateway_attempts.py runtime.py /app/scripts/axiom_growth/
+COPY source_windows.py /app/scripts/axiom_growth/
 COPY partition_store.py partition_shadow.py incremental_projection.py /app/scripts/axiom_growth/
 USER 65534:65534
 CMD ["python", "-m", "scripts.axiom_growth.runtime"]
