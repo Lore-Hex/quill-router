@@ -268,10 +268,12 @@ def _mev(hosts: DecisionModelHosts) -> str:
 
 
 def _lev(hosts: DecisionModelHosts) -> str:
-    # "The steadiest tail" was measured on the chain's first host: it is shown
-    # only while that host is the one that answers first.
-    tail = "The steadiest tail. " if hosts.on_first_host else ""
-    return f"{tail}Llama 3.3 70B, answering without deliberating.{_failover_sentence(hosts)}"
+    # No speed or tail claim: on 2026-11-28 zev's tail was tighter than lev's,
+    # so "the steadiest tail" stopped being true when SambaNova left the chain.
+    return (
+        "A widely deployed open model. Llama 3.3 70B, answering without deliberating."
+        f"{_failover_sentence(hosts)}"
+    )
 
 
 def _zev(hosts: DecisionModelHosts) -> str:

@@ -319,7 +319,7 @@ def test_with_every_chain_live_each_row_shows_its_first_hosts_figure(
         f"we could measure, with automatic failover across {trev_hosts} hosts."
     )
     assert rows[LEV][1] == (
-        "The steadiest tail. Llama 3.3 70B, answering without deliberating. "
+        "A widely deployed open model. Llama 3.3 70B, answering without deliberating. "
         f"Fails over across {WORDS[len(CHAINS[LEV])]} hosts."
     )
     assert len(CHAINS[ZEV]) == 2
@@ -533,25 +533,18 @@ def test_the_third_of_a_second_count_follows_the_rows(
     assert _fast_claim(_page(client)) == (0, None)
 
 
-def test_levs_steadiest_tail_is_shown_only_while_its_first_host_answers_first(
+def test_levs_row_makes_no_tail_claim_on_any_host(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
 ) -> None:
+    # "The steadiest tail" was SambaNova's. On 2026-11-28 zev's tail was
+    # tighter than lev's on W&B, so no host may bring the claim back.
     chain = CHAINS[LEV]
-    assert chain[0] == "wandb", "the tail was measured on W&B"
-    for live, shown in (
-        (chain, True),
-        (chain[:1], True),
-        ((chain[0], chain[-1]), True),
-        (chain[1:], False),
-        (chain[2:], False),
-        ((), False),
-    ):
+    for live in (chain, chain[:1], (chain[0], chain[-1]), chain[1:], chain[2:], ()):
         _serve(monkeypatch, LEV, live)
         row = _model_rows(_page(client))[LEV]
-        assert ("The steadiest tail." in row[1]) is shown, live
+        assert "steadiest" not in row[1] and "tail" not in row[1], live
         assert row[1].startswith(
-            ("The steadiest tail. " if shown else "")
-            + "Llama 3.3 70B, answering without deliberating."
+            "A widely deployed open model. Llama 3.3 70B, answering without deliberating."
         ), live
 
 
@@ -828,7 +821,7 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
         backing = PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)
         if backing in runs_on:
             assert runs_on[backing] == (", then ".join(_names(hosts)) or "None at present")
-    assert ("steadiest tail" in rows[LEV][1]) is (live[LEV][:1] == list(CHAINS[LEV][:1]))
+    assert "steadiest tail" not in rows[LEV][1]
     assert ("fastest hardware" in rows[TREV][1]) is (live[TREV][:1] == list(CHAINS[TREV][:1]))
 
     shown = [_shown_ms(row[2]) for row in rows.values()]
