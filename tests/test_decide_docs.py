@@ -881,12 +881,22 @@ def test_the_rows_compare_with_the_trev_cost_the_table_shows(
     first, fallback = CHAINS[TREV][0], CHAINS[TREV][1]
     _serve(monkeypatch, TREV, CHAINS[TREV], {first: (4_000_000, 12_000_000), fallback: (1_000_000, 3_000_000)})
     before = {hosts.model_id: hosts.cost for hosts in decision_model_page.decision_model_hosts()}
-    _serve(monkeypatch, TREV, CHAINS[TREV][1:], {fallback: (1_000_000, 3_000_000)})
+    # The host after the fallback is dearer: the comparison must use the
+    # first live host's cost, not the dearest one's.
+    dearer = CHAINS[TREV][2]
+    _serve(monkeypatch, TREV, CHAINS[TREV][1:], {fallback: (1_000_000, 3_000_000), dearer: (8_000_000, 24_000_000)})
     _serve(monkeypatch, MEV, CHAINS[MEV], {CHAINS[MEV][0]: (9_000_000, 30_000_000)})
     rows = _model_rows(_page(client))
     costs = {hosts.model_id: hosts.cost for hosts in decision_model_page.decision_model_hosts()}
     assert costs[TREV] is not None and before[TREV] is not None and costs[TREV] < before[TREV]
     assert costs[MEV] is not None and costs[MEV] > costs[TREV]
+    fallback_cost = decision_model_page.decision_cost(
+        TREV, next(
+            e for e in endpoints_for_model(PRIVATE_PROXY_MODEL_TARGETS.get(TREV, TREV))
+            if e.provider == fallback and e.usage_type == "Credits"
+        )
+    )
+    assert costs[TREV] == fallback_cost
     # mev pricier than trev: no "speed at N times" claim.
     assert rows[MEV][1].startswith("Speed. ")
     for model in (ZEV, MEV):
