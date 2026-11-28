@@ -1,6 +1,7 @@
 """Copy-on-write growth checkpoint. No source credentials, delivery, or serving-store access."""
 from __future__ import annotations
 
+import base64
 import copy
 import datetime as dt
 import gzip
@@ -8,6 +9,7 @@ import hashlib
 import io
 import json
 import re
+import tempfile
 from collections import OrderedDict, defaultdict
 
 SCHEMA = 1
@@ -52,6 +54,24 @@ def slot_for(day, kind, key):
     return kind + ':' + key[2 if day.startswith('index-') else 0]
 
 
+def bit_positions(key, size):
+    raw = bytes.fromhex(key)
+    for i in (0, 4, 8, 12, 16, 20):
+        yield int.from_bytes(raw[i:i+4], 'big') % (8*size)
+
+
+def key_filter(keys):
+    bits = bytearray(max(8, 2*len(keys)))
+    for key in keys:
+        for pos in bit_positions(key, len(bits)):
+            bits[pos//8] |= 1 << (pos % 8)
+    return base64.b64encode(bits).decode('ascii')
+
+
+def might_contain(bits, key):
+    return all(bits[pos//8] & (1 << (pos % 8)) for pos in bit_positions(key, len(bits)))
+
+
 class Transaction:
     """Objects are immutable. Only a successful root CAS grants visibility.
 
@@ -74,6 +94,8 @@ class Transaction:
         self.refs = []
         self.cache = OrderedDict()
         self.cache_size = 0
+        self.spill = None
+        self.offsets = {}
 
     def charge(self, size=0, ops=1):
         self.ops += ops
@@ -87,15 +109,26 @@ class Transaction:
         if ref in self.cache:
             self.cache.move_to_end(ref)
             return self.cache[ref]
-        self.charge()
-        blob = self.backend.get(ref)
-        self.charge(len(blob), 0)
+        if ref in self.offsets:
+            offset, size = self.offsets[ref]
+            self.spill.seek(offset)
+            blob = self.spill.read(size)
+        else:
+            self.charge()
+            blob = self.backend.get(ref)
+            self.charge(len(blob), 0)
         if digest(blob) != ref:
             raise ValueError('partition content digest mismatch')
         if len(blob) <= CACHE_BYTES:
             while self.cache_size + len(blob) > CACHE_BYTES:
-                _, old = self.cache.popitem(last=False)
+                old_ref, old = self.cache.popitem(last=False)
                 self.cache_size -= len(old)
+                if old_ref not in self.offsets:
+                    if self.spill is None:
+                        self.spill = tempfile.TemporaryFile()
+                    self.spill.seek(0, io.SEEK_END)
+                    self.offsets[old_ref] = self.spill.tell(), len(old)
+                    self.spill.write(old)
             self.cache[ref] = blob
             self.cache_size += len(blob)
         return blob
@@ -176,9 +209,18 @@ class Transaction:
                         compact.pop(key, None)
                     else:
                         compact[key] = value
-                pages[slot] = [self.put(compact)] if compact else []
+                refs = []
+                patch = compact
+                pages.pop('filter:' + slot, None)
+            if patch:
+                ref = self.put(patch)
+                pages[slot] = [*refs, ref]
+                if day.startswith('index-'):
+                    # Bind the negative summary to the immutable page digest.
+                    # Older writers cannot accidentally reuse a stale filter.
+                    pages.setdefault('filter:' + slot, {})[ref[3]] = key_filter(patch)
             else:
-                pages[slot] = [*refs, self.put(patch)]
+                pages[slot] = refs
         self.dirty_days[day] = pages
         self.failed = False
 
@@ -197,6 +239,12 @@ class Transaction:
         self.failed = False
 
     def drain(self, send):
+        try:
+            return self._drain(send)
+        finally:
+            self.close()
+
+    def _drain(self, send):
         # Never send from a candidate transaction, even if its uploads succeeded.
         if self.failed or self.dirty_days or self.head != self.original:
             raise ValueError('delivery requires a fresh committed root')
@@ -213,6 +261,12 @@ class Transaction:
         return len(refs)
 
     def commit(self, watermarks):
+        try:
+            return self._commit(watermarks)
+        finally:
+            self.close()
+
+    def _commit(self, watermarks):
         if self.failed:
             raise ValueError('transaction already closed')
         self.failed = True
@@ -231,3 +285,9 @@ class Transaction:
         body = encode(self.head)
         self.charge(len(body))
         return self.backend.swap(self.version, body)
+
+    def close(self):
+        if self.spill is not None:
+            self.spill.close()
+            self.spill = None
+            self.offsets.clear()

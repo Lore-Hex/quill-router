@@ -1,4 +1,5 @@
 """Shadow acquisition/usage projector. The live scheduler must not publish from this module."""
+import base64
 import json
 from collections import defaultdict, deque
 from itertools import chain
@@ -29,7 +30,7 @@ class Overlay:
     """A bounded read-your-writes view. Flush only modified entries into touched partitions."""
     def __init__(self, tx):
         self.tx = tx
-        self.cache, self.manifests = {}, {}
+        self.cache, self.manifests, self.filters = {}, {}, {}
         self.changed = defaultdict(dict)
         self.size = 0
 
@@ -43,13 +44,25 @@ class Overlay:
         if key in delta:
             return delta[key]
         slot = ps.slot_for(day, kind, key)
-        if (day, slot) not in self.cache:
-            if day not in self.manifests:
-                self.manifests[day] = self.tx.day(day)
-            page = self.tx.fold(self.manifests[day].get(slot, []))
-            self.charge(page)
-            self.cache[day, slot] = page
-        return self.cache[day, slot].get(key)
+        if day not in self.manifests:
+            self.manifests[day] = self.tx.day(day)
+            self.charge(self.manifests[day])
+        pages = self.manifests[day]
+        for ref in reversed(pages.get(slot, [])):
+            checksum = ref if isinstance(ref, str) else ref[3]
+            if checksum not in self.cache:
+                encoded = pages.get('filter:' + slot, {}).get(checksum)
+                if encoded:
+                    if checksum not in self.filters:
+                        self.filters[checksum] = base64.b64decode(encoded, validate=True)
+                    if not ps.might_contain(self.filters[checksum], key):
+                        continue
+                page = self.tx.read(ref)
+                self.charge(page)
+                self.cache[checksum] = page
+            if key in self.cache[checksum]:
+                return self.cache[checksum][key]
+        return None
 
     def set(self, day, kind, key, value):
         self.charge(value)
@@ -77,6 +90,7 @@ def project(tx, changes, end, *, milestones=None):
         return _project(tx, changes, end, milestones)
     except Exception:
         tx.failed = True
+        tx.close()
         raise
 
 

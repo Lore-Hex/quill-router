@@ -11,6 +11,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from scripts.axiom_growth import incremental_projection as inc
+from scripts.axiom_growth import model as m
 from scripts.axiom_growth.partition_store import Transaction
 from scripts.axiom_growth.runtime import INGEST_BATCH, ingest_payloads
 
@@ -92,15 +94,45 @@ def run(store, scale, cycles, arrival):
             'scope': 'local object transport, committed outbox and mocked receipts; not source/projection or cloud latency'}
 
 
+def independent_signups(store, scale, cycles, arrival):
+    """Growing identity index workload: every five-minute cohort is new."""
+    times, io_bytes, ops = [], [], []
+    size = scale*arrival
+    for step in range(cycles):
+        end = dt.datetime(2026, 1, 1, tzinfo=dt.UTC) + dt.timedelta(minutes=step*5)
+
+        def changes(cohort, at):
+            for i in range(cohort*size, (cohort+1)*size):
+                row = m.project_event({'event': 'acquisition.signup_completed', '_time': at.isoformat(),
+                                       'anonymous_fingerprint': m.digest(f'v:{i}'),
+                                       'account_fingerprint': m.digest(f'a:{i}'),
+                                       'workspace_fingerprint': m.digest(f'w:{i}')}, source='axiom')
+                yield 'fact', row['event_id'], row
+
+        tx, before = Transaction(store), time.perf_counter()
+        delta = inc.project(tx, changes(step, end), end)
+        if len(delta) != size*2:
+            raise ValueError('incomplete cohort projections')
+        tx.commit({'acquisition': end.isoformat()})
+        times.append(time.perf_counter()-before)
+        io_bytes.append(tx.transferred)
+        ops.append(tx.ops)
+    return {'cycles': cycles, 'signups_per_cycle': size, 'independent_accounts': cycles*size,
+            'p95_seconds': sorted(times)[math.ceil(.95*cycles)-1], 'max_object_ops': max(ops),
+            'max_wire_bytes': max(io_bytes), 'scope': 'dirty projection and index commit, synthetic cohorts'}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scale', type=int, choices=[1, 10, 100], required=True)
     parser.add_argument('--cycles', type=int, default=12, choices=range(10, 101))
     parser.add_argument('--arrival', type=int, default=73, choices=range(1, 1001))
+    parser.add_argument('--mode', choices=('transport', 'independent-signups'), default='transport')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as tmp:
         backend = LocalObjects(Path(tmp) / 'objects.db')
         try:
-            print(json.dumps(run(backend, args.scale, args.cycles, args.arrival)))
+            bench = run if args.mode == 'transport' else independent_signups
+            print(json.dumps(bench(backend, args.scale, args.cycles, args.arrival)))
         finally:
             backend.db.close()
