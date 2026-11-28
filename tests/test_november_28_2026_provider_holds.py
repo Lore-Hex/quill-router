@@ -1,8 +1,8 @@
 """Holds placed on November 28, 2026 from production route-health alerts.
 
-Databricks refuses the gateway's credential on every route ("API tokens are
-disabled for user"), so its prepaid routes leave the catalog until the
-account is fixed. Phala answers HTTP 502 for two models after each timed
+Databricks refused the gateway's credential on every route ("API tokens are
+disabled for user"), so its prepaid routes were held until the token was
+replaced the same day. Phala answers HTTP 502 for two models after each timed
 unserved-route hold lifts, so those two routes are held until a reviewed
 recovery. See provider_contracts for the evidence and how to lift each.
 """
@@ -41,37 +41,19 @@ def no_other_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
 
 
-def test_databricks_prepaid_routes_leave_the_catalog_and_byok_stays(no_other_filters: None) -> None:
-    assert PREPAID_PROVIDER_HOLD_REASONS.get("databricks") == "operator-credential-disabled"
-    models = ("vendor/a", "vendor/b")
-    endpoints = {**_endpoints("databricks", models), **_endpoints("other-host", models)}
-
-    filtered = catalog_ingest._filter_unserved_provider_endpoints(endpoints)
-
-    assert filtered == {
-        key: row for key, row in endpoints.items()
-        if not (row.provider == "databricks" and row.usage_type == "Credits")
-    }
-
-
-def test_no_databricks_prepaid_route_is_served_or_probed() -> None:
-    from trusted_router.catalog import MODEL_ENDPOINTS, endpoint_for_id
-    from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
-    from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
+def test_databricks_prepaid_routes_serve_again_after_the_new_token() -> None:
+    # The provider-wide hold was lifted on November 28 once the gateway's
+    # Databricks token was replaced and a paid-path account canary passed.
+    # Its prepaid routes are built and in route-health rotation again.
+    from trusted_router.catalog import MODEL_ENDPOINTS
     from trusted_router.synthetic.probes import rotation_candidates
 
-    assert not [
+    assert "databricks" not in PREPAID_PROVIDER_HOLD_REASONS
+    assert [
         row for row in MODEL_ENDPOINTS.values()
         if row.provider == "databricks" and row.usage_type == "Credits"
     ]
-    assert "databricks" not in rotation_candidates()
-    # A request authorized before the hold still settles at the price it was
-    # quoted: the route is archived for settlement, not for admission.
-    held = [row for row in HELD_PREPAID_SETTLEMENT_ENDPOINTS.values() if row.provider == "databricks"]
-    assert held
-    for row in held:
-        assert endpoint_for_id(row.id) is None
-        assert _endpoint_for_id_compat(row.id) == row
+    assert "databricks" in rotation_candidates()
 
 
 @pytest.mark.parametrize("model_id", PHALA_HELD)
