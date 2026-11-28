@@ -24,8 +24,35 @@ MAX_GATEWAY_WINDOWS = 12
 MAX_GATEWAY_PAGES = 20
 GATEWAY_SECONDS = 60
 INGEST_BATCH = 500
+INGEST_BYTES = 1024 * 1024
 MAX_STATE_BYTES = 180_000_000
 MAX_COMPRESSED_BYTES = 40_000_000
+
+# build_journeys recomputes these from the retained source facts on every load.
+_DERIVED_DAILY = frozenset(('account_fingerprint', 'anonymous_fingerprint', 'identity_link_status',
+    'utm_source', 'utm_medium', 'utm_campaign', 'landing_path', 'creative_id', 'experiment_id',
+    'experiment_cell_id'))
+
+
+def checkpoint_facts(state):
+    return {**state, 'daily': [{k: v for k, v in row.items() if k not in _DERIVED_DAILY}
+                               for row in state['daily']]}
+
+
+def ingest_payloads(rows):
+    batch = []
+    size = 2  # JSON array brackets
+    for row in rows:
+        item = json.dumps(row, separators=(',', ':'), allow_nan=False).encode('ascii')
+        if len(item) + 2 > INGEST_BYTES:
+            raise ValueError('Single growth row exceeds ingest byte budget')
+        if batch and (len(batch) == INGEST_BATCH or size + 1 + len(item) > INGEST_BYTES):
+            yield len(batch), b'[' + b','.join(batch) + b']'
+            batch, size = [], 2
+        size += bool(batch) + len(item)
+        batch.append(item)
+    if batch:
+        yield len(batch), b'[' + b','.join(batch) + b']'
 
 
 def pack_checkpoint(value):
@@ -377,11 +404,14 @@ class Sources:
             for key, value in row.items():
                 if key.endswith('_fingerprint') and value and not m.HASH.fullmatch(str(value)):
                     raise ValueError('Invalid growth fingerprint')
-        for offset in range(0, len(values), INGEST_BATCH):
-            batch = values[offset:offset+INGEST_BATCH]
+        for count, body in ingest_payloads(values):
+            headers = {**self.headers, 'Content-Type': 'application/json'}
+            if len(body) >= 4096:
+                body = gzip.compress(body, compresslevel=1, mtime=0)
+                headers['Content-Encoding'] = 'gzip'
             result = self.checked(self.http.post(self.edge + '/v1/ingest/' + m.DATASET,
-                                  headers=self.headers, json=batch)).json()
-            if result.get('failed') != 0 or result.get('ingested') != len(batch):
+                                  headers=headers, content=body)).json()
+            if result.get('failed') != 0 or result.get('ingested') != count:
                 raise ValueError('Axiom did not accept the complete batch')
 
     def load(self, name):
@@ -397,7 +427,7 @@ class Sources:
         return json.loads(raw), meta['generation']
 
     def save(self, name, value, generation):
-        data, raw_size = pack_checkpoint(value)
+        data, raw_size = pack_checkpoint(checkpoint_facts(value) if name == 'state.json.gz' else value)
         result = self.google('POST', f'https://storage.googleapis.com/upload/storage/v1/b/{self.bucket}/o',
             params={'name': name, 'uploadType': 'media', 'ifGenerationMatch': generation},
             content=data).json()
