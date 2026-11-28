@@ -1807,6 +1807,15 @@ NOVEMBER_20_INCEPTRON_TRANSITIONS = [
     ),
     ("z-ai/glm-5.3 [inceptron:inceptron:zai-org/GLM-5.3]", "prompt", "2.445E-7", "1.05E-6"),
 ]
+NOVEMBER_28_MAKORA_TRANSITIONS = [
+    ("moonshotai/kimi-k3 [makora:makora:moonshotai/kimi-k3]", "prompt", "3.6E-7", "0.000001"),
+    ("moonshotai/kimi-k3 [makora:makora:moonshotai/Kimi-K3]", "prompt", "3.6E-7", "0.000001"),
+    ("moonshotai/kimi-k3 [makora:makora:moonshotai/Kimi-K3] cached-input", "prompt", "1.6E-7", "5E-7"),
+    ("z-ai/glm-5.3 [makora:makora:z-ai/glm-5.3]", "prompt", "1.8E-7", "0.0000015"),
+    ("z-ai/glm-5.3 [makora:makora:zai-org/GLM-5.3]", "prompt", "1.8E-7", "0.0000015"),
+    ("z-ai/glm-5.3 [makora:makora:zai-org/GLM-5.3] cached-input", "prompt", "1.25E-7", "2.6E-7"),
+    ("google/gemma-4-26b-a4b-it [makora:makora:google/gemma-4-26B-A4B]", "completion", "1E-7", "2.8E-7"),
+]
 NOVEMBER_19_REFRESH_TRANSITIONS = [
     (_ATLAS_SOL_CODEX, "prompt", "1E-7", "0.000002"),
     (_ATLAS_SOL_CODEX, "completion", "5E-7", "0.00001"),
@@ -1843,7 +1852,8 @@ NOVEMBER_19_REFRESH_TRANSITIONS = [
     + SEPTEMBER_22_REFRESH_TRANSITIONS
     + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
     + NOVEMBER_19_REFRESH_TRANSITIONS
-    + NOVEMBER_20_INCEPTRON_TRANSITIONS,
+    + NOVEMBER_20_INCEPTRON_TRANSITIONS
+    + NOVEMBER_28_MAKORA_TRANSITIONS,
 )
 def test_confirmed_refresh_transition_is_allowed(
     route: str, dimension: str, old: str, new: str,
@@ -1894,7 +1904,8 @@ def test_november_19_verified_transitions_pass_only_with_their_approvals(
     + SEPTEMBER_22_REFRESH_TRANSITIONS
     + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
     + NOVEMBER_19_REFRESH_TRANSITIONS
-    + NOVEMBER_20_INCEPTRON_TRANSITIONS,
+    + NOVEMBER_20_INCEPTRON_TRANSITIONS
+    + NOVEMBER_28_MAKORA_TRANSITIONS,
 )
 @pytest.mark.parametrize("mutation", ["remove-approval", "after-price", "endpoint-tag"])
 def test_confirmed_refresh_mutations_still_block(

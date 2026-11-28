@@ -90,6 +90,9 @@ _DISPLAY_NAMES = {
     "z-ai/glm-5.3": "GLM 5.3",
     "z-ai/glm-5.3-fast": "GLM 5.3 Fast",
     "z-ai/glm-5.3-flash": "GLM 5.3 Flash",
+    "z-ai/glm-5.3-flash-flex": "GLM 5.3 Flash Flex",
+    "z-ai/glm-5.3-flex": "GLM 5.3 Flex",
+    "z-ai/glm-5.3-spot": "GLM 5.3 Spot",
 }
 
 _NATIVE_TO_CANONICAL = {
@@ -108,6 +111,13 @@ _NATIVE_TO_CANONICAL = {
     "accounts/fireworks/models/glm-5p3": "z-ai/glm-5.3",
     "accounts/fireworks/routers/glm-5p3-fast": "z-ai/glm-5.3-fast",
     "accounts/fireworks/models/glm-5p3-flash": "z-ai/glm-5.3-flash",
+    # Flex (slower, half price) and Spot (best effort, half price) are chosen
+    # by model id: docs.fireworks.ai/serverless/serverless-modes, checked
+    # 2026-11-28. Spot has no availability guarantee and does not fall back to
+    # Standard, so it is a model of its own and never a route of GLM 5.3.
+    "accounts/fireworks/routers/glm-5p3-flex": "z-ai/glm-5.3-flex",
+    "accounts/fireworks/routers/glm-5p3-flash-flex": "z-ai/glm-5.3-flash-flex",
+    "accounts/fireworks/models/glm-5p3-spot": "z-ai/glm-5.3-spot",
     "accounts/fireworks/models/glm-5p1": "z-ai/glm-5.1",
     "accounts/fireworks/models/gpt-oss-120b": "openai/gpt-oss-120b",
     "accounts/fireworks/models/gpt-oss-20b": "openai/gpt-oss-20b",
