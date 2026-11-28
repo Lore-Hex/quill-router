@@ -45,7 +45,8 @@ def test_reference_tariff_native_id_and_conservative_privacy() -> None:
     assert not provider.internal_only and not provider.supports_byok
     assert not provider.provider_zero_data_retention
     assert provider.prepaid_zero_data_retention
-    assert not provider.provider_confidential_compute
+    # Operator-declared confidential compute (2026-11-20); no TR-verified E2EE.
+    assert provider.provider_confidential_compute
     assert not provider.provider_e2ee
     routes = endpoints_for_model(MODEL)
     assert len(routes) == 1

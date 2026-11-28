@@ -2511,13 +2511,19 @@ PROVIDERS: dict[str, Provider] = {
         provider_zero_data_retention=False,
         prepaid_zero_data_retention=True,
         prepaid_zero_data_retention_effective_on="2026-11-10",
-        provider_confidential_compute=False,
+        # Operator declaration (2026-11-20): the managed route runs on
+        # Fortanix confidential compute. TrustedRouter does not verify a per-request
+        # attestation, so provider_e2ee stays False and the route does not reach the
+        # confidential privacy tier or trustedrouter/confidential.
+        provider_confidential_compute=True,
         provider_e2ee=False,
         provider_policy=(
             "Zero data retention for TrustedRouter's managed GLM-5.3-Flash route, "
-            "confirmed by the operator on November 10, 2026. This account-scoped "
-            "declaration does not establish provider-wide retention terms, "
-            "confidential compute, or provider-side end-to-end encryption."
+            "confirmed by the operator on November 10, 2026. Confidential compute "
+            "for this route was declared by the operator on November 20, 2026; "
+            "TrustedRouter does not verify a per-request attestation of Fortanix's "
+            "compute, and this is not provider-side end-to-end encryption. These "
+            "account-scoped declarations do not establish provider-wide terms."
         ),
         provider_policy_url="https://github.com/Lore-Hex/quill-router/blob/main/docs/providers/fortanix-launch-2026-11-10.md",
     ),
