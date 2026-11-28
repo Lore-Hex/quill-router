@@ -1,0 +1,16 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<h1>Enter your verification code</h1>
+<p>Check <strong>{{ email }}</strong> for a message. If this address can be added, enter the eight-digit code here.</p>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/auth/verify-email">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="email" value="{{ email }}">
+  <input type="hidden" name="challenge" value="{{ challenge }}">
+  <label for="email-code">Verification code</label>
+  <input id="email-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+         pattern="[0-9]{8}" minlength="8" maxlength="8" required autofocus>
+  <button class="btn" type="submit">Verify email</button>
+</form>
+<p><a href="/auth/verify-email">Request another code</a></p>
+{% endblock %}

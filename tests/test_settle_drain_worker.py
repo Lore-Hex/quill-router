@@ -151,13 +151,25 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     assert routes.count(unserved_route) == int(routing_evidence)
     if routing_evidence:
         routes.remove(unserved_route)
-    # Account for exactly the wallet email-attach link target (and its /v1
-    # alias), only on surfaces that serve the wallet auth routes.
-    for path in ("/auth/wallet/email/verify", "/v1/auth/wallet/email/verify"):
-        verify_route = [path, ["GET"], "register_wallet_oauth_routes.<locals>.wallet_email_verify"]
-        assert routes.count(verify_route) == int(wallet_email_verify)
-        if wallet_email_verify:
-            routes.remove(verify_route)
+    # Pin the provider-neutral verifier and its wallet-only aliases to the control
+    # surface. Map the two moved wallet form handlers back to the frozen names.
+    for prefix in ("", "/v1"):
+        for path, method, fn in (
+            ("/auth/wallet/email/verify", "GET", "wallet_email_legacy_link"),
+            ("/auth/wallet/email/verify", "POST", "confirm_email_code"),
+            ("/auth/verify-email", "POST", "confirm_email_code"),
+            ("/auth/verify-email/request", "POST", "request_email_code"),
+            ("/auth/wallet/email", "POST", "request_email_code"),
+            ("/auth/wallet/email", "GET", "wallet_email_form"),
+        ):
+            route = [prefix + path, [method], f"register_email_verify_routes.<locals>.{fn}"]
+            assert routes.count(route) == int(wallet_email_verify)
+            if wallet_email_verify:
+                routes.remove(route)
+                if path == "/auth/wallet/email":
+                    old = "wallet_email_form" if method == "GET" else "wallet_email_submit"
+                    routes.append([prefix + path, [method], f"register_wallet_oauth_routes.<locals>.{old}"])
+    routes.sort()
     # Account for exactly the new guarded console POST, only on console surfaces.
     # All other routes, lifecycle hooks and state remain pinned to the baseline.
     management_route = ["/console/api-keys/management", ["POST"],
