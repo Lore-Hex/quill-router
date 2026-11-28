@@ -250,6 +250,21 @@ def reconcile(store, snapshot, *, days=2):
             'observed_through': watermark}
 
 
+def load_checkpoint(source):
+    generation, data = source.read_version('state.json.gz', MAX_COMPRESSED_BYTES)
+    if data is None:
+        raise ValueError('no legacy checkpoint')
+    with gzip.GzipFile(fileobj=io.BytesIO(data)) as src:
+        raw = src.read(MAX_STATE_BYTES + 1)
+    if len(raw) > MAX_STATE_BYTES:
+        raise ValueError('legacy checkpoint too large')
+    state = json.loads(raw)
+    lag = (dt.datetime.now(dt.UTC) - m.date(state['watermark'])).total_seconds()
+    if not 0 <= lag <= 15*60:
+        raise ValueError('legacy checkpoint is stale or from the future')
+    return generation, state, round(lag)
+
+
 def main():
     credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
     with httpx.Client(timeout=20, follow_redirects=False) as http:
@@ -257,19 +272,8 @@ def main():
         if source_bucket == dest:
             raise ValueError('shadow requires an isolated bucket')
         source = ShadowObjects(http, credentials, source_bucket)
-        generation, data = source.read_version('state.json.gz', MAX_COMPRESSED_BYTES)
-        if data is None:
-            raise ValueError('no legacy checkpoint')
-        with gzip.GzipFile(fileobj=io.BytesIO(data)) as src:
-            raw = src.read(MAX_STATE_BYTES + 1)
-        if len(raw) > MAX_STATE_BYTES:
-            raise ValueError('legacy checkpoint too large')
-        state = json.loads(raw)
-        del data, raw
+        generation, state, lag = load_checkpoint(source)
         now = dt.datetime.now(dt.UTC)
-        lag = (now - m.date(state['watermark'])).total_seconds()
-        if not 0 <= lag <= 15*60:
-            raise ValueError('legacy checkpoint is stale or from the future')
         verified = component_receipt(state)
         if not verified['component_projections_checked']:
             raise ValueError('no component parity evidence')
