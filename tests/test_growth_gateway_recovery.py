@@ -12,9 +12,8 @@ from scripts.axiom_growth.runtime import (
     MAX_GATEWAY_PAGES,
     Sources,
     collect_gateway,
-    cycle,
 )
-from tests.test_axiom_growth_worker import NOW, FakeIO, state
+from tests.test_axiom_growth_worker import NOW, FakeIO, cycle, state
 from tests.test_growth_completion import audit
 
 

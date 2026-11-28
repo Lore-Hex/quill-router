@@ -102,7 +102,7 @@ jobs:
           case "$GATEWAY_ENABLED" in true|false) new_gateway="$GATEWAY_ENABLED" ;; keep) ;; *) exit 1 ;; esac
           case "$OWNERS_ENABLED" in true|false) new_owners="$OWNERS_ENABLED" ;; keep) ;; *) exit 1 ;; esac
           gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" \
-            --image "$GROWTH_IMAGE" --memory 1Gi \
+            --image "$GROWTH_IMAGE" --memory 2Gi \
             --update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$new_gateway,GROWTH_BILLING_OWNERS_ENABLED=$new_owners"
           if ! gcloud run jobs execute "$JOB" --project "$PROJECT" --region "$REGION" --wait; then
             gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" \
@@ -110,5 +110,5 @@ jobs:
               --update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$old_gateway,GROWTH_BILLING_OWNERS_ENABLED=$old_owners"
             exit 1
           fi
-          printf 'Deployed %s\nExport job memory: 1Gi (was %s).\nGateway collector: %s (was %s). Billing-owner view: %s (was %s).\nVerify live Axiom feed statuses and two scheduled cycles before declaring completion.\n' \
+          printf 'Deployed %s\nExport job memory: 2Gi (was %s).\nGateway collector: %s (was %s). Billing-owner view: %s (was %s).\nVerify live Axiom feed statuses and two scheduled cycles before declaring completion.\n' \
             "$GROWTH_IMAGE" "$old_memory" "$new_gateway" "$old_gateway" "$new_owners" "$old_owners" >> "$GITHUB_STEP_SUMMARY"

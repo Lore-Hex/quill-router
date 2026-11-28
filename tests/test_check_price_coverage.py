@@ -953,6 +953,19 @@ def test_reviewed_unpriced_glm_tier_is_exempt_only_at_its_provider() -> None:
     assert required("z-ai/glm-6-fast", "parasail")
 
 
+def test_a_glm_release_with_no_api_price_is_exempt_only_at_its_own_maker() -> None:
+    required = check_price_coverage._is_required_provider_glm_model_id
+    # Z.AI sells GLM-5.4 inside its Coding Plan only; its Model API has no
+    # per-token price yet.
+    assert not required("z-ai/glm-5.4", "zai")
+    # A host that lists GLM-5.4 has to publish a price for it.
+    assert required("z-ai/glm-5.4", "fireworks")
+    assert required("z-ai/glm-5.4")
+    # Z.AI's next releases still block until they are priced or reviewed.
+    assert required("z-ai/glm-5.4-flash", "zai")
+    assert required("z-ai/glm-5.5", "zai")
+
+
 @pytest.mark.parametrize(
     ("live_id", "blocks"),
     [("zai-org/GLM-5.3-Flash-fast", False), ("zai-org/GLM-6-fast", True)],

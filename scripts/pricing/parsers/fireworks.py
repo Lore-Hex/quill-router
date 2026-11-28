@@ -13,6 +13,12 @@ MODEL_LABELS = {
     "Kimi K2.6 Fast": "moonshotai/kimi-k2.6-fast",
     "GLM 5.2 Fast": "z-ai/glm-5.2-fast",
     "GLM 5.3 Fast": "z-ai/glm-5.3-fast",
+    # Flex and Spot are Fireworks model ids of their own, billed at half the
+    # Standard rate (docs.fireworks.ai/serverless/serverless-modes). Their rows
+    # link to the standard model's page, so they are named here.
+    "GLM 5.3 Flash Flex": "z-ai/glm-5.3-flash-flex",
+    "GLM 5.3 Flex": "z-ai/glm-5.3-flex",
+    "GLM 5.3 Spot": "z-ai/glm-5.3-spot",
     "GLM 5.3 Flash": "z-ai/glm-5.3-flash",
     "GLM 5.3": "z-ai/glm-5.3",
     "Kimi K3": "moonshotai/kimi-k3",
@@ -84,10 +90,14 @@ def _canonical_linked_model(label: str, href: str) -> str | None:
     slug = re.sub(r"qwen(\d+)p(\d+)(?=$|-)", r"qwen\1.\2", slug)
     label_words = set(re.findall(r"[a-z0-9]+", label.casefold()))
     slug_words = set(slug.split("-"))
-    # Fireworks sometimes gives a Fast or US row the standard model's link.
-    # Auto-aliasing that row would overwrite the standard price, so require
-    # those modifiers to be present in the provider-native slug as well.
-    if any(modifier in label_words and modifier not in slug_words for modifier in ("fast", "us")):
+    # Fireworks gives a Fast, US, Flex or Spot row the standard model's link.
+    # Auto-aliasing that row would publish its price as the standard model's
+    # (a Flex or Spot row is half the Standard rate), so require those
+    # modifiers to be present in the provider-native slug as well.
+    if any(
+        modifier in label_words and modifier not in slug_words
+        for modifier in ("fast", "us", "flex", "spot")
+    ):
         return None
     for prefix, author in _FAMILY_AUTHORS:
         if slug.startswith(prefix):
