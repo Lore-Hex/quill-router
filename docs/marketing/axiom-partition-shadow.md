@@ -13,6 +13,20 @@ legacy hashes. The first check verifies storage fidelity; only the second
 checks projection logic. Nothing but stable IDs, digests and cursors is written
 to the shadow bucket. A source-generation race or resource bound fails closed.
 
+The verifier also selects matched and unmatched daily usage when available.
+It discards saved billing labels, follows the commercial owner's acquisition
+history even if the caller is someone else, and reconstructs attribution using
+the committed directory. Logs distinguish a successful directory read from a
+stale cached one and report how many usage and ownership links were checked.
+This is independent computation, **not** an independent upstream collector:
+the checkpoint still supplies the directory. An agreement is not a promotion
+receipt for the entire directory, the gateway, or the full history.
+
+The primary records `checkpoint_pack_ms` alongside its existing byte and
+utilization limits. Normalized records and digest batches use the fast JSON
+encoder in bounded pieces. The legacy serialized JSON and restore format are
+unchanged. Shorter write time does not increase the stored-state ceiling.
+
 Immutable pages and a single generation-matched root isolate competing
 writers; a committed outbox is drained before a later generation can advance.
 Acknowledgement loss may duplicate a physical row, but never changes its stable
