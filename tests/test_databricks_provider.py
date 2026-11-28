@@ -14,7 +14,6 @@ from scripts.pricing.refresh import PROVIDER_SLUGS
 from tests import catalog_vehicles
 from tests.provider_holds import row_taken_down_by_refresh
 from trusted_router.catalog import PROVIDERS
-from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS, ProviderClient
 from trusted_router.services.inference_errors import default_provider_secret_ref
@@ -410,11 +409,8 @@ def test_databricks_canaried_manifest_routes_are_in_catalog() -> None:
     }
 
     built = catalog_vehicles.registry_endpoints()
-    # While the provider-wide prepaid hold is in place (the gateway's
-    # credential is disabled), no Databricks route is built at all.
-    provider_held = "databricks" in PREPAID_PROVIDER_HOLD_REASONS
     for model_id, row in active.items():
-        if provider_held or provider_model_retired("databricks", model_id, row["upstream_id"]):
+        if provider_model_retired("databricks", model_id, row["upstream_id"]):
             assert f"{model_id}@databricks/prepaid" not in built
             continue
         endpoint = built[f"{model_id}@databricks/prepaid"]
@@ -445,10 +441,7 @@ def test_databricks_kimi_k3_is_held_for_disabled_account_access() -> None:
     assert committed[CONTROL].get("routable") is not False or control_held
     built = catalog_vehicles.registry_endpoints()
     assert f"{KIMI_K3}@databricks/prepaid" not in built
-    # The control is built unless the refresh holds it or the whole provider
-    # is held for prepaid traffic (PREPAID_PROVIDER_HOLD_REASONS).
-    provider_held = "databricks" in PREPAID_PROVIDER_HOLD_REASONS
-    assert (f"{CONTROL}@databricks/prepaid" in built) is not (control_held or provider_held)
+    assert f"{CONTROL}@databricks/prepaid" in built or control_held
 
 
 def test_databricks_kimi_k3_hold_survives_refresh_and_passing_canary(

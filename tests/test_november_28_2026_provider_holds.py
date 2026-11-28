@@ -43,8 +43,8 @@ def no_other_filters(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_databricks_prepaid_routes_serve_again_after_the_new_token() -> None:
     # The provider-wide hold was lifted on November 28 once the gateway's
-    # Databricks token was replaced. Its prepaid routes are built and probed
-    # again; route health holds any route that still fails.
+    # Databricks token was replaced and a paid-path account canary passed.
+    # Its prepaid routes are built and in route-health rotation again.
     from trusted_router.catalog import MODEL_ENDPOINTS
     from trusted_router.synthetic.probes import rotation_candidates
 
