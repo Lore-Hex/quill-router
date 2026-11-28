@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any
 
 from trusted_router.catalog import PROVIDERS, ModelEndpoint, endpoints_for_model
@@ -243,11 +243,11 @@ def _failover_sentence(hosts: DecisionModelHosts) -> str:
     return ""
 
 
-def _jev(hosts: DecisionModelHosts) -> str:
+def _jev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     return "A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API."
 
 
-def _trev(hosts: DecisionModelHosts) -> str:
+def _trev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     # The response for this name omits the host that served it, and so does
     # this row: it gives the number of hosts and never their names.
     hardware = " on the fastest hardware we could measure" if hosts.on_first_host else ""
@@ -260,14 +260,39 @@ def _trev(hosts: DecisionModelHosts) -> str:
     return f"The default. An open-weight 120B reasoning model{hardware}{failover}."
 
 
-def _mev(hosts: DecisionModelHosts) -> str:
-    return (
-        "Speed at a fifth of the price. Mercury 3, a diffusion model, answering "
-        "without deliberating."
-    )
+_FRACTION_WORDS = {2: "half", 3: "a third", 4: "a quarter", 5: "a fifth", 6: "a sixth",
+                   7: "a seventh", 8: "an eighth", 9: "a ninth", 10: "a tenth"}
 
 
-def _lev(hosts: DecisionModelHosts) -> str:
+def trev_price_comparison(cost: Decimal | None, trev_cost: Decimal | None) -> str | None:
+    """How one decision's cost compares with trev's, in words, from the two
+    costs the table shows. None when either is unknown or the ratio has no
+    plain wording (beyond ten times or a tenth)."""
+    if cost is None or trev_cost is None or cost <= 0 or trev_cost <= 0:
+        return None
+    ratio = cost / trev_cost
+    if ratio >= 1:
+        times = int((ratio + Decimal("0.5")).to_integral_value(rounding=ROUND_FLOOR))
+        if times == 1:
+            return "about trev's price"
+        if times <= 10:
+            return f"about {count_word(times)} times trev's price"
+        return None
+    parts = int((1 / ratio + Decimal("0.5")).to_integral_value(rounding=ROUND_FLOOR))
+    if parts == 1:
+        return "about trev's price"
+    if parts in _FRACTION_WORDS:
+        return f"about {_FRACTION_WORDS[parts]} of trev's price"
+    return None
+
+
+def _mev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
+    comparison = trev_price_comparison(hosts.cost, trev_cost)
+    speed = f"Speed at {comparison}." if comparison and "times" not in comparison else "Speed."
+    return f"{speed} Mercury 3, a diffusion model, answering without deliberating."
+
+
+def _lev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     # No speed or tail claim: on 2026-11-28 zev's tail was tighter than lev's,
     # so "the steadiest tail" stopped being true when SambaNova left the chain.
     return (
@@ -276,7 +301,7 @@ def _lev(hosts: DecisionModelHosts) -> str:
     )
 
 
-def _zev(hosts: DecisionModelHosts) -> str:
+def _zev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     if len(hosts.live) == 2:
         failover = ", with failover to a second host"
     elif len(hosts.live) > 2:
@@ -285,17 +310,16 @@ def _zev(hosts: DecisionModelHosts) -> str:
         failover = f", served by {hosts.first_live_host} alone"
     else:
         failover = ""
-    return (
-        f"A larger fast model. GLM 5.3 Fast, which reasons briefly{failover}. "
-        "About four times trev's price."
-    )
+    comparison = trev_price_comparison(hosts.cost, trev_cost)
+    price = f" {comparison[0].upper()}{comparison[1:]}." if comparison else ""
+    return f"A larger fast model. GLM 5.3 Fast, which reasons briefly{failover}.{price}"
 
 
-def _gev(hosts: DecisionModelHosts) -> str:
+def _gev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     return "A Google model. Small, from the Gemini family, with the format enforced by the host."
 
 
-def _dev(hosts: DecisionModelHosts) -> str:
+def _dev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     if len(hosts.live) >= 2:
         failover = f" Fails over from {' to '.join(hosts.live_hosts)}."
     else:
@@ -306,11 +330,11 @@ def _dev(hosts: DecisionModelHosts) -> str:
     )
 
 
-def _oev(hosts: DecisionModelHosts) -> str:
+def _oev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     return "A cheap all-rounder. An open-weight 20B model that reasons briefly."
 
 
-def _gemmev(hosts: DecisionModelHosts) -> str:
+def _gemmev(hosts: DecisionModelHosts, trev_cost: Decimal | None) -> str:
     return (
         "An open Gemma model: Gemma 4 26B with 4B parameters active, answering "
         f"without deliberating.{_failover_sentence(hosts)}"
@@ -320,7 +344,7 @@ def _gemmev(hosts: DecisionModelHosts) -> str:
 @dataclass(frozen=True)
 class _RowCopy:
     model_id: str
-    pick_it_for: Callable[[DecisionModelHosts], str]
+    pick_it_for: Callable[[DecisionModelHosts, Decimal | None], str]
     accuracy: str = "29 / 29"
     # Shown only when the first live host's route states no token price.
     typed_cost: str | None = None
@@ -356,9 +380,9 @@ class DecisionModelRow:
     cost: str
 
 
-def _row(hosts: DecisionModelHosts) -> DecisionModelRow:
+def _row(hosts: DecisionModelHosts, trev_cost: Decimal | None = None) -> DecisionModelRow:
     copy = _ROW_COPY[hosts.model_id]
-    pick_it_for = copy.pick_it_for(hosts)
+    pick_it_for = copy.pick_it_for(hosts, trev_cost)
     host = hosts.first_live_host
     if host is None:
         pick_it_for += " Temporarily unavailable."
@@ -436,9 +460,12 @@ def _runs_on(found: list[DecisionModelHosts]) -> list[dict[str, str]]:
 
 def decide_page_context() -> dict[str, Any]:
     found = decision_model_hosts()
-    rows = [_row(hosts) for hosts in found]
     by_id = {hosts.model_id: hosts for hosts in found}
     trev = by_id.get(TREV_1_0_MODEL_ID)
+    # Price comparisons in the rows are against the cost the table shows for
+    # trev, so they move with prices and with trev's first live host.
+    trev_cost = trev.cost if trev is not None and trev.live else None
+    rows = [_row(hosts, trev_cost) for hosts in found]
     trev_row = next((row for row in rows if row.model_id == TREV_1_0_MODEL_ID), None)
     return {
         "decide_models": {

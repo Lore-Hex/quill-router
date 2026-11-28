@@ -323,19 +323,18 @@ def test_with_every_chain_live_each_row_shows_its_first_hosts_figure(
         f"Fails over across {WORDS[len(CHAINS[LEV])]} hosts."
     )
     assert len(CHAINS[ZEV]) == 2
-    assert rows[ZEV][1] == (
+    # The price comparison is computed from the costs (see the price tests);
+    # fixture routes share one price, so only its form is pinned here.
+    assert rows[ZEV][1].startswith(
         "A larger fast model. GLM 5.3 Fast, which reasons briefly, with failover to a "
-        "second host. About four times trev's price."
-    )
+        "second host. About "
+    ) and rows[ZEV][1].endswith("trev's price.")
     assert rows[GEMMEV][1] == (
         "An open Gemma model: Gemma 4 26B with 4B parameters active, answering without "
         f"deliberating. Fails over across {WORDS[len(CHAINS[GEMMEV])]} hosts."
     )
     # Single-host names say nothing about hosts.
-    assert rows[MEV][1] == (
-        "Speed at a fifth of the price. Mercury 3, a diffusion model, answering "
-        "without deliberating."
-    )
+    assert rows[MEV][1].endswith("Mercury 3, a diffusion model, answering without deliberating.")
     assert _intro(page).endswith(
         "so speed comes first: four of these answer in about a third of a second. "
         "Start with trustedrouter/trev-1.0: it is among the fastest, it reasons briefly "
@@ -837,3 +836,56 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
     assert ("Start with" in intro) is (trev_hosts > 0)
     assert (f"it fails over across {WORDS.get(trev_hosts)} hosts." in intro) is (trev_hosts >= 2)
     assert f'"fallback_candidate_count": {max(1, trev_hosts)},' in page.get_text()
+
+
+
+@pytest.mark.parametrize(
+    ("cost", "trev_cost", "words"),
+    [
+        ("0.0014", "0.00034", "about four times trev's price"),
+        ("0.000068", "0.00034", "about a fifth of trev's price"),
+        ("0.00017", "0.00034", "about half of trev's price"),
+        ("0.00034", "0.00034", "about trev's price"),
+        ("0.0014", "0.00021", "about seven times trev's price"),
+        ("0.0014", "0.0001", None),
+        ("0.00002", "0.00034", None),
+        (None, "0.00034", None),
+        ("0.0014", None, None),
+    ],
+)
+def test_price_comparisons_follow_the_costs(cost: str | None, trev_cost: str | None, words: str | None) -> None:
+    assert decision_model_page.trev_price_comparison(
+        None if cost is None else Decimal(cost), None if trev_cost is None else Decimal(trev_cost)
+    ) == words
+
+
+def test_the_rows_compare_with_the_trev_cost_the_table_shows(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
+) -> None:
+    # trev falls back to a cheaper host: zev's and mev's comparisons move with it.
+    _serve(monkeypatch, TREV, CHAINS[TREV][1:])
+    rows = _model_rows(_page(client))
+    costs = {hosts.model_id: hosts.cost for hosts in decision_model_page.decision_model_hosts()}
+    assert costs[TREV] is not None
+    for model in (ZEV, MEV):
+        words = decision_model_page.trev_price_comparison(costs[model], costs[TREV])
+        if model == ZEV:
+            assert rows[ZEV][1].endswith(f" {words[0].upper()}{words[1:]}." if words else "reasons briefly, with failover to a second host.")
+        else:
+            assert rows[MEV][1].startswith(f"Speed at {words}." if words and "times" not in words else "Speed.")
+    # No trev host: no comparison is made.
+    _serve(monkeypatch, TREV, ())
+    rows = _model_rows(_page(client))
+    assert "trev" not in rows[ZEV][1] and "trev" not in rows[MEV][1]
+
+
+
+def test_todays_catalog_words_the_comparisons_as_measured(client: TestClient) -> None:
+    # On the real catalog the comparisons say what the cost column shows today
+    # (zev about four times trev, mev about a fifth), unless prices have moved.
+    rows = _model_rows(_page(client))
+    costs = {hosts.model_id: hosts.cost for hosts in decision_model_page.decision_model_hosts()}
+    for model in (ZEV, MEV):
+        words = decision_model_page.trev_price_comparison(costs.get(model), costs.get(TREV))
+        if words is not None:
+            assert words in rows[model][1].lower(), model
