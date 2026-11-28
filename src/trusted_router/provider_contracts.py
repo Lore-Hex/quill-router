@@ -88,6 +88,16 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # Keep managed billing dark until a reviewed adapter accounts for them.
     # https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview
     "perplexity": "billing-contract-unverified",
+    # November 27-28, 2026: every configured-route probe of Databricks has
+    # been refused with HTTP 401/403 "API tokens are disabled for user", the
+    # gateway's Databricks credential (Sentry QUILL-ROUTER-9K, -KS, -M0, -M1;
+    # warnings for GLM 5.2, Qwen3 Next 80B, Llama 4 Maverick, Qwen3.5 122B and
+    # GPT-OSS 120B so far). Databricks is prepaid-only here and the hourly refresh
+    # reads its public docs without a credential, so nothing else notices.
+    # To lift: re-enable API tokens for the account (or issue a new token and
+    # update the gateway's Databricks secret), pass a paid-path recovery
+    # canary, and delete this line.
+    "databricks": "operator-credential-disabled",
 }
 # Lightning revoked platform access during its October 16 security incident.
 # This applies to both managed and customer keys. Require reviewed recovery,
@@ -157,6 +167,15 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # hung for the full 90 s with no response, while its other routes
         # serve. Require a reviewed live recovery before re-enabling.
         ("sail-research", "google/gemma-4-12b-it"),
+        # November 27-28, 2026: Phala answers HTTP 502 to every probe of GLM
+        # OCR and GLM 5.3 Uncensored while its other routes serve (Sentry
+        # QUILL-ROUTER-KH and -KV). Each was held by the price refresh as
+        # provider-route-unserved for 24 h, failed again as soon as the hold
+        # lifted, and is now on its second, 48 h hold (QUILL-ROUTER-KY and
+        # -KZ, which ask for this). Require a reviewed live recovery before
+        # re-enabling.
+        ("phala", "z-ai/glm-ocr"),
+        ("phala", "z-ai/glm-5.3-uncensored"),
         # November 25, 2026: held as GROK_IMAGINE_VIDEO_HOLD_REASON
         # (provider-access-unavailable). TR's xAI team turned on zero data
         # retention on November 2 (#2264). Under ZDR xAI stores no outputs, so
