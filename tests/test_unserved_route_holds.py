@@ -14,6 +14,8 @@ from scripts.pricing import unserved_route_holds as holds
 from tests.provider_holds import row_on_unserved_route_hold
 from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HOLD_REASON,
+    UNSERVED_ROUTE_PRIOR_REASON_FIELD,
+    UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD,
     provider_manifest_canary_quarantine_valid_until,
 )
 from trusted_router.storage_models import ProviderBenchmarkSample
@@ -432,10 +434,67 @@ def test_recovered_route_is_lifted_when_the_hold_expires(tmp_path: Path) -> None
     notes = holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=NOW)
 
     rows = _rows(phala)
-    assert {"routable", "routable_reason", holds.HELD_AT_FIELD}.isdisjoint(rows["z-ai/glm-5.1"])
+    # Routable again, explicitly: an absent key would leave the row ambiguous.
+    assert rows["z-ai/glm-5.1"]["routable"] is True
+    assert {"routable_reason", holds.HELD_AT_FIELD}.isdisjoint(rows["z-ai/glm-5.1"])
     # Other hold reasons are never this step's to lift.
     assert rows["z-ai/glm-5.0"]["routable_reason"] == "provider-access-unavailable"
     assert any("lifted expired" in note for note in notes)
+
+
+@pytest.mark.parametrize("before", [{"routable": True}, {}], ids=["explicit-true", "absent"])
+def test_a_lift_restores_the_routability_the_hold_recorded(tmp_path: Path, before: dict[str, Any]) -> None:
+    phala = _manifest(tmp_path, "phala", [
+        _row("z-ai/glm-5.1", **before), _row("z-ai/glm-5.2"), _row("qwen/qwen3"),
+    ])
+    holds.apply_unserved_route_holds({("phala", "z-ai/glm-5.1")}, manifest_dir=tmp_path, now=NOW)
+    held = _rows(phala)["z-ai/glm-5.1"]
+    assert (held["routable"], held[UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD]) == (False, True)
+    assert UNSERVED_ROUTE_PRIOR_REASON_FIELD not in held
+
+    holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=NOW + dt.timedelta(hours=25))
+
+    lifted = _rows(phala)["z-ai/glm-5.1"]
+    # Routable again with an explicit value, and the record is gone.
+    assert lifted["routable"] is True
+    assert {"routable_reason", holds.HELD_AT_FIELD, UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD,
+            UNSERVED_ROUTE_PRIOR_REASON_FIELD}.isdisjoint(lifted)
+
+
+@pytest.mark.parametrize("prior_reason", ["provider-access-unavailable", None])
+def test_a_lift_never_makes_routable_a_row_that_was_not_routable_before_the_hold(
+    tmp_path: Path, prior_reason: str | None,
+) -> None:
+    # The planner only holds routable rows, but a hold placed by hand (or by a
+    # future caller) on an unroutable row must not lift it into a route.
+    row = _row("z-ai/glm-5.1", routable=False, routable_reason="provider-access-unavailable")
+    if prior_reason is None:
+        row.pop("routable_reason")
+    holds.record_routability_before_hold(row)
+    row.update(routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+               **{holds.HELD_AT_FIELD: "2026-11-10T17:00:00Z", holds.HOLD_COUNT_FIELD: 1})
+    phala = _manifest(tmp_path, "phala", [row, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
+
+    notes = holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=NOW)
+
+    lifted = _rows(phala)["z-ai/glm-5.1"]
+    assert any("lifted expired" in note for note in notes)
+    assert lifted["routable"] is False
+    assert lifted.get("routable_reason") == prior_reason
+    assert {holds.HELD_AT_FIELD, UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD,
+            UNSERVED_ROUTE_PRIOR_REASON_FIELD}.isdisjoint(lifted)
+
+
+def test_a_replaced_holds_routability_record_is_cleared(tmp_path: Path) -> None:
+    # A failed canary replaces an unserved hold; the record is meaningful only
+    # under the unserved hold, so the next pass drops it.
+    row = _row("z-ai/glm-5.1", routable=False, routable_reason="provider-canary-failed",
+               **{UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD: True})
+    phala = _manifest(tmp_path, "phala", [row, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
+    holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=NOW)
+    after = _rows(phala)["z-ai/glm-5.1"]
+    assert (after["routable"], after["routable_reason"]) == (False, "provider-canary-failed")
+    assert UNSERVED_ROUTE_PRIOR_ROUTABLE_FIELD not in after
 
 
 def test_a_route_still_unserved_at_expiry_is_held_again(tmp_path: Path) -> None:
@@ -618,7 +677,9 @@ def test_a_future_dated_hold_stamp_is_lifted_not_kept_forever(tmp_path: Path) ->
                 **{holds.HELD_AT_FIELD: "2099-01-01T00:00:00Z"})
     path = _manifest(tmp_path, "phala", [held, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
     holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=NOW)
-    assert {"routable", "routable_reason", holds.HELD_AT_FIELD}.isdisjoint(_rows(path)["z-ai/glm-5.1"])
+    lifted = _rows(path)["z-ai/glm-5.1"]
+    assert lifted["routable"] is True
+    assert {"routable_reason", holds.HELD_AT_FIELD}.isdisjoint(lifted)
 
 
 def test_the_route_cap_counts_holds_already_in_place(tmp_path: Path) -> None:

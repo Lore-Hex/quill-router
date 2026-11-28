@@ -579,7 +579,7 @@ def test_a_swept_hold_is_the_one_the_refresh_step_writes(tmp_path: Path) -> None
     rows = {row["id"]: row for row in json.loads((swept / "even.json").read_text())["models"]}
     assert rows["maker/even-1"] == _priced(
         "maker/even-1", routable=False, routable_reason="provider-route-unserved",
-        unserved_held_at="2026-11-26T07:32:00Z", unserved_hold_count=1,
+        unserved_held_at="2026-11-26T07:32:00Z", unserved_hold_count=1, unserved_prior_routable=True,
     )
     assert rows["maker/even-0"] == _priced("maker/even-0")
 

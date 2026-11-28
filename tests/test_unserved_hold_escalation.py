@@ -111,7 +111,8 @@ def test_a_lift_keeps_the_count_and_records_when_it_lifted(tmp_path: Path) -> No
     lifted_at = NOW + dt.timedelta(hours=24, minutes=31)
     notes = _sweep(tmp_path, lifted_at)
     row = _target(path)
-    assert {"routable", "routable_reason", holds.HELD_AT_FIELD}.isdisjoint(row)
+    assert row["routable"] is True
+    assert {"routable_reason", holds.HELD_AT_FIELD}.isdisjoint(row)
     assert row[holds.HOLD_COUNT_FIELD] == 1
     assert row[holds.LIFTED_AT_FIELD] == _iso(lifted_at)
     assert any("lifted expired" in note for note in notes)
