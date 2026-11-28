@@ -201,8 +201,7 @@
       "input_token_price_per_m": 95000,
       "output_token_price_per_m": 285000,
       "cached_input_token_price_per_m": 47500,
-      "routable_reason": "delisted-upstream",
-      "missing_since": "2026-11-27"
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "Qwen: Qwen3 32B",
@@ -508,7 +507,7 @@
     }
   ],
   "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
-  "generated_at": "2026-11-28T13:35:08Z",
+  "generated_at": "2026-11-28T15:28:28Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }
