@@ -420,17 +420,20 @@ def build_journeys(events, daily, end):
                 if row.get(field):
                     links[row[field]].add(anon)
     usage_by_anon = defaultdict(list)
+    identities = {}
     for item in daily:
-        candidates = set()
-        for key in ('workspace_fingerprint', 'marketing_workspace_fingerprint'):
-            candidates |= links.get(item.get(key), set())
-        accounts = set().union(*(accounts_by_anon[a] for a in candidates))
-        # A workspace may have multiple browser visitors. Account evidence must
-        # agree for all of them before assigning that workspace's usage.
-        account = next(iter(accounts)) if len(accounts) == 1 and all(accounts_by_anon[a] for a in candidates) else ''
-        item['account_fingerprint'] = account
-        item['anonymous_fingerprint'] = next(iter(candidates)) if len(candidates) == 1 and len(accounts) <= 1 else ''
-        item['identity_link_status'] = 'linked' if account else ('ambiguous' if len(candidates) > 1 or len(accounts) > 1 else 'orphaned')
+        pair = item.get('workspace_fingerprint'), item.get('marketing_workspace_fingerprint')
+        # Every model/provider/day for this pair sees the same evidence in this
+        # cycle. Cache the decision, not the potentially large visitor set.
+        if pair not in identities:
+            candidates = set(links.get(pair[0], ()))
+            candidates.update(links.get(pair[1], ()))
+            accounts = {account for a in candidates for account in accounts_by_anon[a]}
+            account = next(iter(accounts)) if len(accounts) == 1 and all(accounts_by_anon[a] for a in candidates) else ''
+            anon = next(iter(candidates)) if len(candidates) == 1 and len(accounts) <= 1 else ''
+            status = 'linked' if account else ('ambiguous' if len(candidates) > 1 or len(accounts) > 1 else 'orphaned')
+            identities[pair] = account, anon, status
+        item['account_fingerprint'], item['anonymous_fingerprint'], item['identity_link_status'] = identities[pair]
         if item['anonymous_fingerprint']:
             usage_by_anon[item['anonymous_fingerprint']].append(item)
     result = []
