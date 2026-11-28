@@ -194,3 +194,22 @@ def test_dirty_projection_matches_reference_on_late_link_ambiguity_and_expiry(st
             with pytest.raises(ValueError, match='oracle'):
                 shadow.component_check({**snapshot, 'hashes': {}})
         assert inc.project(p.Transaction(store), changes, end) == {}
+
+
+def test_broad_dirty_identity_fanout_is_packed_without_raising_io_guard(store):
+    import datetime as dt
+
+    from scripts.axiom_growth import incremental_projection as inc
+    from scripts.axiom_growth import model as m
+
+    end = dt.datetime.fromisoformat(MARK)
+    rows = [m.project_event({'event': 'acquisition.signup_completed', '_time': MARK,
+                             'anonymous_fingerprint': m.digest(f'v:{i}'),
+                             'workspace_fingerprint': m.digest(f'w:{i}'),
+                             'account_fingerprint': m.digest(f'a:{i}')}, source='axiom') for i in range(730)]
+    for campaign in ('first', 'late'):
+        tx = p.Transaction(store)
+        delta = inc.project(tx, [('fact', r['event_id'], {**r, 'utm_campaign': campaign}) for r in rows], end)
+        assert len(delta) == 2*len(rows)
+        tx.commit({'acquisition': MARK})
+        assert tx.ops <= 16

@@ -68,3 +68,11 @@ receipts, 12 update/commit/drain cycles including forced compaction measured:
 
 RSS includes seeding. Time excludes seeding. These are not production timings
 or a 100x end-to-end result.
+
+An additional adversarial qualification sent 7,300 independent signups
+(7,300 visitors, accounts and workspaces), then corrected every signup. The
+unpacked index hit the 2,048-operation guard at only 730 signups. Packed
+immutable pages committed 14,600 output changes in 8 object operations for
+the first burst (2.18s) and 12 for the corrections (2.79s); identical limits,
+local adapter, no production calls. This test does not emulate a cold read of
+millions of unrelated pre-existing identity links.

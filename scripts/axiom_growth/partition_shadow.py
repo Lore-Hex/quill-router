@@ -204,6 +204,7 @@ def reconcile(store, snapshot, *, days=2):
                 diff.update({k: v for k, v in wanted.items() if previous.get(k) != v})
                 if diff:
                     tx.apply(day, kind, diff)
+                    tx.flush_pack()
                     pages = tx.day(day)
                     if tx.fold(pages[slot]) != wanted:
                         raise ValueError('shadow readback parity mismatch')

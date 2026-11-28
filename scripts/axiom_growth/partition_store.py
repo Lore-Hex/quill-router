@@ -8,13 +8,15 @@ import hashlib
 import io
 import json
 import re
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 SCHEMA = 1
 PAGE_BYTES = 8 * 1024 * 1024
 MAX_DEPTH = 8
 MAX_OPS = 2048
 MAX_IO_BYTES = 96 * 1024 * 1024
+PACK_BYTES = 1024 * 1024
+CACHE_BYTES = 12 * PACK_BYTES
 KINDS = {'fact', 'usage', 'projection', 'dependency'}
 ID = re.compile('[0-9a-f]{64}')
 
@@ -68,6 +70,10 @@ class Transaction:
         self.transferred = len(blob or b'')
         self.dirty_days = {}
         self.failed = False
+        self.pending = bytearray()
+        self.refs = []
+        self.cache = OrderedDict()
+        self.cache_size = 0
 
     def charge(self, size=0, ops=1):
         self.ops += ops
@@ -75,21 +81,57 @@ class Transaction:
         if self.ops > MAX_OPS or self.transferred > MAX_IO_BYTES:
             raise ValueError('partition transaction exceeds IO budget')
 
-    def read(self, ref):
+    def blob(self, ref):
         if not ID.fullmatch(ref):
             raise ValueError('invalid partition reference')
+        if ref in self.cache:
+            self.cache.move_to_end(ref)
+            return self.cache[ref]
         self.charge()
         blob = self.backend.get(ref)
         self.charge(len(blob), 0)
         if digest(blob) != ref:
             raise ValueError('partition content digest mismatch')
-        return decode(blob)
+        if len(blob) <= CACHE_BYTES:
+            while self.cache_size + len(blob) > CACHE_BYTES:
+                _, old = self.cache.popitem(last=False)
+                self.cache_size -= len(old)
+            self.cache[ref] = blob
+            self.cache_size += len(blob)
+        return blob
+
+    def read(self, ref):
+        if isinstance(ref, str):
+            return decode(self.blob(ref))
+        pack, start, length, checksum = ref
+        data = self.pending if pack is None else self.blob(pack)
+        if start < 0 or length <= 0 or start + length > len(data):
+            raise ValueError('invalid packed page range')
+        piece = data[start:start+length]
+        if digest(piece) != checksum:
+            raise ValueError('packed page digest mismatch')
+        return decode(piece)
+
+    def flush_pack(self):
+        """Resolve all pending page references before serializing their parent."""
+        if not self.refs:
+            return
+        blob = bytes(self.pending)
+        key = digest(blob)
+        self.charge(len(blob))
+        self.backend.put(key, blob)
+        for ref in self.refs:
+            ref[0] = key
+        self.refs.clear()
+        self.pending.clear()
 
     def put(self, value):
         blob = encode(value)
-        self.charge(len(blob))
-        ref = digest(blob)
-        self.backend.put(ref, blob)
+        if len(self.pending) + len(blob) > PACK_BYTES:
+            self.flush_pack()
+        ref = [None, len(self.pending), len(blob), digest(blob)]
+        self.pending.extend(blob)
+        self.refs.append(ref)
         return ref
 
     def day(self, day):
@@ -181,8 +223,10 @@ class Transaction:
             old = self.head['watermarks'].get(key)
             if new.tzinfo is None or (old and new < dt.datetime.fromisoformat(old)):
                 raise ValueError('invalid or regressing partition watermark')
+        self.flush_pack()
         for day, pages in self.dirty_days.items():
             self.head['days'][day] = self.put(pages)
+        self.flush_pack()
         self.head['watermarks'].update(watermarks)
         body = encode(self.head)
         self.charge(len(body))
