@@ -67,10 +67,11 @@ def test_no_databricks_prepaid_route_is_served_or_probed() -> None:
     assert "databricks" not in rotation_candidates()
     # A request authorized before the hold still settles at the price it was
     # quoted: the route is archived for settlement, not for admission.
-    for row in HELD_PREPAID_SETTLEMENT_ENDPOINTS.values():
-        if row.provider == "databricks":
-            assert endpoint_for_id(row.id) is None
-            assert _endpoint_for_id_compat(row.id) == row
+    held = [row for row in HELD_PREPAID_SETTLEMENT_ENDPOINTS.values() if row.provider == "databricks"]
+    assert held
+    for row in held:
+        assert endpoint_for_id(row.id) is None
+        assert _endpoint_for_id_compat(row.id) == row
 
 
 @pytest.mark.parametrize("model_id", PHALA_HELD)
