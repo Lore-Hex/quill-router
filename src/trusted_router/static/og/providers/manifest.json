@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 38,
+    "model_count": 39,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 76,
+    "route_count": 78,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -337,7 +337,7 @@
     "model_count": 48,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 54,
+    "route_count": 55,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },

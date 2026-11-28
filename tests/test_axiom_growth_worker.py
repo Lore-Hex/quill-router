@@ -145,6 +145,45 @@ def test_checkpoint_codec_roundtrip_and_both_size_limits(monkeypatch):
         runtime.pack_checkpoint(value)
 
 
+def test_compact_daily_replays_previous_projection_and_late_ambiguity():
+    old = usage(event_id='usage', _time='2026-09-06T00:00:00Z', workspace_fingerprint='d'*64)
+    signup = event(workspace_fingerprint='d'*64, account_fingerprint='b'*64)
+    original = {**state(), 'daily': [old]}
+    snapshot, _ = cycle(original, FakeIO([signup]), NOW)
+    compact = runtime.checkpoint_facts(snapshot)
+    assert 'account_fingerprint' in snapshot['daily'][0]
+    assert 'account_fingerprint' not in compact['daily'][0]
+    assert compact['hashes'] == snapshot['hashes']
+    later = NOW + dt.timedelta(minutes=5)
+    for incoming in ([], [event(anonymous_fingerprint='c'*64, account_fingerprint='e'*64,
+                                workspace_fingerprint='d'*64)]):
+        left, right = FakeIO(incoming), FakeIO(incoming)
+        assert cycle(snapshot, left, later) == cycle(compact, right, later)
+        assert left.sent == right.sent
+
+
+def test_ingest_caps_uncompressed_bytes_and_receipts(monkeypatch):
+    monkeypatch.setattr(runtime, 'INGEST_BYTES', 7000)
+    rows = [{'payload': 'x'*5000} for _ in range(3)]
+    received = []
+
+    def accept(request):
+        assert request.headers['content-encoding'] == 'gzip'
+        body = gzip.decompress(request.content)
+        assert len(body) <= runtime.INGEST_BYTES
+        batch = json.loads(body)
+        received.extend(batch)
+        return httpx.Response(200, json={'failed': 0, 'ingested': len(batch)})
+
+    io = object.__new__(Sources)
+    io.edge, io.headers = 'https://example.test', {}
+    with httpx.Client(transport=httpx.MockTransport(accept)) as io.http:
+        io.ingest(rows)
+    assert received == rows
+    with pytest.raises(ValueError, match='byte budget'):
+        list(runtime.ingest_payloads([{'payload': 'x'*7000}]))
+
+
 def test_verified_domains_reproject_without_persisting_inferred_evidence():
     signup = event(account_fingerprint='b'*64, workspace_fingerprint='d'*64,
                    customer_domain='corp.example', customer_domain_verified=True,
