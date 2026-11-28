@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -191,6 +191,7 @@ def write_discovered_chat_manifest(
     operator_hold_reasons: dict[str, str] | None = None,
     confirmed_disabled_ids: Collection[str] = (),
     hold_tier_removal: bool = False,
+    prepare_rows: Callable[[list[Any]], None] | None = None,
 ) -> list[str]:
     """Rebuild a chat-provider manifest from a fresh provider catalog.
 
@@ -328,6 +329,8 @@ def write_discovered_chat_manifest(
         priced_ids=set(result.prices) | request_priced_ids,
         source=result.source,
     )
+    if prepare_rows is not None:
+        prepare_rows(rebuilt)
     # Discovery and tombstone recovery never have authority to clear an
     # operator safety hold. Apply these at the final manifest boundary so a
     # delist/relist cycle cannot accidentally publish a held route.

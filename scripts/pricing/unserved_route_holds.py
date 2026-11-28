@@ -44,8 +44,9 @@ manifests:
   lift restores it with an explicit ``routable`` value: ``true`` for a row
   that was routable, and never routable for one that was not.
 
-Holds use a reason the shared writers treat as an operator hold, so discovery
-carries them forward until this step lifts them.
+Holds use a reason the shared writers treat as an operator hold. For Cloudflare,
+expiry only permits its fresh discovery writer to restore the account's explicit
+route state; the generic timer pass cannot infer funding from a cached price.
 """
 
 from __future__ import annotations
@@ -184,7 +185,7 @@ def apply_unserved_route_holds(
         if raw is None:
             continue
         before = json.dumps(raw["models"], sort_keys=True)
-        lifted = lift_expired_unserved_holds(raw["models"], now=now)
+        lifted = lift_expired_unserved_holds(raw["models"], now=now, provider=path.stem)
         served = served_with_lifted(served, path.stem, lifted)
         if lifted:
             notes.append(f"{path.stem}: lifted expired unserved-route hold on {', '.join(sorted(lifted))}")

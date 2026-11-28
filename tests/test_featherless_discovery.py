@@ -26,7 +26,7 @@ def catalog(monkeypatch, tmp_path):
     # the hourly refresh holds as unserved is still listed by Featherless, so
     # start from the manifest with that hold lifted, the way the refresh's own
     # step lifts it. A row that is unroutable for any other reason stays so.
-    lift_expired_unserved_holds(committed["models"], now=datetime.max.replace(tzinfo=UTC))
+    lift_expired_unserved_holds(committed["models"], now=datetime.max.replace(tzinfo=UTC), provider=featherless.SLUG)
     manifest = tmp_path / "featherless.json"
     manifest.write_text(json.dumps(committed))
     # Only curated models remain in the recent-model listing. All other

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,8 @@ from trusted_router.provider_contracts import (
     THIRD_PARTY_PASSTHROUGH_HOLD_REASON,
     provider_model_operator_held,
 )
+from trusted_router.provider_manifest_policy import provider_manifest_row_price_is_valid
+from trusted_router.unserved_route_hold_plan import lift_expired_unserved_holds
 
 SLUG = "cloudflare-workers-ai"
 ACCOUNT_API = "https://api.cloudflare.com/client/v4/accounts/{account_id}"
@@ -332,11 +335,29 @@ def fetch() -> ProviderPricingResult:
     )
 
 
+def _prepare_account_rows(rows: list[Any]) -> None:
+    lift_expired_unserved_holds(rows, now=datetime.now(UTC), provider=SLUG, discovered_rows=_DISCOVERED_MANIFEST_ROWS)
+    # Refuse bad provider data here, while the refresh can still isolate one
+    # provider, rather than discovering it in the full snapshot's release CI.
+    for row in rows:
+        if isinstance(row, dict):
+            enabled, reason = row.get("routable"), row.get("routable_reason")
+            if enabled is True and reason is None and provider_manifest_row_price_is_valid(row):
+                continue
+            if enabled is False and isinstance(reason, str) and reason:
+                continue
+        model = row.get("id") if isinstance(row, dict) else None
+        raise ValueError(f"{SLUG}: missing or inconsistent priced routing disposition for {model!r}")
+
+
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    if result.source != "api":
+        return [f"{SLUG}: kept committed manifest (no fresh account discovery)"]
     return write_discovered_chat_manifest(
         result,
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        prepare_rows=_prepare_account_rows,
         source_url=result.fetched_url or "https://developers.cloudflare.com/workers-ai/",
         operator_hold_reasons={
             model_id: THIRD_PARTY_PASSTHROUGH_HOLD_REASON
