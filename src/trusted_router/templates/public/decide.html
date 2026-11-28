@@ -116,7 +116,7 @@
           </tbody>
         </table>
       </div>
-      <p><strong>What a name is.</strong> A <code>trustedrouter/</code> name is one tuned configuration: a model, the hosts it was measured on, its reasoning setting and its output format. It runs only on its own hosts, so the speed and price above are what you get, and it answers the decide route only. Improvements ship as a new version (<code>trev-1.1</code>) rather than by changing a name you have pinned. The exception is a model its hosts stop serving: <code>gemmev-1.0</code> moved from Gemma 4 E4B to Gemma 4 26B A4B on 28 September 2026, when DeepInfra, its only host, dropped the smaller model, and <code>mev-1.0</code> moved from Mercury 2 to Mercury 3 on 27 October 2026, ahead of Inception retiring Mercury 2 on 15 November.</p>
+      <p><strong>What a name is.</strong> A <code>trustedrouter/</code> name is one tuned configuration: a model, the hosts it was measured on, its reasoning setting and its output format. It runs only on its own hosts, the speed and price above are its first host's, and it answers the decide route only. Improvements ship as a new version (<code>trev-1.1</code>) rather than by changing a name you have pinned. The exception is a model its hosts stop serving: <code>gemmev-1.0</code> moved from Gemma 4 E4B to Gemma 4 26B A4B on 28 September 2026, when DeepInfra, its only host, dropped the smaller model, and <code>mev-1.0</code> moved from Mercury 2 to Mercury 3 on 27 October 2026, ahead of Inception retiring Mercury 2 on 15 November.</p>
       <p><strong>Prefer a plain model id?</strong> The same tuning applies when you name one of these chat models directly, and any other chat model in the catalog, such as <code>anthropic/claude-opus-5</code>, works too, untuned. Larger models do better on harder judgments.</p>
       <div class="model-table-wrap">
         <table data-reference-table>
@@ -127,7 +127,7 @@
           </tbody>
         </table>
       </div>
-      <p><strong>How to read this.</strong> The eval is small and deliberately easy: eight labeled support tickets, four questions each, 29 checks, run in September 2026. It shows that every model here answers clear cases correctly in the right form; it does not rank them on hard ones, and across repeated runs one borderline ticket occasionally costs a model a single check. Latency is the typical median time for the model host to answer, measured from one client over repeated runs; hosts vary from run to run, and your request also pays for authorization and settlement through the gateway. Gemmev's figure is the exception: it was measured end to end through the gateway, so it already includes them. Cost is for that four-question request, about 410 to 480 input tokens, at list price. Live per-token prices are always in <a href="/models"><code>GET /v1/models</code></a>.</p>
+      <p><strong>How to read this.</strong> The eval is small and deliberately easy: eight labeled support tickets, four questions each, 29 checks, run on 28 November 2026. It shows that every model here answers clear cases correctly in the right form; it does not rank them on hard ones, and across repeated runs one borderline ticket occasionally costs a model a single check. Latency is the median time the host took to answer, from the gateway's records, with the host pinned; hosts vary from run to run. It excludes the gateway's own time: your request also pays for authorization and settlement through the gateway. Each model's figure is for its first host. Jev's figure is the exception: the gateway records no host time for it, so it is the median measured from one client in September 2026. Cost is for that four-question request on the first host serving the model, about 410 to 480 input tokens, at list price. Live per-token prices are always in <a href="/models"><code>GET /v1/models</code></a>.</p>
     </div>
   </div>
 </section>
@@ -233,7 +233,7 @@ else:
     <div class="marketing-card">
       <span class="card-label">Billing</span>
       <h3>Tokens, like everything else.</h3>
-      <p><code>typesafe-ai/jev</code> bills input tokens only; its output is free. Chat-model-backed decisions bill the input and output tokens of the underlying call at the rate of the host that served it. A <code>trustedrouter/</code> name lists the rate of its most expensive host; a request served by a cheaper fallback host costs less.</p>
+      <p><code>typesafe-ai/jev</code> bills input tokens only; its output is free. Chat-model-backed decisions bill the input and output tokens of the underlying call at the rate of the host that served it. A <code>trustedrouter/</code> name lists the rate of its most expensive host. The cost in the table above is for the first host serving it; a request served by a fallback host may cost more or less.</p>
     </div>
     <div class="marketing-card">
       <span class="card-label">Privacy</span>

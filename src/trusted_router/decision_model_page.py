@@ -1,26 +1,28 @@
-"""What /docs/decide says about each decision model's hosts and latency.
+"""What /docs/decide says about each decision model's hosts, latency and cost.
 
 The page used to type which hosts a name runs on, how many it fails over
-across and how fast it answers. Hosts retire models, and every one of those
-sentences went stale. Here they are read from the catalog when the page is
-rendered: a chain host counts only while the catalog has a current prepaid
-route for the name's backing model there, which is the question authorize
-asks before it serves the name. The lookup costs under a millisecond, so the
-context is built per request and a retirement shows on the page at its
-effective time, with no deploy.
+across, how fast it answers and what a decision costs. Hosts retire models
+and change prices, and those sentences went stale. Here they are read from
+the catalog when the page is rendered: a chain host counts only while the
+catalog has a current prepaid route for the name's backing model there, which
+is the question authorize asks before it serves the name. The lookup costs
+about two milliseconds, so the context is built per request and a retirement
+or a price change shows on the page at its effective time, with no deploy.
 
 Latency is published per host, because a figure measured on one host says
 nothing about the next. A row shows the figure of its first live host or says
-that host has not been measured.
+that host has not been measured. Cost is the measured token counts at the
+first live host's catalog price.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from trusted_router.catalog import PROVIDERS, endpoints_for_model
+from trusted_router.catalog import PROVIDERS, ModelEndpoint, endpoints_for_model
 from trusted_router.catalog_data import (
     DEV_1_0_MODEL_ID,
     GEMMEV_1_0_MODEL_ID,
@@ -33,6 +35,7 @@ from trusted_router.catalog_data import (
     TREV_1_0_MODEL_ID,
     ZEV_1_0_MODEL_ID,
 )
+from trusted_router.pricing import resolve_request_rates
 
 JEV_MODEL_ID = "typesafe-ai/jev"
 # Jev is hosted by its vendor and has no chain in NAMED_DECISION_MODELS.
@@ -53,56 +56,112 @@ class Latency:
     # The number the text shows, in milliseconds: rows are ordered and counted by it.
     ms: int
     text: str
-    # True for a figure taken with one host pinned, end to end through the
-    # gateway, when the row itself has to say so.
-    row_says_where: bool = False
 
 
-def _pinned_median(ms: int) -> Latency:
-    """A median measured end to end with the host pinned, rounded as the page
-    rounds: to 10 ms below 700 ms, to a tenth of a second from there."""
+def _about(ms: int) -> Latency:
+    """A median rounded as the page rounds: to 10 ms below 700 ms, to a tenth
+    of a second from there."""
     if ms < 700:
         shown = (ms + 5) // 10 * 10
-        return Latency(shown, f"about {shown} ms", row_says_where=True)
+        return Latency(shown, f"about {shown} ms")
     shown = (ms + 50) // 100 * 100
     seconds = f"{shown // 1000}.{shown % 1000 // 100}".removesuffix(".0")
-    return Latency(shown, f"about {seconds} s", row_says_where=True)
+    return Latency(shown, f"about {seconds} s")
 
 
-# Latency by model and host. A chain's first host carries the figure the page
-# has always shown for the name. A later host carries its own pinned median:
-# measured 2026-09-25 (gemmev 2026-09-28) through /api/alpha/decide with
-# fallbacks off, as recorded beside NAMED_DECISION_MODELS. A host missing here
-# has not been measured, and the page says so instead of borrowing a figure.
-MEASURED_LATENCY: dict[str, dict[str, Latency]] = {
-    JEV_MODEL_ID: {"typesafe": Latency(250, "about 250 ms")},
-    TREV_1_0_MODEL_ID: {
-        "cerebras": Latency(300, "about 300 ms"),
-        "sambanova": _pinned_median(522),
-        "fireworks": _pinned_median(941),
-        "together": _pinned_median(1125),
-    },
-    MEV_1_0_MODEL_ID: {"inception": Latency(370, "about 370 ms")},
-    LEV_1_0_MODEL_ID: {
-        "sambanova": Latency(390, "about 390 ms"),
-        "parasail": _pinned_median(927),
-        "together": _pinned_median(1576),
-    },
-    # Baseten answered 529 at every effort on the day Fireworks was measured.
-    ZEV_1_0_MODEL_ID: {"fireworks": Latency(800, "about 0.8 s (0.7 to 1.1 s)")},
-    GEV_1_0_MODEL_ID: {"google-ai-studio": Latency(800, "about 0.8 s")},
-    DEV_1_0_MODEL_ID: {
-        "wafer": Latency(1000, "about 1 s (0.7 to 2.4 s)"),
-        "deepinfra": _pinned_median(1858),
-        "wandb": _pinned_median(1987),
-    },
-    OEV_1_0_MODEL_ID: {"deepinfra": Latency(1600, "about 1.6 s")},
-    GEMMEV_1_0_MODEL_ID: {
-        "nextbit": Latency(2000, "about 2 s"),
-        "wandb": _pinned_median(1940),
-        "io-net": _pinned_median(1964),
-    },
+@dataclass(frozen=True)
+class HostMedian:
+    """The median time one host took to answer, with the number of requests
+    the median is over."""
+
+    ms: int
+    samples: int
+
+
+# A median over fewer joined requests than this is not published.
+MIN_SAMPLES = 6
+
+# Host time by model and host, measured 2026-11-28: the eval's 8 labeled
+# tickets and 29 checks through POST /api/alpha/decide, each host pinned with
+# fallbacks off. Each call's x-request-id was joined to the gateway's own
+# request_end record, whose upstream_ms is the time the host took; the
+# gateway's own time is not in it. Those records are sampled, so `samples` is
+# the number of joined calls. Every figure here is a chain's first host.
+# Later hosts had fewer than MIN_SAMPLES joined calls and carry no figure:
+# the page says "not yet measured" there instead of borrowing one.
+MEASURED_LATENCY: dict[str, dict[str, HostMedian]] = {
+    TREV_1_0_MODEL_ID: {"cerebras": HostMedian(335, 8)},
+    MEV_1_0_MODEL_ID: {"inception": HostMedian(344, 7)},
+    ZEV_1_0_MODEL_ID: {"fireworks": HostMedian(410, 10)},
+    LEV_1_0_MODEL_ID: {"wandb": HostMedian(805, 13)},
+    GEV_1_0_MODEL_ID: {"google-ai-studio": HostMedian(864, 6)},
+    DEV_1_0_MODEL_ID: {"wafer": HostMedian(371, 10)},
+    OEV_1_0_MODEL_ID: {"deepinfra": HostMedian(1417, 13)},
+    GEMMEV_1_0_MODEL_ID: {"nextbit": HostMedian(450, 11)},
 }
+# The hosted path records no host time for Jev. Its figure is the median
+# measured from one client in September 2026, and the page says so.
+_CLIENT_MEDIAN_MS: dict[str, dict[str, int]] = {JEV_MODEL_ID: {"typesafe": 250}}
+
+
+def published_latency(model_id: str, host: str) -> Latency | None:
+    """The figure the page shows for `model_id` answered by `host`, or None
+    when that host has no figure over enough requests."""
+    client_ms = _CLIENT_MEDIAN_MS.get(model_id, {}).get(host)
+    if client_ms is not None:
+        return _about(client_ms)
+    median = MEASURED_LATENCY.get(model_id, {}).get(host)
+    if median is None or median.samples < MIN_SAMPLES:
+        return None
+    return _about(median.ms)
+
+
+# Input and output tokens of one decision (the eval's four-question request),
+# as each model reported them on 2026-11-28.
+DECISION_TOKENS: dict[str, tuple[int, int]] = {
+    JEV_MODEL_ID: (445, 86),
+    TREV_1_0_MODEL_ID: (478, 207),
+    MEV_1_0_MODEL_ID: (418, 64),
+    ZEV_1_0_MODEL_ID: (418, 68),
+    LEV_1_0_MODEL_ID: (440, 62),
+    GEV_1_0_MODEL_ID: (429, 76),
+    DEV_1_0_MODEL_ID: (411, 74),
+    OEV_1_0_MODEL_ID: (465, 135),
+    GEMMEV_1_0_MODEL_ID: (445, 72),
+}
+_MICRODOLLARS_PER_MILLION_TOKENS_TO_DOLLARS = Decimal(10) ** 12
+
+
+def decision_cost(model_id: str, endpoint: ModelEndpoint) -> Decimal | None:
+    """What one decision costs on `endpoint`, in dollars: the measured tokens
+    at the route's prepaid price, which already carries the fee. None when
+    the tokens are not recorded or the route states no token price."""
+    tokens = DECISION_TOKENS.get(model_id)
+    if tokens is None:
+        return None
+    prompt_tokens, completion_tokens = tokens
+    rates = resolve_request_rates(
+        endpoint.price_tiers,
+        headline_prompt_micro_per_m=endpoint.prompt_price_microdollars_per_million_tokens,
+        headline_completion_micro_per_m=endpoint.completion_price_microdollars_per_million_tokens,
+        total_prompt_tokens=prompt_tokens,
+    )
+    microdollars = (
+        prompt_tokens * rates.prompt_price_microdollars_per_million_tokens
+        + completion_tokens * rates.completion_price_microdollars_per_million_tokens
+    )
+    if microdollars <= 0:
+        return None
+    return Decimal(microdollars) / _MICRODOLLARS_PER_MILLION_TOKENS_TO_DOLLARS
+
+
+def _two_figures(dollars: Decimal) -> str:
+    """Dollars to two significant figures, as the cost column shows them."""
+    rounded = dollars.quantize(
+        Decimal(1).scaleb(dollars.adjusted() - 1), rounding=ROUND_HALF_UP
+    )
+    text = format(rounded, "f")
+    return "$" + (text.rstrip("0").rstrip(".") if "." in text else text)
 
 
 @dataclass(frozen=True)
@@ -120,6 +179,9 @@ class DecisionModelHosts:
     # The first live host's figure. None when no host is live or when that
     # host has not been measured.
     latency: Latency | None
+    # One decision on the first live host, in dollars. None when no host is
+    # live or its route states no token price.
+    cost: Decimal | None
 
     @property
     def on_first_host(self) -> bool:
@@ -152,11 +214,10 @@ def decision_model_hosts() -> list[DecisionModelHosts]:
         if model_id not in chains:
             continue
         backing_model_id, chain = chains[model_id]
-        prepaid = {
-            endpoint.provider
-            for endpoint in endpoints_for_model(backing_model_id)
-            if endpoint.usage_type == "Credits"
-        }
+        prepaid: dict[str, ModelEndpoint] = {}
+        for endpoint in endpoints_for_model(backing_model_id):
+            if endpoint.usage_type == "Credits":
+                prepaid.setdefault(endpoint.provider, endpoint)
         live = tuple(host for host in chain if host in prepaid)
         found.append(
             DecisionModelHosts(
@@ -165,7 +226,8 @@ def decision_model_hosts() -> list[DecisionModelHosts]:
                 chain=chain,
                 live=live,
                 live_hosts=tuple(_host_name(host) for host in live),
-                latency=MEASURED_LATENCY.get(model_id, {}).get(live[0]) if live else None,
+                latency=published_latency(model_id, live[0]) if live else None,
+                cost=decision_cost(model_id, prepaid[live[0]]) if live else None,
             )
         )
     return found
@@ -206,17 +268,10 @@ def _mev(hosts: DecisionModelHosts) -> str:
 
 
 def _lev(hosts: DecisionModelHosts) -> str:
-    # "The steadiest tail" and the 565 ms answer were both measured on
-    # SambaNova: they are shown only while SambaNova, the chain's first host,
-    # is the one that answers first.
-    if hosts.on_first_host:
-        lead = (
-            "The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest "
-            "answer in the eval took 565 ms."
-        )
-    else:
-        lead = "Llama 3.3 70B, answering without deliberating."
-    return f"{lead}{_failover_sentence(hosts)}"
+    # "The steadiest tail" was measured on the chain's first host: it is shown
+    # only while that host is the one that answers first.
+    tail = "The steadiest tail. " if hosts.on_first_host else ""
+    return f"{tail}Llama 3.3 70B, answering without deliberating.{_failover_sentence(hosts)}"
 
 
 def _zev(hosts: DecisionModelHosts) -> str:
@@ -228,13 +283,9 @@ def _zev(hosts: DecisionModelHosts) -> str:
         failover = f", served by {hosts.first_live_host} alone"
     else:
         failover = ""
-    # The page's figure for this name was taken end to end on its first host.
-    measured = (
-        " Measured end to end through the gateway, like gemmev." if hosts.on_first_host else ""
-    )
     return (
         f"A larger fast model. GLM 5.3 Fast, which reasons briefly{failover}. "
-        f"About four times the price of the others here.{measured}"
+        "About four times the price of the others here."
     )
 
 
@@ -268,8 +319,9 @@ def _gemmev(hosts: DecisionModelHosts) -> str:
 class _RowCopy:
     model_id: str
     pick_it_for: Callable[[DecisionModelHosts], str]
-    cost: str
     accuracy: str = "29 / 29"
+    # Shown only when the first live host's route states no token price.
+    typed_cost: str | None = None
     # False for a name whose hosts the page counts and does not name.
     names_hosts: bool = True
 
@@ -277,15 +329,15 @@ class _RowCopy:
 # The page's reading order. The table is ordered by the latency shown; this
 # order breaks ties and places the rows that show no figure.
 _ROWS: tuple[_RowCopy, ...] = (
-    _RowCopy(JEV_MODEL_ID, _jev, "$0.00002"),
-    _RowCopy(TREV_1_0_MODEL_ID, _trev, "$0.00034", names_hosts=False),
-    _RowCopy(MEV_1_0_MODEL_ID, _mev, "$0.00007"),
-    _RowCopy(LEV_1_0_MODEL_ID, _lev, "$0.00036"),
-    _RowCopy(ZEV_1_0_MODEL_ID, _zev, "$0.0014"),
-    _RowCopy(GEV_1_0_MODEL_ID, _gev, "$0.00023"),
-    _RowCopy(DEV_1_0_MODEL_ID, _dev, "$0.00013"),
-    _RowCopy(OEV_1_0_MODEL_ID, _oev, "$0.00004"),
-    _RowCopy(GEMMEV_1_0_MODEL_ID, _gemmev, "$0.00007"),
+    _RowCopy(JEV_MODEL_ID, _jev, typed_cost="$0.00002"),
+    _RowCopy(TREV_1_0_MODEL_ID, _trev, names_hosts=False),
+    _RowCopy(MEV_1_0_MODEL_ID, _mev),
+    _RowCopy(LEV_1_0_MODEL_ID, _lev),
+    _RowCopy(ZEV_1_0_MODEL_ID, _zev),
+    _RowCopy(GEV_1_0_MODEL_ID, _gev),
+    _RowCopy(DEV_1_0_MODEL_ID, _dev),
+    _RowCopy(OEV_1_0_MODEL_ID, _oev),
+    _RowCopy(GEMMEV_1_0_MODEL_ID, _gemmev),
 )
 _ROW_COPY: Mapping[str, _RowCopy] = {row.model_id: row for row in _ROWS}
 
@@ -308,16 +360,17 @@ def _row(hosts: DecisionModelHosts) -> DecisionModelRow:
     host = hosts.first_live_host
     if host is None:
         pick_it_for += " Temporarily unavailable."
-        latency = "unavailable"
-    elif hosts.latency is None:
-        where = host if copy.names_hosts else "its current host"
-        latency = f"not yet measured on {where}"
+        latency = cost = "unavailable"
     else:
-        latency = hosts.latency.text
-        if hosts.latency.row_says_where:
-            where = f" on {host}" if copy.names_hosts else ""
-            like = "" if hosts.model_id == GEMMEV_1_0_MODEL_ID else ", like gemmev"
-            pick_it_for += f" Measured end to end through the gateway{where}{like}."
+        if hosts.latency is None:
+            where = host if copy.names_hosts else "its current host"
+            latency = f"not yet measured on {where}"
+        else:
+            latency = hosts.latency.text
+        if hosts.cost is not None:
+            cost = _two_figures(hosts.cost)
+        else:
+            cost = copy.typed_cost or "not stated"
     return DecisionModelRow(
         model_id=hosts.model_id,
         live_hosts=hosts.live_hosts,
@@ -325,7 +378,7 @@ def _row(hosts: DecisionModelHosts) -> DecisionModelRow:
         latency=latency,
         latency_ms=hosts.latency.ms if hosts.latency is not None else None,
         accuracy=copy.accuracy,
-        cost=copy.cost,
+        cost=cost,
     )
 
 

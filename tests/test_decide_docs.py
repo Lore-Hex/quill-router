@@ -1,5 +1,7 @@
 import re
+from dataclasses import replace
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from bs4 import BeautifulSoup
@@ -7,8 +9,9 @@ from fastapi.testclient import TestClient
 
 from tests.fixture_routes import bypass_catalog_caches, drop_routes, serve_on_fixture_route
 from tests.test_decide_models import _serve_on_fixture_routes
-from trusted_router import catalog, decision_model_page, provider_lifecycle
+from trusted_router import catalog, catalog_data, decision_model_page, provider_lifecycle
 from trusted_router.catalog import (
+    MODEL_ENDPOINTS,
     MODELS,
     NATIVE_DECISION_MODEL_IDS,
     PROVIDERS,
@@ -32,6 +35,20 @@ GEMMEV = "trustedrouter/gemmev-1.0"
 CHAINS: dict[str, tuple[str, ...]] = {JEV: ("typesafe",), **NAMED_DECISION_MODEL_PROVIDERS}
 READING_ORDER = [JEV, TREV, MEV, LEV, ZEV, GEV, DEV, OEV, GEMMEV]
 WORDS = {1: "one", 2: "two", 3: "three", 4: "four"}
+# Input and output tokens of one decision, as measured on 2026-11-28.
+TOKENS = {
+    JEV: (445, 86),
+    TREV: (478, 207),
+    MEV: (418, 64),
+    ZEV: (418, 68),
+    LEV: (440, 62),
+    GEV: (429, 76),
+    DEV: (411, 74),
+    OEV: (465, 135),
+    GEMMEV: (445, 72),
+}
+# The fixture routes' prices, in microdollars per million tokens.
+FIXTURE_PRICES = (1_000_000, 3_000_000)
 
 
 def test_decide_docs_publish_the_contract(client: TestClient) -> None:
@@ -166,18 +183,32 @@ def test_no_template_names_the_decide_path_by_hand() -> None:
 
 
 
-# What the page says about hosts and latency is read from the catalog when it
-# is rendered (trusted_router.decision_model_page). The tests below build the
-# chains on fixture routes, so they hold for any provider manifest on any date.
+# What the page says about hosts, latency and cost is read from the catalog
+# when it is rendered (trusted_router.decision_model_page). The tests below
+# build the chains on fixture routes, so they hold for any provider manifest
+# on any date.
 
 
-def _serve(monkeypatch: pytest.MonkeyPatch, model_id: str, hosts: tuple[str, ...]) -> None:
+def _serve(
+    monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
+    hosts: tuple[str, ...],
+    prices: dict[str, tuple[int, int]] | None = None,
+) -> None:
     """Make `hosts` the only hosts with a prepaid route for the model behind
-    `model_id`."""
+    `model_id`. `prices` gives a host its own prompt and completion price."""
     backing = PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)
     drop_routes(monkeypatch, backing)
     for host in hosts:
-        serve_on_fixture_route(monkeypatch, backing, host, author=backing.split("/")[0])
+        prompt, completion = (prices or {}).get(host, FIXTURE_PRICES)
+        serve_on_fixture_route(
+            monkeypatch,
+            backing,
+            host,
+            author=backing.split("/")[0],
+            prompt_price_microdollars_per_million_tokens=prompt,
+            completion_price_microdollars_per_million_tokens=completion,
+        )
 
 
 @pytest.fixture
@@ -214,17 +245,21 @@ def _runs_on(page: BeautifulSoup) -> dict[str, str]:
     return {row[0]: row[1] for row in _table_rows(page, "Tuned chat model")}
 
 
-def _intro(page: BeautifulSoup) -> str:
+def _paragraph(page: BeautifulSoup, opening: str) -> str:
     return next(
         text
         for text in (paragraph.get_text() for paragraph in page.find_all("p"))
-        if text.startswith("Every model below")
+        if text.startswith(opening)
     )
+
+
+def _intro(page: BeautifulSoup) -> str:
+    return _paragraph(page, "Every model below")
 
 
 def _shown_ms(latency: str) -> int | None:
     """The figure a latency cell shows, in milliseconds; None when it shows none."""
-    match = re.match(r"about ([\d.]+) (ms|s)\b", latency)
+    match = re.fullmatch(r"about ([\d.]+) (ms|s)", latency)
     if match is None:
         assert not re.search(r"\d", latency), latency
         return None
@@ -243,38 +278,54 @@ def _fast_claim(page: BeautifulSoup) -> tuple[int, tuple[str, str] | None]:
     return fast, ((said[1], said[2]) if said else None)
 
 
+def _cost(model_id: str, prices: tuple[int, int] = FIXTURE_PRICES) -> str:
+    """One decision of `model_id` at these prices, as the cost column writes
+    it: the measured tokens at the route's price, to two significant figures."""
+    (tokens_in, tokens_out), (prompt, completion) = TOKENS[model_id], prices
+    dollars = (tokens_in * prompt + tokens_out * completion) / 1e12
+    return "$" + f"{float(f'{dollars:.2g}'):.12f}".rstrip("0")
+
+
+def _later_hosts() -> list[tuple[str, tuple[str, ...]]]:
+    """Each name with a chain of two or more, on every run of hosts that
+    starts after its first."""
+    return [
+        (model_id, chain[start:])
+        for model_id, chain in CHAINS.items()
+        for start in range(1, len(chain))
+    ]
+
+
 def test_with_every_chain_live_each_row_shows_its_first_hosts_figure(
     client: TestClient, every_chain_live: None
 ) -> None:
     page = _page(client)
     rows = _model_rows(page)
-    assert {model_id: row[2] for model_id, row in rows.items()} == {
-        JEV: "about 250 ms",
-        TREV: "about 300 ms",
-        MEV: "about 370 ms",
-        LEV: "about 390 ms",
-        ZEV: "about 0.8 s (0.7 to 1.1 s)",
-        GEV: "about 0.8 s",
-        DEV: "about 1 s (0.7 to 2.4 s)",
-        OEV: "about 1.6 s",
-        GEMMEV: "about 2 s",
-    }
-    # Those figures are already fastest first; equal ones keep reading order.
-    assert list(rows) == READING_ORDER
+    # Fastest first; trev and mev show the same figure and keep reading order.
+    assert [(model_id, row[2]) for model_id, row in rows.items()] == [
+        (JEV, "about 250 ms"),
+        (TREV, "about 340 ms"),
+        (MEV, "about 340 ms"),
+        (DEV, "about 370 ms"),
+        (ZEV, "about 410 ms"),
+        (GEMMEV, "about 450 ms"),
+        (LEV, "about 0.8 s"),
+        (GEV, "about 0.9 s"),
+        (OEV, "about 1.4 s"),
+    ]
     trev_hosts = WORDS[len(CHAINS[TREV])]
     assert rows[TREV][1] == (
         "The default. An open-weight 120B reasoning model on the fastest hardware "
         f"we could measure, with automatic failover across {trev_hosts} hosts."
     )
     assert rows[LEV][1] == (
-        "The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer "
-        f"in the eval took 565 ms. Fails over across {WORDS[len(CHAINS[LEV])]} hosts."
+        "The steadiest tail. Llama 3.3 70B, answering without deliberating. "
+        f"Fails over across {WORDS[len(CHAINS[LEV])]} hosts."
     )
     assert len(CHAINS[ZEV]) == 2
     assert rows[ZEV][1] == (
         "A larger fast model. GLM 5.3 Fast, which reasons briefly, with failover to a "
-        "second host. About four times the price of the others here. Measured end to "
-        "end through the gateway, like gemmev."
+        "second host. About four times the price of the others here."
     )
     assert rows[GEMMEV][1] == (
         "An open Gemma model: Gemma 4 26B with 4B parameters active, answering without "
@@ -293,51 +344,90 @@ def test_with_every_chain_live_each_row_shows_its_first_hosts_figure(
     assert f'"fallback_candidate_count": {len(CHAINS[TREV])},' in page.get_text()
 
 
-@pytest.mark.parametrize(
-    ("model_id", "live", "latency"),
-    [
-        (LEV, ("parasail", "together"), "about 0.9 s"),
-        (LEV, ("together",), "about 1.6 s"),
-        (TREV, ("sambanova", "fireworks", "together"), "about 520 ms"),
-        (TREV, ("fireworks", "together"), "about 0.9 s"),
-        (TREV, ("together",), "about 1.1 s"),
-        (DEV, ("deepinfra", "wandb"), "about 1.9 s"),
-        (DEV, ("wandb",), "about 2 s"),
-        (GEMMEV, ("wandb", "io-net"), "about 1.9 s"),
-        (GEMMEV, ("io-net",), "about 2 s"),
-    ],
-)
-def test_a_dark_first_host_hands_the_row_to_the_next_hosts_figure(
+def test_every_latency_figure_is_one_measurement_described_once(
+    client: TestClient, every_chain_live: None
+) -> None:
+    """One method for every figure: the pinned host's own median time on the
+    day of the eval, the gateway's time left out. No row carries a figure taken
+    another way, and the page publishes no figure for the gateway's time."""
+    page = _page(client)
+    how = _paragraph(page, "How to read this.")
+    assert "29 checks, run on 28 November 2026." in how
+    assert (
+        "Latency is the median time the host took to answer, from the gateway's "
+        "records, with the host pinned; hosts vary from run to run. It excludes the "
+        "gateway's own time: your request also pays for authorization and settlement "
+        "through the gateway. Each model's figure is for its first host."
+    ) in how
+    # Jev's path records no host time, and the page says where its figure is from.
+    assert "Jev's figure is the exception" in how
+    text = page.get_text()
+    for retired_wording in ("end to end", "like gemmev", "Gemmev's figure", "565 ms"):
+        assert retired_wording not in text, retired_wording
+    # No latency cell carries a range any more.
+    assert not re.search(r"\(\d[\d.]* to \d[\d.]* s\)", text)
+    for row in _model_rows(page).values():
+        assert "Measured" not in row[1], row
+    # Around the words authorization and settlement, no number.
+    for sentence in re.split(r"(?<=[.:;]) ", how):
+        if "authorization" in sentence or "settlement" in sentence:
+            assert not re.search(r"\d", sentence), sentence
+
+
+def test_the_published_figures_are_first_hosts_over_enough_requests() -> None:
+    measured = decision_model_page.MEASURED_LATENCY
+    assert decision_model_page.MIN_SAMPLES == 6
+    assert {
+        model_id: {host: (median.ms, median.samples) for host, median in hosts.items()}
+        for model_id, hosts in measured.items()
+    } == {
+        TREV: {"cerebras": (335, 8)},
+        MEV: {"inception": (344, 7)},
+        ZEV: {"fireworks": (410, 10)},
+        LEV: {"wandb": (805, 13)},
+        GEV: {"google-ai-studio": (864, 6)},
+        DEV: {"wafer": (371, 10)},
+        OEV: {"deepinfra": (1417, 13)},
+        GEMMEV: {"nextbit": (450, 11)},
+    }
+    for model_id, hosts in measured.items():
+        assert set(hosts) <= set(CHAINS[model_id]), model_id
+    assert decision_model_page.DECISION_TOKENS == TOKENS
+
+
+@pytest.mark.parametrize(("model_id", "live"), _later_hosts())
+def test_a_dark_first_host_leaves_the_row_without_a_figure(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     every_chain_live: None,
     model_id: str,
     live: tuple[str, ...],
-    latency: str,
 ) -> None:
     chain = CHAINS[model_id]
-    assert live == chain[-len(live) :], "the chain these figures were measured on has changed"
+    # Its own price at every host, so the cost shown names the host it is for.
+    prices = {host: (1_000_000 * rank, 2_000_000 * rank) for rank, host in enumerate(chain, 1)}
 
-    _serve(monkeypatch, model_id, live)
-    row = _model_rows(_page(client))[model_id]
+    _serve(monkeypatch, model_id, live, prices)
+    rows = _model_rows(_page(client))
+    row = rows[model_id]
 
-    assert row[2] == latency
-    host = PROVIDERS[live[0]].name
+    # The only figures are first hosts'. A later host has none to show, and
+    # the row does not keep the first host's.
+    where = "its current host" if model_id == TREV else PROVIDERS[live[0]].name
+    assert row[2] == f"not yet measured on {where}"
+    assert _shown_ms(row[2]) is None
+    assert list(rows)[-1] == model_id
+    assert row[4] == _cost(model_id, prices[live[0]])
+    # Claims that were the first host's go with it.
+    for claim in ("steadiest tail", "fastest hardware", "Measured"):
+        assert claim not in row[1], claim
     if model_id == TREV:
         # trev's hosts are counted, never named.
-        assert row[1].endswith(" Measured end to end through the gateway, like gemmev.")
-        assert not [name for name in _names(chain) if name in row[1]]
-    elif model_id == GEMMEV:
-        assert row[1].endswith(f" Measured end to end through the gateway on {host}.")
+        assert not [name for name in _names(chain) if name in " ".join(row)]
     else:
-        assert row[1].endswith(f" Measured end to end through the gateway on {host}, like gemmev.")
-    assert PROVIDERS[chain[0]].name not in row[1]
-    # Claims that were the first host's go with it.
-    assert "565 ms" not in row[1] and "fastest hardware" not in row[1]
-    if len(live) >= 2:
-        assert f"across {WORDS[len(live)]} hosts" in row[1] or (
-            f"Fails over from {' to '.join(_names(live))}." in row[1]
-        )
+        assert PROVIDERS[chain[0]].name not in row[1]
+    if len(live) >= 2 and model_id != DEV:
+        assert f"across {WORDS[len(live)]} hosts" in row[1]
 
 
 @pytest.mark.parametrize(
@@ -369,25 +459,22 @@ def test_a_name_on_one_host_claims_no_failover(
             assert '"fallback_candidate_count": 1,' in page.get_text()
 
 
-def test_an_unmeasured_first_live_host_shows_no_figure(
+def test_a_figure_over_too_few_requests_is_not_published(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
 ) -> None:
     measured = decision_model_page.MEASURED_LATENCY
-    assert "baseten" in CHAINS[ZEV] and "baseten" not in measured[ZEV]
-    _serve(monkeypatch, ZEV, ("baseten",))
-    # A name whose hosts the page does not name: the same rule, without the name.
-    monkeypatch.delitem(measured[TREV], CHAINS[TREV][1])
-    _serve(monkeypatch, TREV, CHAINS[TREV][1:])
+    second = CHAINS[LEV][1]
+    _serve(monkeypatch, LEV, CHAINS[LEV][1:])
 
-    rows = _model_rows(_page(client))
+    for samples, shown in ((5, f"not yet measured on {PROVIDERS[second].name}"), (6, "about 0.9 s")):
+        monkeypatch.setitem(measured[LEV], second, decision_model_page.HostMedian(947, samples))
+        assert _model_rows(_page(client))[LEV][2] == shown, samples
 
-    assert rows[ZEV][2] == f"not yet measured on {PROVIDERS['baseten'].name}"
-    assert rows[TREV][2] == "not yet measured on its current host"
-    for model_id in (ZEV, TREV):
-        assert _shown_ms(rows[model_id][2]) is None
-        assert "Measured end to end" not in rows[model_id][1]
-    # Rows that show no figure go last, in reading order.
-    assert list(rows)[-2:] == [TREV, ZEV]
+    # The same for a first host, and for a name whose hosts the page does not
+    # name.
+    first = CHAINS[TREV][0]
+    monkeypatch.setitem(measured[TREV], first, replace(measured[TREV][first], samples=5))
+    assert _model_rows(_page(client))[TREV][2] == "not yet measured on its current host"
 
 
 @pytest.mark.parametrize("model_id", READING_ORDER)
@@ -400,14 +487,17 @@ def test_a_name_with_no_live_host_is_marked_unavailable(
 
     assert rows[model_id][1].endswith(" Temporarily unavailable.")
     assert rows[model_id][2] == "unavailable"
+    assert rows[model_id][4] == "unavailable"
     assert list(rows)[-1] == model_id
-    for claim in ("ails over", "failover", "erved by", "Measured", "565 ms", "fastest hardware"):
+    for claim in ("ails over", "failover", "erved by", "steadiest tail", "fastest hardware"):
         assert claim not in rows[model_id][1], claim
     backing = PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)
     if backing in _runs_on(page):
         assert _runs_on(page)[backing] == "None at present"
     if model_id == TREV:
         assert "Start with" not in _intro(page)
+        # The sample response is a served request: it had a candidate.
+        assert '"fallback_candidate_count": 1,' in page.get_text()
 
 
 def test_the_page_renders_with_no_decision_model_live(
@@ -419,16 +509,17 @@ def test_the_page_renders_with_no_decision_model_live(
     rows = _model_rows(page)
 
     assert list(rows) == READING_ORDER
-    assert {row[2] for row in rows.values()} == {"unavailable"}
+    assert {(row[2], row[4]) for row in rows.values()} == {("unavailable", "unavailable")}
     assert set(_runs_on(page).values()) == {"None at present"}
     assert _intro(page).endswith("so speed comes first.")
+    assert '"fallback_candidate_count": 1,' in page.get_text()
 
 
 def test_the_third_of_a_second_count_follows_the_rows(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
 ) -> None:
     assert _fast_claim(_page(client)) == (4, ("four", "answer"))
-    _serve(monkeypatch, LEV, CHAINS[LEV][1:])
+    _serve(monkeypatch, DEV, CHAINS[DEV][1:])
     assert _fast_claim(_page(client)) == (3, ("three", "answer"))
     _serve(monkeypatch, TREV, CHAINS[TREV][1:])
     page = _page(client)
@@ -442,11 +533,11 @@ def test_the_third_of_a_second_count_follows_the_rows(
     assert _fast_claim(_page(client)) == (0, None)
 
 
-def test_levs_slowest_answer_is_shown_only_while_its_first_host_answers_first(
+def test_levs_steadiest_tail_is_shown_only_while_its_first_host_answers_first(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
 ) -> None:
     chain = CHAINS[LEV]
-    assert chain[0] == "sambanova", "the 565 ms answer was measured on SambaNova"
+    assert chain[0] == "wandb", "the tail was measured on W&B"
     for live, shown in (
         (chain, True),
         (chain[:1], True),
@@ -457,32 +548,26 @@ def test_levs_slowest_answer_is_shown_only_while_its_first_host_answers_first(
     ):
         _serve(monkeypatch, LEV, live)
         row = _model_rows(_page(client))[LEV]
-        assert ("its slowest answer in the eval took 565 ms" in row[1]) is shown, live
-        # "The steadiest tail" rests on the same SambaNova measurement, so the
-        # two claims appear together or not at all.
         assert ("The steadiest tail." in row[1]) is shown, live
         assert row[1].startswith(
-            "The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer"
-            if shown else "Llama 3.3 70B, answering without deliberating."
+            ("The steadiest tail. " if shown else "")
+            + "Llama 3.3 70B, answering without deliberating."
         ), live
 
 
 def test_the_table_is_ordered_by_the_latency_shown(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
 ) -> None:
-    _serve(monkeypatch, LEV, ("parasail",))
-    _serve(monkeypatch, GEMMEV, ("wandb",))
-    _serve(monkeypatch, ZEV, ("baseten",))
+    _serve(monkeypatch, LEV, CHAINS[LEV][1:])
+    _serve(monkeypatch, ZEV, CHAINS[ZEV][1:])
     _serve(monkeypatch, MEV, ())
     rows = _model_rows(_page(client))
 
-    # lev at 0.9 s moves below gev's 0.8 s; gemmev at 1.9 s stays last of the
-    # measured rows. mev and zev show no figure and close the table in
-    # reading order.
-    assert list(rows) == [JEV, TREV, GEV, LEV, DEV, OEV, GEMMEV, MEV, ZEV]
+    # mev, lev and zev show no figure and close the table in reading order.
+    assert list(rows) == [JEV, TREV, DEV, GEMMEV, GEV, OEV, MEV, LEV, ZEV]
     shown = [_shown_ms(row[2]) for row in rows.values()]
     figures = [ms for ms in shown if ms is not None]
-    assert figures == sorted(figures) and shown == [*figures, None, None]
+    assert figures == sorted(figures) and shown == [*figures, None, None, None]
 
 
 def test_runs_on_lists_each_tuned_models_live_chain_in_order(
@@ -528,7 +613,8 @@ def test_live_hosts_are_the_chain_hosts_with_a_current_prepaid_route(
     dev = next(hosts for hosts in found if hosts.model_id == DEV)
     assert dev.live == (first, third)
     assert dev.live_hosts == (PROVIDERS[first].name, PROVIDERS[third].name)
-    assert dev.latency == decision_model_page.MEASURED_LATENCY[DEV][first]
+    assert dev.latency == decision_model_page.published_latency(DEV, first)
+    assert dev.latency is not None and dev.latency.text == "about 370 ms"
 
 
 def test_a_retired_route_leaves_the_chain_while_it_is_still_registered(
@@ -545,8 +631,136 @@ def test_a_retired_route_leaves_the_chain_while_it_is_still_registered(
 
     assert _runs_on(page)[backing] == ", then ".join(_names(chain[1:]))
     row = _model_rows(page)[LEV]
-    assert "565 ms" not in row[1] and row[2] != "about 390 ms"
+    assert "steadiest tail" not in row[1] and _shown_ms(row[2]) is None
     assert f"Fails over across {WORDS[len(chain) - 1]} hosts." in row[1]
+
+
+def test_a_route_past_its_catalog_deadline_leaves_the_chain(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
+) -> None:
+    """A provider manifest that passed its deadline is no longer current: its
+    routes stay registered, and the page stops counting them."""
+    chain = CHAINS[LEV]
+    backing = PRIVATE_PROXY_MODEL_TARGETS[LEV]
+    now = catalog_data._utc_now()
+    route_id = f"{backing}@{chain[0]}/prepaid"
+
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS,
+        route_id,
+        replace(MODEL_ENDPOINTS[route_id], catalog_valid_until=now + timedelta(seconds=1)),
+    )
+    assert _runs_on(_page(client))[backing] == ", then ".join(_names(chain))
+
+    # The deadline itself is already past it.
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS, route_id, replace(MODEL_ENDPOINTS[route_id], catalog_valid_until=now)
+    )
+    page = _page(client)
+    assert _runs_on(page)[backing] == ", then ".join(_names(chain[1:]))
+    row = _model_rows(page)[LEV]
+    assert "steadiest tail" not in row[1]
+    assert row[2] == f"not yet measured on {PROVIDERS[chain[1]].name}"
+
+
+def test_cost_is_the_measured_tokens_at_the_first_live_hosts_price(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
+) -> None:
+    # Every model at the same price: the costs differ by their tokens alone.
+    rows = _model_rows(_page(client))
+    assert {model_id: row[4] for model_id, row in rows.items()} == {
+        model_id: _cost(model_id) for model_id in READING_ORDER
+    }
+    assert rows[TREV][4] == "$0.0011" and rows[OEV][4] == "$0.00087"
+
+    # The first host is neither the dearest nor the cheapest of its chain.
+    first, second, third = CHAINS[DEV]
+    prices = {
+        first: (2_000_000, 5_000_000),
+        second: (9_000_000, 9_000_000),
+        third: (500_000, 1_000_000),
+    }
+    for live, host in (
+        ((first, second, third), first),
+        ((third, second, first), first),
+        ((second, third), second),
+        ((third,), third),
+    ):
+        _serve(monkeypatch, DEV, live, prices)
+        assert _model_rows(_page(client))[DEV][4] == _cost(DEV, prices[host]), live
+    assert _cost(DEV, prices[first]) == "$0.0012"
+    assert _cost(DEV, prices[second]) == "$0.0044"
+    assert _cost(DEV, prices[third]) == "$0.00028"
+
+
+def test_cost_reads_the_price_tier_the_request_is_billed_at(
+    monkeypatch: pytest.MonkeyPatch, every_chain_live: None
+) -> None:
+    from trusted_router.pricing import PriceTier
+
+    backing = PRIVATE_PROXY_MODEL_TARGETS[GEV]
+    route_id = f"{backing}@{CHAINS[GEV][0]}/prepaid"
+    small = PriceTier(
+        max_prompt_tokens=10_000,
+        prompt_price_microdollars_per_million_tokens=4_000_000,
+        completion_price_microdollars_per_million_tokens=8_000_000,
+    )
+    large = replace(
+        small,
+        max_prompt_tokens=None,
+        prompt_price_microdollars_per_million_tokens=40_000_000,
+        completion_price_microdollars_per_million_tokens=80_000_000,
+    )
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS, route_id, replace(MODEL_ENDPOINTS[route_id], price_tiers=(small, large))
+    )
+
+    rows = decision_model_page.decide_page_context()["decide_models"]["rows"]
+    gev = next(row for row in rows if row.model_id == GEV)
+
+    assert gev.cost == _cost(GEV, (4_000_000, 8_000_000))
+
+
+def test_a_route_with_no_token_price_shows_no_computed_cost(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, every_chain_live: None
+) -> None:
+    free = {host: (0, 0) for chain in CHAINS.values() for host in chain}
+    _serve(monkeypatch, JEV, CHAINS[JEV], free)
+    _serve(monkeypatch, OEV, CHAINS[OEV], free)
+    rows = _model_rows(_page(client))
+
+    # Jev keeps the cost typed for it; no other row has one to fall back on.
+    assert rows[JEV][4] == "$0.00002"
+    assert rows[OEV][4] == "not stated"
+
+
+@pytest.mark.parametrize(
+    ("dollars", "shown"),
+    [
+        ("0.0003403", "$0.00034"),
+        ("0.0000677", "$0.000068"),
+        ("0.0013996", "$0.0014"),
+        ("0.0000197", "$0.00002"),
+        ("0.000065", "$0.000065"),
+        ("0.0000345", "$0.000035"),
+        ("0.0000995", "$0.0001"),
+        ("0.00125", "$0.0013"),
+        ("1.25", "$1.3"),
+        ("12.3", "$12"),
+        ("123", "$120"),
+    ],
+)
+def test_costs_are_written_to_two_significant_figures(dollars: str, shown: str) -> None:
+    assert decision_model_page._two_figures(Decimal(dollars)) == shown
+
+
+def test_the_billing_card_says_which_host_the_table_cost_is_for(client: TestClient) -> None:
+    billing = _paragraph(_page(client), "typesafe-ai/jev bills input tokens only")
+    assert billing.endswith(
+        "A trustedrouter/ name lists the rate of its most expensive host. The cost in "
+        "the table above is for the first host serving it; a request served by a "
+        "fallback host may cost more or less."
+    )
 
 
 @pytest.mark.parametrize("past_every_scheduled_cutover", (False, True))
@@ -554,9 +768,9 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, past_every_scheduled_cutover: bool
 ) -> None:
     """Over the catalog as it is checked in, at this run's clock and one day
-    past the last scheduled cutover: every host, host count and figure the page
-    gives for a model belongs to the hosts that can serve it then. A retirement
-    that lands without the page following it fails here."""
+    past the last scheduled cutover: every host, host count, figure and cost
+    the page gives for a model belongs to the hosts that can serve it then. A
+    retirement that lands without the page following it fails here."""
     bypass_catalog_caches(monkeypatch)
     if past_every_scheduled_cutover:
         day_after = provider_lifecycle.latest_scheduled_cutover() + timedelta(days=1)
@@ -565,13 +779,14 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
             day_after.strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
     live: dict[str, list[str]] = {}
+    first_route = {}
     for model_id, chain in CHAINS.items():
-        prepaid = {
-            endpoint.provider
-            for endpoint in endpoints_for_model(PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id))
-            if endpoint.usage_type == "Credits"
-        }
+        prepaid = {}
+        for endpoint in endpoints_for_model(PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)):
+            if endpoint.usage_type == "Credits":
+                prepaid.setdefault(endpoint.provider, endpoint)
         live[model_id] = [host for host in chain if host in prepaid]
+        first_route[model_id] = prepaid[live[model_id][0]] if live[model_id] else None
 
     page = _page(client)
     rows = _model_rows(page)
@@ -580,7 +795,7 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
     assert sorted(rows) == sorted(CHAINS)
     for model_id, chain in CHAINS.items():
         hosts = live[model_id]
-        text, latency = rows[model_id][1], rows[model_id][2]
+        text, latency, cost = rows[model_id][1], rows[model_id][2], rows[model_id][4]
         if model_id in NAMED_DECISION_MODEL_PROVIDERS:
             named_dark = [
                 host
@@ -596,18 +811,25 @@ def test_the_page_names_only_hosts_that_serve_each_model_at_this_clock(
         if "alone" in text or "single host" in text:
             assert len(hosts) == 1, (model_id, text)
         assert (latency == "unavailable") is (not hosts), model_id
+        assert (cost == "unavailable") is (not hosts), model_id
         assert text.endswith(" Temporarily unavailable.") is (not hosts), model_id
         # A figure is the first live host's own, or the row shows none.
-        figures = decision_model_page.MEASURED_LATENCY[model_id]
-        if hosts and hosts[0] in figures:
-            assert latency == figures[hosts[0]].text, model_id
+        figure = decision_model_page.published_latency(model_id, hosts[0]) if hosts else None
+        if figure is not None:
+            assert latency == figure.text, model_id
         else:
             assert _shown_ms(latency) is None, model_id
+        # The cost is the first live host's, at its catalog price now.
+        route = first_route[model_id]
+        if route is not None:
+            dollars = decision_model_page.decision_cost(model_id, route)
+            assert dollars is not None, model_id
+            assert cost == decision_model_page._two_figures(dollars), model_id
         backing = PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)
         if backing in runs_on:
             assert runs_on[backing] == (", then ".join(_names(hosts)) or "None at present")
-    assert ("565 ms" in rows[LEV][1]) is (live[LEV][:1] == list(CHAINS[LEV][:1]))
     assert ("steadiest tail" in rows[LEV][1]) is (live[LEV][:1] == list(CHAINS[LEV][:1]))
+    assert ("fastest hardware" in rows[TREV][1]) is (live[TREV][:1] == list(CHAINS[TREV][:1]))
 
     shown = [_shown_ms(row[2]) for row in rows.values()]
     figures_shown = [ms for ms in shown if ms is not None]
