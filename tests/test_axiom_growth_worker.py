@@ -231,6 +231,35 @@ def test_domain_requires_agreeing_account_evidence_and_never_current_billing_own
     assert not project_attempt([signup], {**attempt, 'identity_link_status': 'ambiguous'})
 
 
+def test_workspace_pair_identity_cache_matches_uncached_evidence_across_repairs():
+    from itertools import product
+
+    visitors = [m.digest(f'visitor:{i}') for i in range(4)]
+    owners = [m.digest(f'owner:{i}') for i in range(2)]
+    spaces = [m.digest(f'space:{i}') for i in range(3)]
+    def fact(i, owner, w, alt):
+        return {**event(anonymous_fingerprint=visitors[i]), 'event_id': m.digest(f'{i}:{owner}'),
+                'account_fingerprint': owner, 'workspace_fingerprint': w, 'marketing_workspace_fingerprint': alt}
+    events = [fact(0, owners[0], spaces[0], spaces[1]), fact(1, owners[0], spaces[1], ''),
+              fact(2, '', spaces[2], ''), fact(3, owners[1], '', '')]
+    pairs = list(product([*spaces, None], repeat=2))*4
+    for repair in ([], [fact(0, owners[1], spaces[0], spaces[1])]):
+        current = events + repair
+        daily = [usage(workspace_fingerprint=w, marketing_workspace_fingerprint=a) for w, a in pairs]
+        m.build_journeys(current, daily, NOW)
+        for row, pair in zip(daily, pairs, strict=True):
+            seen = {r['anonymous_fingerprint'] for r in current if any(
+                r[f] and r[f] in pair for f in ('workspace_fingerprint', 'marketing_workspace_fingerprint'))}
+            accounts = [{r['account_fingerprint'] for r in current if
+                         r['anonymous_fingerprint'] == v and r['account_fingerprint']} for v in seen]
+            unique = set().union(*accounts)
+            account = next(iter(unique)) if len(unique) == 1 and all(accounts) else ''
+            visitor = next(iter(seen)) if len(seen) == 1 and len(unique) <= 1 else ''
+            status = 'linked' if account else 'ambiguous' if len(seen) > 1 or len(unique) > 1 else 'orphaned'
+            assert (row['account_fingerprint'], row['anonymous_fingerprint'], row['identity_link_status']) == (
+                account, visitor, status)
+
+
 def test_overlap_cannot_upgrade_an_unverified_change_with_prior_verification():
     old = event(account_fingerprint='b'*64, customer_domain='old.example',
                 customer_domain_verified=True, customer_domain_basis='verified_oauth_email')

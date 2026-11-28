@@ -53,6 +53,26 @@ are v2 contracts; they do not change v1's existing publication ordering.
 
 ## Load and promotion gates
 
+### Restore the full projection index
+
+After the verified release, run this as a separate execution of the verifier:
+
+```sh
+gcloud run jobs execute trusted-router-growth-partition-shadow --region=us-central1 \
+  --project=quill-cloud-proxy --args=-m,scripts.axiom_growth.partition_backfill --wait
+```
+
+The first invocation freezes **only** the ID/digest pairs of one fresh, committed
+checkpoint. Four further executions write its 256 key prefixes and four read
+them back using fresh transactions, checking every digest, filter, prefix and
+count. Rerun the same command until `growth.partition_restore_progress` says
+`phase=complete`. A retry resumes at the last durable root, not today's source
+generation. A completed run does not rewrite the index. The UTC ISO week
+selects an isolated namespace; a week boundary starts a new drill. It uses the
+existing private bucket's 21-day expiry and requires no new IAM or schedule.
+The normal parity job and Axiom writer never read this state. This tests the
+projection index, not the original event bodies, identity edges, or delivery.
+
 Run `python -m scripts.axiom_growth.partition_bench --scale 10` and `--scale 100`.
 This seeds every history row locally, then exercises 12 update/commit/drain
 cycles, including compaction. It measures the transport, not Axiom, ClickHouse,
