@@ -117,6 +117,7 @@ def collect_gateway(state, io, now, end, journeys, daily, owners):
         return updated, attempts
 
     status = 'unavailable'
+    complete_windows = 0
     try:
         # Preserve evidence already in a stalled checkpoint before any pruning.
         updated, attempts = project_audits(state, state.get('gateway_audits', []),
@@ -134,12 +135,21 @@ def collect_gateway(state, io, now, end, journeys, daily, owners):
                          gateway_milestones=checkpoint['gateway_milestones'])
             journeys[:] = updated
             candidates.update({r['event_id']: r for r in attempts})
+            complete_windows += 1
             status = 'current' if observed >= end else 'catching_up'
             if status == 'current':
+                state.pop('gateway_recovery_seconds', None)
                 break
+        if complete_windows == MAX_GATEWAY_WINDOWS and 'gateway_recovery_seconds' in state:
+            state['gateway_recovery_seconds'] = min(int(gateway_attempts.RECOVERY_STEP.total_seconds()),
+                                                    2 * state['gateway_recovery_seconds'])
     except Exception as exc:  # noqa: BLE001 - acquisition keeps running during audit-source failure.
         # A partial window never advances its cursor. Earlier complete windows
         # may commit, but only after the shared ingest and checkpoint succeed.
+        if isinstance(exc, gateway_attempts.DenseHistoricalWindow) and not complete_windows:
+            # A full, fresh budget failed. Persist only a narrower query plan, never partial rows.
+            state['gateway_recovery_seconds'] = exc.retry_seconds
+            print(json.dumps({'event': 'growth.gateway_replanned', 'retry_seconds': exc.retry_seconds}))
         if not isinstance(exc, gateway_attempts.AuditBudgetExceeded):
             status = 'unavailable'
         print(json.dumps({'event': 'growth.gateway_collection_failed',
