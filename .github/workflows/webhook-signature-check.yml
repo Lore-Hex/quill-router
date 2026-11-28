@@ -1,0 +1,53 @@
+name: Webhook Signature Check
+
+# Sends every inbound webhook (Stripe, Adyen, PayPal, Routable, Veriff,
+# SES/SNS) a delivery with a missing or wrong signature, and requires each
+# route's own signature-rejection answer. Offline tests prove each verifier
+# works in code. This proves it is still switched on in production. A dropped
+# webhook secret or a renamed environment can silently re-open a local-only
+# bypass, and then anyone can post a forged "payment succeeded" event.
+#
+# The bodies are no-ops even if a check has failed open (see the script's
+# docstring and tests/test_verify_webhook_signatures.py). Nothing is billed and
+# no gateway or inference route is touched.
+on:
+  # Daily, plus after every control-plane deploy: a deploy is what changes the
+  # secrets and environment that the verifiers depend on. 08:41 UTC keeps it
+  # clear of the top-of-hour cron rush and of trust-drift's 07:23.
+  schedule:
+    - cron: "41 8 * * *"
+  workflow_run:
+    workflows: ["Deploy TR control plane"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Control plane to probe"
+        type: string
+        default: "https://trustedrouter.com"
+
+permissions:
+  contents: read
+
+jobs:
+  signatures:
+    name: unsigned webhooks are rejected
+    runs-on: ubuntu-latest
+    # Same guard as trust-drift: never fail a PR on the state of production,
+    # and accept workflow_run only from this repository's own push or dispatch
+    # deploy (tests/test_workflow_run_guard.py).
+    if: >-
+      github.repository == 'Lore-Hex/quill-router'
+      && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+      && (github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
+      - name: Sync
+        run: uv sync --frozen
+      - name: Unsigned deliveries are rejected
+        env:
+          BASE_URL: ${{ inputs.base_url || 'https://trustedrouter.com' }}
+        run: uv run python scripts/verify_webhook_signatures.py --base-url "$BASE_URL"
