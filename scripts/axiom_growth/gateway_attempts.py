@@ -37,6 +37,12 @@ class AuditBudgetExceeded(ValueError):
     """The current window is incomplete; retry it on the next execution."""
 
 
+class DenseHistoricalWindow(AuditBudgetExceeded):
+    def __init__(self, seconds: int):
+        super().__init__('Complete historical audit slice exceeded the read budget')
+        self.retry_seconds = max(1, seconds // 2)
+
+
 def source_filter():
     def field(name):
         names = ' OR '.join(f'jsonPayload.{name}:' + json.dumps('enclave.request_' + s + ' ')
@@ -145,6 +151,7 @@ def collect(state, io, now, end):
     floor = m.date(floor) if floor else None
     if previous < REPLAY_FLOOR <= end:
         previous = floor = REPLAY_FLOOR
+    settled_forward = floor == previous and previous + RECOVERY_STEP <= settled
     def reach(at):
         """Re-read the overlap for late deliveries, never into final history."""
         return at - OVERLAP if floor is None else max(at - OVERLAP, floor)
@@ -153,7 +160,13 @@ def collect(state, io, now, end):
         # since. Re-read only that tail, once, before settled replay continues.
         start, end = reach(previous), previous
     else:
-        end = min(end, previous + RECOVERY_STEP)
+        step = RECOVERY_STEP
+        if settled_forward:
+            seconds = state.get('gateway_recovery_seconds', int(step.total_seconds()))
+            if type(seconds) is not int or not 1 <= seconds <= step.total_seconds():
+                raise ValueError('Invalid gateway recovery width')
+            step = dt.timedelta(seconds=seconds)
+        end = min(end, previous + step)
         start = reach(previous)
     if end <= settled:
         floor = end
@@ -161,7 +174,13 @@ def collect(state, io, now, end):
     horizon = reach(end)
     if start < now - dt.timedelta(days=SOURCE_RETENTION_DAYS - 1):
         raise ValueError('Gateway audit backlog exceeds source retention; explicit recovery required')
-    incoming = io.gateway_audits(start, end)
+    try:
+        incoming = io.gateway_audits(start, end)
+    except AuditBudgetExceeded as exc:
+        seconds = int((end - start).total_seconds())
+        if settled_forward and start == previous and seconds > 1:
+            raise DenseHistoricalWindow(seconds) from exc
+        raise
     # Buffer expiry follows the replay cursor, not wall time: historical starts
     # must remain available to pair with ends in the following recovery window.
     cutoff = end - dt.timedelta(days=RETENTION_DAYS)

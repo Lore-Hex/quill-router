@@ -209,3 +209,11 @@ cycles (20h40m simulated) with zero final forward lag. Largest successful
 reads were 19,530 events and 28,075 usage groups; eight capacity replans
 advanced no cursor. This tests the planner and shard membership, not live
 ClickHouse query cost.
+
+Gateway audit replay has a separate budget. If the first settled, forward-only
+window exhausts a fresh execution's budget, the worker records a smaller
+window for the next execution. It retries at the original cursor; partial pages
+never count. A `growth.gateway_replanned` log is a plan change, not delivery.
+Reaching the one-second minimum without progress is an operator condition.
+Live late-arrival overlap is never shortened. Twelve completed windows can
+increase the width back toward five minutes without raising any source limit.

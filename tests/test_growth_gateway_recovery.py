@@ -252,6 +252,7 @@ def test_incomplete_next_window_keeps_only_complete_cursor(failure, status, caps
     _, actual = collect_gateway(checkpoint, Partial(), NOW, NOW, [], [], None)
     assert actual == status
     assert m.date(checkpoint['gateway_watermark']) == previous+ga.RECOVERY_STEP
+    assert 'gateway_recovery_seconds' not in checkpoint
     assert 'private response' not in capsys.readouterr().out
 
 
@@ -267,6 +268,65 @@ def test_failed_delivery_replays_the_same_historical_windows(monkeypatch):
     retry = GatewayIO()
     cycle(original, retry, NOW)
     assert retry.gateway_windows == failed.gateway_windows
+
+
+def test_dense_first_window_retries_same_cursor_and_recovers_pairs_across_slices():
+    previous = NOW - dt.timedelta(days=2)
+    boundary = previous + dt.timedelta(seconds=75)
+    records = [projected('start', boundary-dt.timedelta(seconds=1)), projected('end', boundary)]
+    class Dense(GatewayIO):
+        def gateway_audits(self, start, end):
+            if end-start > dt.timedelta(seconds=75):
+                self.gateway_windows.append((start, end))
+                raise ga.AuditBudgetExceeded('bounded')
+            return super().gateway_audits(start, end)
+    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_settled_through': previous.isoformat()}
+    end = previous + ga.RECOVERY_STEP
+    for width in (150, 75):
+        io = Dense(records)
+        attempts, status = collect_gateway(checkpoint, io, NOW, end, [], [], None)
+        assert not attempts and status == 'unavailable'
+        assert checkpoint == {'gateway_watermark': previous.isoformat(),
+                              'gateway_settled_through': previous.isoformat(), 'gateway_recovery_seconds': width,
+                              'gateway_milestones': {}}
+        assert io.gateway_windows == [(previous, previous+dt.timedelta(seconds=width*2))]
+    io = Dense(records)
+    attempts, status = collect_gateway(checkpoint, io, NOW, end, [journey(previous)], [], None)
+    assert io.gateway_windows == [(previous+dt.timedelta(seconds=i*75), previous+dt.timedelta(seconds=(i+1)*75))
+                                  for i in range(4)]
+    assert status == 'current' and len(attempts) == 1 and attempts[0]['paired']
+    assert checkpoint['gateway_watermark'] == end.isoformat() and 'gateway_recovery_seconds' not in checkpoint
+
+
+def test_replan_never_trims_late_tail_or_applies_to_unexpected_errors():
+    previous = NOW - dt.timedelta(days=2)
+    class Failing:
+        def __init__(self, exc):
+            self.exc = exc
+        def gateway_audits(self, start, end):
+            raise self.exc
+    for floor, exc in [(None, ga.AuditBudgetExceeded('tail')), (previous.isoformat(), RuntimeError('auth'))]:
+        checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_settled_through': floor,
+                      'gateway_milestones': {}}
+        old = copy.deepcopy(checkpoint)
+        _, status = collect_gateway(checkpoint, Failing(exc), NOW, NOW, [], [], None)
+        assert status == 'unavailable' and checkpoint == old
+
+
+def test_dense_replay_width_recovers_and_never_shrinks_below_one_second():
+    previous = NOW - dt.timedelta(days=2)
+    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_settled_through': previous.isoformat(),
+                  'gateway_recovery_seconds': 10}
+    _, status = collect_gateway(checkpoint, GatewayIO(), NOW, NOW, [], [], None)
+    assert status == 'catching_up' and checkpoint['gateway_recovery_seconds'] == 20
+    class Exhausted:
+        def gateway_audits(self, start, end):
+            assert end-start == dt.timedelta(seconds=1)
+            raise ga.AuditBudgetExceeded('page limit')
+    checkpoint['gateway_recovery_seconds'] = 1
+    before = copy.deepcopy(checkpoint)
+    _, status = collect_gateway(checkpoint, Exhausted(), NOW, NOW, [], [], None)
+    assert status == 'unavailable' and checkpoint == before
 
 
 def test_out_of_window_source_records_cannot_advance_gateway_checkpoint():
