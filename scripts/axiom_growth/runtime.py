@@ -4,9 +4,11 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import gzip
+import io as streams
 import json
 import os
 import time
+from itertools import chain
 from urllib.parse import quote
 
 import google.auth
@@ -17,9 +19,39 @@ from scripts.axiom_growth import gateway_attempts
 from scripts.axiom_growth import model as m
 
 MAX_EVENTS = 300_000
+MAX_DAILY = 100_000
 MAX_GATEWAY_WINDOWS = 12
 MAX_GATEWAY_PAGES = 20
 GATEWAY_SECONDS = 60
+INGEST_BATCH = 500
+MAX_STATE_BYTES = 180_000_000
+MAX_COMPRESSED_BYTES = 40_000_000
+
+
+def pack_checkpoint(value):
+    """Write the existing gzip/JSON format without simultaneous full JSON text and bytes."""
+    packed = streams.BytesIO()
+    size = 0
+    parts = []
+    pending = 0
+    with gzip.GzipFile(fileobj=packed, mode='wb', compresslevel=3, mtime=0) as dest:
+        for part in json.JSONEncoder(separators=(',', ':'), ensure_ascii=True).iterencode(value):
+            size += len(part)  # ASCII JSON: characters and bytes have identical lengths.
+            if size > MAX_STATE_BYTES:
+                raise ValueError('State size limit exceeded')
+            parts.append(part)
+            pending += len(part)
+            if pending >= 64 * 1024:
+                dest.write(''.join(parts).encode('ascii'))
+                parts.clear()
+                pending = 0
+                if packed.tell() > MAX_COMPRESSED_BYTES:
+                    raise ValueError('Compressed state limit exceeded')
+        if parts:
+            dest.write(''.join(parts).encode('ascii'))
+    if packed.tell() > MAX_COMPRESSED_BYTES:
+        raise ValueError('Compressed state limit exceeded')
+    return packed.getvalue(), size
 
 
 def complete(result):
@@ -87,15 +119,16 @@ def collect_gateway(state, io, now, end, journeys, daily, owners):
     return list(candidates.values()), status
 
 
-def cycle(state, io, now):
-    """Commit only after all batches succeed; failures leave the old watermark intact."""
-    state = copy.deepcopy(state)
+def prepare_cycle(state, io, now):
+    # Historical event and audit rows are immutable. Usage rows below are
+    # copy-on-write because attribution annotates them during projection.
+    state = dict(state)
     previous = m.date(state['watermark'])
     end = min(now - dt.timedelta(minutes=1), previous + dt.timedelta(days=1))
     if previous < now - dt.timedelta(days=29):
         raise ValueError('Watermark older than source retention; explicit recovery required')
     if end <= previous:
-        return state, 0
+        return state, None
     repair = state.get('repair_day') != now.date().isoformat()
     start = previous - dt.timedelta(hours=24 if repair else 1)
     incoming = io.events(start, end)
@@ -122,9 +155,9 @@ def cycle(state, io, now):
     usage_start = (end - dt.timedelta(days=30 if repair else 1)).replace(
         hour=0, minute=0, second=0, microsecond=0)
     fresh_daily = io.usage(usage_start, end)
-    daily = {r['event_id']: r for r in state['daily'] if cutoff <= m.date(r['_time']) < usage_start}
+    daily = {r['event_id']: dict(r) for r in state['daily'] if cutoff <= m.date(r['_time']) < usage_start}
     daily.update({r['event_id']: r for r in fresh_daily})
-    if len(daily) > 100_000:
+    if len(daily) > MAX_DAILY:
         raise ValueError('Usage state bound reached')
     daily_rows = list(daily.values())
     journeys = m.build_journeys(list(events.values()), daily_rows, end)
@@ -147,29 +180,44 @@ def cycle(state, io, now):
     if os.environ.get('GROWTH_GATEWAY_ATTEMPTS_ENABLED') == 'true':
         attempts, gateway_status = collect_gateway(state, io, now, end, journeys, daily_rows, owners)
     gateway_attempts.preserve_milestones(state, journeys)
-    candidates = list(events.values()) + daily_rows + journeys + attempts
+    candidates = chain(events.values(), daily_rows, journeys, attempts)
     hashes = {}
     changed = []
+    count = 0
     for row in m.with_verified_domains(events.values(), journeys, candidates):
         key = row['event_id']
         hashes[key] = content_hash(row)
         if hashes[key] != state.get('hashes', {}).get(key):
             changed.append({**row, 'exported_at': now.isoformat()})
-    io.ingest(changed)
+            count += 1
+            if len(changed) == INGEST_BATCH:
+                io.ingest(changed)
+                changed = []
+    if changed:
+        io.ingest(changed)
     heartbeat = {'_time': now.isoformat(), 'event': 'growth.sync_completed',
                  'event_id': m.digest('sync:' + end.isoformat()),
                  'exported_at': now.isoformat(), 'observed_through': end.isoformat(),
                  'event_rows': len(events), 'usage_rows': len(daily_rows),
-                 'journey_rows': len(journeys), 'changed_rows': len(changed),
+                 'journey_rows': len(journeys), 'changed_rows': count,
                  'source': 'scheduled_incremental', 'cloud_scope': 'gcp',
                  'schema_version': 6, 'gateway_status': gateway_status,
                  'billing_owner_status': billing_status,
                  'gateway_observed_through': state.get('gateway_watermark'),
                  'billing_owners_observed_through': max((r.get('billing_owner_observed_at', '') for r in owners or []), default='')}
-    io.ingest([heartbeat])
     state.update(events=list(events.values()), daily=daily_rows, hashes=hashes,
                  watermark=end.isoformat(), repair_day=now.date().isoformat())
-    return state, len(changed)
+    return state, heartbeat
+
+
+def cycle(state, io, now, *, generation):
+    """Publish success only after accepted data AND a durable compare-and-swap."""
+    updated, heartbeat = prepare_cycle(state, io, now)
+    if heartbeat is None:
+        return updated, 0
+    io.save('state.json.gz', updated, generation)
+    io.ingest([heartbeat])
+    return updated, heartbeat['changed_rows']
 
 
 class Sources:
@@ -204,7 +252,9 @@ class Sources:
         return complete(result)
 
     def events(self, start, end):
-        fields = m.FIELDS
+        # Recovery deploys must not opt a dataset into raw website IP collection.
+        fields = tuple(f for f in m.FIELDS if f != 'website_client_ip'
+                       or os.environ.get('GROWTH_WEBSITE_IP_ENABLED') == 'true')
         def default(field):
             if field == 'customer_domain_verified':
                 return 'false'
@@ -327,8 +377,8 @@ class Sources:
             for key, value in row.items():
                 if key.endswith('_fingerprint') and value and not m.HASH.fullmatch(str(value)):
                     raise ValueError('Invalid growth fingerprint')
-        for offset in range(0, len(values), 500):
-            batch = values[offset:offset+500]
+        for offset in range(0, len(values), INGEST_BATCH):
+            batch = values[offset:offset+INGEST_BATCH]
             result = self.checked(self.http.post(self.edge + '/v1/ingest/' + m.DATASET,
                                   headers=self.headers, json=batch)).json()
             if result.get('failed') != 0 or result.get('ingested') != len(batch):
@@ -338,17 +388,29 @@ class Sources:
         path = f'https://storage.googleapis.com/storage/v1/b/{self.bucket}/o/{quote(name, safe="")}'
         meta = self.google('GET', path).json()
         data = self.google('GET', path, params={'alt': 'media', 'generation': meta['generation']}).content
-        if len(data) > 40_000_000:
+        if len(data) > MAX_COMPRESSED_BYTES:
             raise ValueError('Compressed state limit exceeded')
-        return json.loads(gzip.decompress(data)), meta['generation']
+        with gzip.GzipFile(fileobj=streams.BytesIO(data)) as src:
+            raw = src.read(MAX_STATE_BYTES + 1)
+        if len(raw) > MAX_STATE_BYTES:
+            raise ValueError('State size limit exceeded')
+        return json.loads(raw), meta['generation']
 
     def save(self, name, value, generation):
-        data = json.dumps(value, separators=(',', ':')).encode()
-        if len(data) > 180_000_000:
-            raise ValueError('State size limit exceeded')
+        data, raw_size = pack_checkpoint(value)
         result = self.google('POST', f'https://storage.googleapis.com/upload/storage/v1/b/{self.bucket}/o',
             params={'name': name, 'uploadType': 'media', 'ifGenerationMatch': generation},
-            content=gzip.compress(data)).json()
+            content=data).json()
+        if name == 'state.json.gz':
+            events, daily = len(value['events']), len(value['daily'])
+            utilization = max(raw_size / MAX_STATE_BYTES, len(data) / MAX_COMPRESSED_BYTES,
+                              events / MAX_EVENTS, daily / MAX_DAILY)
+            print(json.dumps({'event': 'growth.checkpoint_committed',
+                              'severity': 'WARNING' if utilization >= 0.7 else 'INFO',
+                              'observed_through': value['watermark'], 'state_bytes': raw_size,
+                              'compressed_bytes': len(data), 'event_rows': events,
+                              'usage_rows': daily, 'max_limit_pct': round(100 * utilization, 1)}),
+                  flush=True)
         return result['generation']
 
 
@@ -363,8 +425,7 @@ def main():
     version = io.save('lock.json.gz', {'until': (now + dt.timedelta(minutes=10)).isoformat()}, version)
     try:
         state, generation = io.load('state.json.gz')
-        updated, changed = cycle(state, io, now)
-        io.save('state.json.gz', updated, generation)
+        updated, changed = cycle(state, io, now, generation=generation)
         print(json.dumps({'event': 'growth.sync_success', 'changed_rows': changed,
                           'observed_through': updated['watermark'],
                           'seconds': round(time.monotonic()-started, 2)}))

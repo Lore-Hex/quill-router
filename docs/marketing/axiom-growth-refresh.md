@@ -51,7 +51,7 @@ Manager with dedicated worker access and authorized operator access. No personal
 image. Operator provisioning uses the existing local login; it is never scheduled.
 The Axiom token expires in one year and must be rotated before expiry.
 
-The job uses 1 CPU and 1 GiB only while running. ClickHouse queries use at most
+The job uses 1 CPU and 2 GiB only while running. ClickHouse queries use at most
 two threads, 512 MiB and 45 seconds. Incremental export avoids reingesting every
 historical journey each run. No data goes to Google Ads or another ad platform.
 
@@ -72,12 +72,36 @@ Keep source transport and timestamps unchanged when replaying historical data.
 The `deploy-growth-sync` workflow keeps the gateway-attempt and billing-owner
 collector flags exactly as the running job has them unless the operator picks
 `true` or `false` for that run; its summary records the before and after values.
-The isolated export job has 1 GiB of memory because 512 MiB runs exhausted
-memory while serializing the retained checkpoint after ingest. Its existing
+On November 25 the 1 GiB worker stopped committing its checkpoint. It repeatedly
+sent data and a heartbeat and was killed for memory before committing. Subsequent
+executions sometimes exited successfully only because a stale lease was active.
+The worker now shares immutable historical rows, sends at most 500 changed rows
+at once, compresses JSON incrementally, and emits the heartbeat **after** the
+generation-checked save. The job has 2 GiB of working headroom. Its existing
 row limits, timeout, CPU, network and identity remain unchanged. A failed
 release execution restores the previous image, memory limit and collector
-flags. Verify completed Cloud Run executions, not just pre-checkpoint Axiom
-heartbeats, when checking the two scheduled cycles.
+flags. Verify two advancing committed watermarks and late-day acquisition and
+UTC daily usage in Axiom. A successful lease skip is not a completed export.
+
+### Growth capacity
+
+The committed-checkpoint log includes uncompressed and compressed bytes and the
+fraction of the highest state limit. At 70% it logs a warning. The limits are
+300,000 acquisition events, 100,000 usage rows, 180 MB of JSON and 40 MB of gzip;
+do not increase them to silence failures. The November incident involved about
+126,000 retained events. **The single-checkpoint design is not qualified for
+10x sustained volume.** Before reaching a guard, partition event and daily usage
+history, keep identity and attribution indexes across partitions, and recompute
+only affected journeys. Publish immutable changed partitions before atomically
+advancing a manifest; keep the old generation available for rollback. Qualify
+the migration against the existing projection in shadow, with 10x retained
+cardinality and arrival rate, late and conflicting evidence, crash/replay,
+both collectors enabled and two consecutive on-time commits. Replaying into
+the production Axiom dataset is not a load test.
+
+The worker does not request website IPs from Axiom or project them from Cloud
+Logging unless the operator explicitly sets `GROWTH_WEBSITE_IP_ENABLED=true`
+after reviewing dataset access. The recovery deploy does not set this flag.
 
 ### Gateway Attempt Recovery
 
