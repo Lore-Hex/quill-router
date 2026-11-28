@@ -39,7 +39,10 @@ manifests:
   listing more than ``MAX_ROUTES`` routes holds nothing, and no new hold is
   placed while it would leave more than ``MAX_ROUTES`` rows held in total;
 * an expired hold on a row discovery has since delisted or left unpriced
-  becomes ``delisted-upstream`` or ``price-unavailable``, never routable.
+  becomes ``delisted-upstream`` or ``price-unavailable``, never routable;
+* a hold records the row's routability (``unserved_prior_routable``) and the
+  lift restores it with an explicit ``routable`` value: ``true`` for a row
+  that was routable, and never routable for one that was not.
 
 Holds use a reason the shared writers treat as an operator hold, so discovery
 carries them forward until this step lifts them.
@@ -74,6 +77,7 @@ from trusted_router.unserved_route_hold_plan import (
     lift_expired_unserved_holds,
     next_unserved_hold_count,
     plan_unserved_route_holds,
+    record_routability_before_hold,
     served_with_lifted,
     unserved_hold_hours,
 )
@@ -200,6 +204,7 @@ def apply_unserved_route_holds(
     changed = {index for index, (_, _, lifted) in enumerate(manifests) if lifted}
     for index, row in planned:
         count = next_unserved_hold_count(row, now=now)
+        record_routability_before_hold(row)
         row["routable"] = False
         row["routable_reason"] = UNSERVED_ROUTE_HOLD_REASON
         row[HELD_AT_FIELD] = _iso(now)
