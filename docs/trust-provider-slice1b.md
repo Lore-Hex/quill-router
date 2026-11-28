@@ -34,7 +34,13 @@ name, so a reversal cannot sort before the successful refund it reverses. Both
 live and historical conversion use this same tie rule.
 Refunds claim pro-rata credited principal, excluding processing fees. Disputes,
 reversals, cancellations and capture failures claim at most one payment's
-principal. Fraud notifications latch without claiming. Decision 76 explicitly
+principal. Fraud notifications latch without claiming. Only evidence of fraud
+sets the write-once trust latch (`trust_tiers.adverse_event_latches`, shared by
+every backend): chargebacks, PayPal/Adyen capture reversals, Adyen fraud
+notifications and Stripe refunds given as `fraudulent` (at any status, including
+a pending or failed refund, since the fraud call is the evidence). Courtesy refunds,
+cancellations, failed captures, reversed refunds, Stripe inquiries and Adyen's
+notification of chargeback recover principal without latching. Decision 76 explicitly
 classifies Adyen `REFUNDED_REVERSED` as a full-principal claim; `REFUND_FAILED`
 removes the refund claim. Every payment preserves
 `recovery_target = recovered_micro + unrecovered_micro`.

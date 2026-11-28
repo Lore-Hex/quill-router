@@ -600,6 +600,7 @@ def scan_stripe_responses(
             occurred_at=occurred_at,
             provider_ordering_watermark=_watermark(obj),
             payload="",
+            refund_reason=str(obj.get("reason") or "") if kind == "refund" else "",
         )
         adverse.append(event)
         source_adverse.append(

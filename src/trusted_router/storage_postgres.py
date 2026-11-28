@@ -239,6 +239,7 @@ from trusted_router.trust_reconciliation import (
     OWNER_INVENTORY_SOURCE,
 )
 from trusted_router.trust_tiers import (
+    adverse_event_latches,
     adverse_event_payload,
     adverse_restamp_wins,
     adverse_transition_outcome,
@@ -5261,12 +5262,13 @@ class PostgresStore(OperationalAnalyticsReads):
                 (payment.workspace_id,),
                 prepare=False,
             ).fetchall()
-            conn.execute(
-                "UPDATE tr_credit_balance SET trust_latched_at = "
-                "COALESCE(trust_latched_at, CURRENT_TIMESTAMP), "
-                "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
-                (payment.workspace_id,),
-            )
+            if adverse_event_latches(event):
+                conn.execute(
+                    "UPDATE tr_credit_balance SET trust_latched_at = "
+                    "COALESCE(trust_latched_at, CURRENT_TIMESTAMP), "
+                    "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
+                    (payment.workspace_id,),
+                )
             adverse_rows = conn.execute(
                 "SELECT " + self._trust_event_select() + " FROM tr_trust_event "  # noqa: S608 - fixed columns.
                 "WHERE workspace_id = %s AND provider = %s "
