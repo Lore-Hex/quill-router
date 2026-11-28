@@ -1,0 +1,196 @@
+import gzip
+import hashlib
+import json
+
+import pytest
+
+from scripts.axiom_growth import partition_shadow as shadow
+from scripts.axiom_growth import partition_store as p
+from scripts.axiom_growth.partition_bench import LocalObjects
+
+DAY = '2026-11-27'
+A, B = 'a'*64, 'b'*64
+MARK = DAY + 'T12:00:00+00:00'
+
+
+@pytest.fixture
+def store(tmp_path):
+    db = LocalObjects(tmp_path / 'objects.db')
+    yield db
+    db.db.close()
+
+
+def test_loser_and_crashed_candidate_are_invisible_and_committed_replay_is_stable(store):
+    winner, loser = p.Transaction(store), p.Transaction(store)
+    for tx, label in [(winner, 'winner'), (loser, 'loser')]:
+        tx.apply(DAY, 'fact', {A: label})
+        tx.stage_delivery([[{'event_id': A, 'exported_at': MARK, 'label': label}]])
+        with pytest.raises(ValueError, match='fresh committed'):
+            tx.drain(lambda _: pytest.fail('candidate visible'))
+    assert p.Transaction(store).head == p.empty()
+    winner.commit({'acquisition': MARK})
+    with pytest.raises(ValueError, match='conflict'):
+        loser.commit({'acquisition': MARK})
+    with pytest.raises(ValueError, match='drain'):
+        p.Transaction(store).commit({})
+    attempts = []
+
+    def interrupted(rows):
+        attempts.extend(rows)
+        raise ConnectionError('no acknowledgement')
+
+    with pytest.raises(ConnectionError):
+        p.Transaction(store).drain(interrupted)
+    assert p.Transaction(store).drain(attempts.extend) == 1
+    assert attempts[0] == attempts[1] == {'event_id': A, 'exported_at': MARK, 'label': 'winner'}
+    assert p.Transaction(store).drain(attempts.extend) == 0
+
+
+def test_compaction_deletes_late_changes_other_days_untouched(store, monkeypatch):
+    monkeypatch.setattr(p, 'MAX_DEPTH', 2)
+    tx = p.Transaction(store)
+    tx.apply(DAY, 'fact', {A: '1', 'aa'*31 + '00': 'other'})
+    tx.apply('2026-11-26', 'fact', {B: 'historical'})
+    tx.commit({'gateway': MARK})
+    cold = p.Transaction(store).head['days']['2026-11-26']
+    tx = p.Transaction(store)
+    tx.apply(DAY, 'fact', {A: '2'})
+    tx.commit({'acquisition': MARK})
+    tx = p.Transaction(store)
+    tx.apply(DAY, 'fact', {A: None})
+    tx.commit({})
+    check = p.Transaction(store)
+    assert check.head['days']['2026-11-26'] == cold
+    refs = check.day(DAY)['fact:a']
+    assert len(refs) == 1 and check.fold(refs) == {'aa'*31 + '00': 'other'}
+    assert check.head['watermarks'] == {'acquisition': MARK, 'gateway': MARK}
+    with pytest.raises(ValueError, match='regressing'):
+        check.commit({'gateway': '2026-11-01T00:00:00+00:00'})
+
+
+def test_corruption_budget_and_oversized_payload_fail_without_advancing(store, monkeypatch):
+    tx = p.Transaction(store)
+    tx.apply(DAY, 'fact', {A: 'good'})
+    tx.commit({})
+    good = store.head()
+    with monkeypatch.context() as mp:
+        mp.setattr(store, 'get', lambda _: b'bad')
+        with pytest.raises(ValueError, match='digest'):
+            p.Transaction(store).day(DAY)
+    with monkeypatch.context() as mp:
+        mp.setattr(p, 'MAX_OPS', 1)
+        tx = p.Transaction(store)
+        with pytest.raises(ValueError, match='IO budget'):
+            tx.apply(DAY, 'fact', {B: 'extra'})
+        with pytest.raises(ValueError, match='closed'):
+            tx.commit({})
+    monkeypatch.setattr(p, 'PAGE_BYTES', 90)
+    with pytest.raises(ValueError, match='raw budget'):
+        p.decode(gzip.compress(b'x'*1000))
+    assert store.head() == good
+
+
+def test_hash_only_shadow_reconciles_source_changes_removals_and_expiry(store):
+    snapshot = {'watermark': MARK, 'events': [{'event_id': A, '_time': MARK, 'customer_domain': 'private.example'}],
+                'daily': [{'event_id': B, '_time': MARK}], 'hashes': {A: A, B: B}}
+    first = shadow.reconcile(store, snapshot)
+    assert (first['checked'], first['changed']) == (2, 2)
+    assert shadow.reconcile(store, snapshot)['changed'] == 0
+    snapshot['events'] = []
+    snapshot['hashes'][B] = A
+    assert shadow.reconcile(store, snapshot)['changed'] == 2
+    for (blob,) in store.db.execute('SELECT b FROM objects'):
+        assert b'private.example' not in gzip.decompress(blob)
+    snapshot['watermark'] = '2026-11-30T12:00:00+00:00'
+    assert shadow.reconcile(store, snapshot)['checked'] == 0
+    assert not p.Transaction(store).head['days']
+
+
+def test_shadow_gcs_never_writes_to_legacy_and_checks_preconditions():
+    import httpx
+
+    class Credentials:
+        valid = True
+        token = 'dummy'  # noqa: S105 - MockTransport fixture, no network.
+
+    objs = {}
+    version = 0
+
+    def respond(req):
+        nonlocal version
+        params = req.url.params
+        if req.method == 'POST':
+            name = params['name']
+            assert name.startswith(shadow.PREFIX)
+            old = objs.get(name, ('0', b''))
+            if params['ifGenerationMatch'] != old[0]:
+                return httpx.Response(412)
+            version += 1
+            objs[name] = (str(version), req.content)
+            return httpx.Response(200, json={'generation': str(version)})
+        name = req.url.path.split('/o/', 1)[1]
+        if name not in objs:
+            return httpx.Response(404)
+        gen, body = objs[name]
+        if params.get('alt') == 'media':
+            assert params.get('generation', gen) == gen
+            return httpx.Response(200, content=body)
+        return httpx.Response(200, json={'generation': gen, 'size': str(len(body))})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http:
+        backend = shadow.ShadowObjects(http, Credentials(), 'test')
+        assert backend.head() == ('0', None)
+        blob = json.dumps({'a': 2}).encode()
+        ref = hashlib.sha256(blob).hexdigest()
+        backend.put(ref, blob)
+        backend.put(ref, blob)
+        ver = backend.swap('0', blob)
+        assert backend.head() == (ver, blob)
+        with pytest.raises(ValueError, match='conflict'):
+            backend.swap('0', blob)
+
+
+def test_dirty_projection_matches_reference_on_late_link_ambiguity_and_expiry(store):
+    import datetime as dt
+    from itertools import chain
+
+    from scripts.axiom_growth import incremental_projection as inc
+    from scripts.axiom_growth import model as m
+    from scripts.axiom_growth.runtime import content_hash
+
+    end = dt.datetime.fromisoformat(MARK)
+    u = m.digest('daily')
+    usage = {'event_id': u, 'event': 'growth.daily_usage', '_time': '2026-05-01T00:00:00Z',
+             'workspace_fingerprint': A, 'successful_calls': 2, 'input_tokens': 22, 'output_tokens': 4}
+    facts = [m.project_event({'event': 'acquisition.signup_completed', '_time': MARK,
+             'anonymous_fingerprint': m.digest(f'visitor:{i}'), 'account_fingerprint': m.digest(f'account:{i}'),
+             'workspace_fingerprint': A, 'utm_source': f'campaign{i}'}, source='axiom') for i in range(2)]
+    history, daily, delivered = {}, {}, {}
+    for changes in [[('usage', u, usage)], [('fact', facts[0]['event_id'], facts[0])],
+                    [('fact', facts[1]['event_id'], facts[1])],
+                    [('fact', facts[0]['event_id'], None)], [('fact', facts[1]['event_id'], None)],
+                    [('usage', u, None)]]:
+        for kind, key, row in changes:
+            collection = history if kind == 'fact' else daily
+            if row is None:
+                del collection[key]
+            else:
+                collection[key] = row
+        tx = p.Transaction(store)
+        delta = inc.project(tx, changes, end)
+        tx.commit({'acquisition': MARK})
+        for key, value in delta.items():
+            if value is None:
+                del delivered[key]
+            else:
+                delivered[key] = content_hash(value)
+        rows = [dict(r) for r in daily.values()]
+        journeys = m.build_journeys(list(history.values()), rows, end)
+        reference = m.with_verified_domains(history.values(), journeys, chain(history.values(), rows, journeys))
+        assert delivered == {r['event_id']: content_hash(r) for r in reference}
+        snapshot = {'watermark': MARK, 'events': list(history.values()), 'daily': rows, 'hashes': delivered}
+        assert shadow.component_check(snapshot) == len(delivered)
+        if delivered:
+            with pytest.raises(ValueError, match='oracle'):
+                shadow.component_check({**snapshot, 'hashes': {}})
+        assert inc.project(p.Transaction(store), changes, end) == {}
