@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 38,
+    "model_count": 39,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 76,
+    "route_count": 78,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -721,10 +721,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 2,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 6,
+    "route_count": 4,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
@@ -955,10 +955,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 56,
+    "model_count": 57,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 104,
+    "route_count": 106,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },
