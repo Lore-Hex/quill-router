@@ -816,7 +816,8 @@ class Settings(BaseSettings):
     workspace_billing_gate_width: int = Field(default=0, ge=0, le=4)
     # One wait is at most a quarter of the Spanner budget the caller has
     # left (five seconds of a reserve's twenty, a second and a quarter of a
-    # one-commit settle's five, half a second of the snapshot settle's two),
+    # one-commit settle's five, a quarter of the snapshot settle's
+    # async_settle_sync_budget_seconds),
     # and all of one request's waits together are at most this. Not lower:
     # a reserve that reaches it goes around into Spanner and competes with
     # the settles for the row, and in the storm model every step below five
@@ -1162,6 +1163,16 @@ class Settings(BaseSettings):
     async_settle_protection: bool = False
     async_settle_admission_refresh_enabled: bool = False
     async_settle_handoff_mode: Literal["outbox", "memory"] = "outbox"
+    # D2's completion budget for the synchronous (snapshot) settle, the
+    # X-TR-Settlement-Mode: sync request the enclave sends when async
+    # admission answers sync_required: the route's deadline, the Spanner
+    # deadline of its frozen apply and the handler's final check. async-v1
+    # acceptance keeps its 2 s and its 500 ms durable handoff whatever this
+    # is. A longer budget only lets the same commit wait longer for a
+    # contended row; a settle that still cannot finish answers the same 503
+    # (docs/design/async-settle-outbox-v1.md, D2). The default is the
+    # original 2 s; rollout.sh pins the deployed value.
+    async_settle_sync_budget_seconds: float = Field(default=2.0, ge=2.0, le=5.0)
     async_settle_ticket_kid: str = ""
     async_settle_ticket_issuer: str = ""
     async_settle_ticket_audience: str = ""

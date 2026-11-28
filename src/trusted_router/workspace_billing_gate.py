@@ -22,8 +22,9 @@ the request path.
 Order: a waiting settle, refund or finalize goes before a waiting reserve,
 and within each group the order is arrival order. A settle completes a
 request that already holds credit and has the short budget (the snapshot
-settle has two seconds, a one-commit settle five); a reserve is new work and
-has twenty. One row cannot serve a burst's reserves and settles at once, so
+settle has Settings.async_settle_sync_budget_seconds, two seconds by default
+and five deployed, a one-commit settle five); a reserve is new work and has
+twenty. One row cannot serve a burst's reserves and settles at once, so
 the reserves are the ones that wait. A workspace's reserves cannot be
 starved for long: each settle follows one of its own reserves, and a reserve
 that reaches its bound starts ungated.
@@ -41,8 +42,9 @@ What it changes and what it does not:
   transaction that needed more than what is left fails on its deadline
   where, ungated, it would have finished. The loss is bounded twice. One
   wait is at most ``BUDGET_SHARE`` of the budget left: five seconds of a
-  reserve's twenty, a second and a quarter of a one-commit settle's five,
-  half a second of the snapshot settle's two. And all of one request's waits
+  reserve's twenty, a second and a quarter of a one-commit settle's five or
+  of a five-second snapshot settle, half a second of a two-second one. And
+  all of one request's waits
   together are at most the configured bound (five seconds), however many of
   its transactions meet the gate (a one-commit attempt and then an inline
   finalize; a reserve re-entered after a replay or a repair).
@@ -113,8 +115,8 @@ MAX_TOTAL_WAITERS = 12
 ABANDONED_HOLD_SECONDS = 60.0
 # The share of the caller's remaining Spanner budget a wait may use. A caller
 # that waits its bound and then goes around starts its transaction with less
-# time than it would have had; a quarter keeps that loss small (the snapshot
-# settle's two seconds keep one and a half).
+# time than it would have had; a quarter keeps that loss small (a snapshot
+# settle's two seconds keep one and a half, its five three and three quarters).
 BUDGET_SHARE = 0.25
 
 FREE = "free"

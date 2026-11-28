@@ -7,7 +7,8 @@ pass changes documentation only; it does not activate async settlement.
 This replaces the 2026-10-05 input sketch and its Bigtable-journal proposal.
 The September 27/29 decisions carried forward from that sketch are D1 (explicit
 `X-TR-Settlement-Mode: async-v1` opt-in and `trusted_router_settlement`), D2
-(2 s completion budget, at most 500 ms durable handoff), D3 (at most 300 s
+(2 s completion budget, at most 500 ms durable handoff; amended 2026-11-22 for
+the synchronous settle, §7), D3 (at most 300 s
 revocation delay), exact local cost, and $5/$25/$100 admission thresholds with
 synchronous fallback. Those decisions are supplied design inputs, not claims
 that current main implements them. Corrections to the sketch are called out below.
@@ -886,6 +887,71 @@ do not emit a successful final completion that claims acceptance; preserve the
 retry identity and surface the existing failure/incomplete-response behavior.
 For streams, bytes already sent cannot be retracted; pin the final error event
 and absence of a successful completion marker in PR E tests.
+
+**D2 amendment (2026-11-22): the synchronous settle's completion budget.** The
+synchronous settle (`X-TR-Settlement-Mode: sync`, the snapshot settle the
+enclave sends after async admission answers `sync_required`) completes within
+`Settings.async_settle_sync_budget_seconds`: the route's deadline, the Spanner
+deadline of its frozen apply and the handler's final check all read it.
+`scripts/deploy/rollout.sh` pins 5 s, the one-commit settle's budget; the
+default, and the way back, is the original 2 s.
+
+- What changed: only that budget. A quarter of it bounds the frozen apply's
+  wait at the workspace billing gate, as for every caller (1.25 s of 5 s
+  where it was 0.5 s of 2 s).
+- Why: when one workspace on a single credit row bursts, the drain applies its
+  accepted intents one at a time, the fleet's p95 intent age passes 5 s and
+  admission closes for every workspace. At that moment the workspace's
+  in-flight settles all receive `sync_required` together and queue for the
+  same row. Two seconds were too short for that queue while the legacy
+  settle's five were not: in the same bursts the snapshot settles answered
+  503 and the legacy settles on the same rows did not. A 503 is not lost
+  money (the enclave retries the same identity three times and then falls
+  back to the legacy settle), but it pages, it fails a deploy's billing
+  gate, and the chain of short failed attempts made those requests' settles
+  slower than one longer attempt.
+- Why it is money-neutral: the budget bounds only how long the request may
+  wait. The commit is the same atomic, idempotent frozen apply; a settle that
+  still cannot finish answers the same 503 and parks or is retried exactly
+  as before.
+- The gateway (quill-cloud-proxy, `enclave-go/internal/trustedrouter`): the
+  sync call runs inside `Settle`'s 28 s settlement budget with no shorter
+  per-attempt deadline, under an HTTP client allowing 25 s to the response
+  header. Nominally, three async attempts of 2 s, three sync attempts of 5 s
+  and their backoff take about 22.5 s, leaving about 5.5 s for the legacy
+  fallback. That is nominal timing, not a guaranteed maximum: an attempt
+  whose response headers are lost can wait up to 25 s and leave the
+  fallback only a few seconds, and a server worker can keep running past its
+  route deadline.
+- Overlap on the enclave's terminal paths: paths that wait for the settle
+  before their final event (streaming terminals, usage responses with a
+  promised price) bound the whole settle by their own 2 s
+  (`QUILL_SETTLE_BEFORE_TERMINAL_MS`), so there this budget does not lengthen
+  the client's wait. The enclave intends to hold its first retry of such an
+  abandoned settle 23 s, but today the sync client reports its own deadline
+  as a network error (`async_settlement.go`), which the hold does not
+  recognise, so the retry can start at once, on the legacy route, while the
+  router is still finishing the abandoned snapshot apply. This overlap
+  existed with the 2 s budget; the 5 s budget lengthens its window. It is
+  money-safe: both paths finalize the same authorization and reservation,
+  the reservation claim requires `settled=false` so a losing attempt books
+  no counters, and the outbox identity and payload-hash checks are
+  unchanged. The cost is duplicated work and contention on the same rows.
+  Recognising the deadline error in the gateway, so the 23 s hold applies, is
+  a gateway follow-up.
+- Capacity: a synchronous settle can now hold a Cloud Run request slot for up
+  to 5 s instead of 2 s. During a burst, one workspace's synchronous settles
+  can occupy more of an instance's 16 slots for longer; the workspace billing
+  gate bounds waiters, not active transactions, and reserves no slots for
+  other workspaces. Fewer failed attempts and fallbacks offset part of this;
+  that offset is not measured.
+- Unchanged: async-v1 acceptance completes within 2 s and its durable
+  handoff within 500 ms (except in the existing memory handoff mode that
+  rollout selects, which acknowledges an in-memory entry and writes it in the
+  background; this change does not alter that mode); no response claims acceptance or a final settlement
+  without a committed synchronous settle or a confirmed pending intent; the
+  route, the handler and the frozen apply are the same code; D3 and the
+  drain's health limit (p95 age at most 5 s) are untouched.
 
 ## 8. Shadow phase
 

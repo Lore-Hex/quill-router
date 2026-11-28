@@ -911,6 +911,16 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED=true"
   # 2026-11-03: accept async handoffs in memory; a crash may lose queued settles (Joseph)
   "TR_ASYNC_SETTLE_HANDOFF_MODE=memory"
+  # 2026-11-22: the synchronous (snapshot) settle completes within 5 s, the
+  # one-commit settle's budget, instead of D2's original 2 s. When a burst
+  # of one workspace on one credit row closes async admission, its in-flight
+  # settles arrive here at once and queue for the row; 2 s was too short
+  # while the legacy settle's 5 s was not. async-v1 acceptance keeps its 2 s
+  # and its 500 ms handoff. Money-neutral: the same commit may wait longer,
+  # and one that still cannot finish answers the same 503
+  # (docs/design/async-settle-outbox-v1.md, D2). A literal, so no revision
+  # inherits it; 2 is the way back.
+  "TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS=5"
   # 2026-11-10: every workspace (Joseph; docs/design/fast-admission-widening.md
   # section 9.1). The async pilot set is empty, which in all mode admits each
   # workspace but the reserved list below. The pilot cap stays per workspace.
