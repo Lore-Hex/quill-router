@@ -2821,7 +2821,7 @@ class NamedDecisionModel(NamedTuple):
     # rate limited, hence a chain rather than one host (measured medians, in
     # order: 353, 522, 941, 1125 ms). A host joins a chain only after it has been
     # measured there, and only if it is fast enough to be the same product:
-    # zev (on GLM 5.2 Fast) was Fireworks 340-468 ms then Baseten 616 ms; lev is SambaNova 371-450
+    # zev (on GLM 5.2 Fast) was Fireworks 340-468 ms then Baseten 616 ms; lev was SambaNova 371-450
     # ms, Parasail 927 ms, Together 1576 ms. dev is Wafer 1371 ms, DeepInfra
     # 1858 ms, W&B 1987 ms: measured end to end through TrustedRouter's
     # /api/alpha/decide on 2026-09-25, each provider pinned with fallbacks off.
@@ -2839,6 +2839,17 @@ class NamedDecisionModel(NamedTuple):
     # Makora, Scaleway and Cloudflare think by default (about 1,000 output tokens
     # a decision, 5-15x the cost) and were excluded; Gemma 4 31B Turbo scored
     # 84/87.
+    # lev moved to W&B, Parasail, IO Intelligence on 2026-11-28: SambaNova
+    # delisted Llama 3.3 70B (retired 2026-11-26) and Together's leg retired
+    # on 2026-10-22, which left Parasail alone. The same 8 tickets and 29
+    # checks were run that day through /api/alpha/decide, each host pinned
+    # with fallbacks off. W&B, IO Intelligence, Scaleway and Parasail each
+    # scored 58/58 in client-side timing. W&B was fastest or near fastest
+    # with the tightest tail: its host-time median, from the gateway's
+    # request_end records, was 805 ms over 13 joined samples, 853 ms at
+    # most. Parasail had a 3.4 s p90 in one run. Scaleway would raise lev's
+    # price by about 45%; Telnyx (1803 ms) and AkashML (2088 ms) were too
+    # slow, and Tinfoil answered 502 to every call.
     # The rest are pinned to the single host they were measured on. The
     # attested gateway asks for exactly this chain and authorize enforces it,
     # so neither side can widen it alone.
@@ -2873,7 +2884,7 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         LEV_1_0_MODEL_ID,
         "TrustedRouter Lev 1.0",
         "meta-llama/llama-3.3-70b-instruct",
-        ("sambanova", "parasail", "together"),
+        ("wandb", "parasail", "io-net"),
     ),
     NamedDecisionModel(
         GEV_1_0_MODEL_ID,
@@ -3839,7 +3850,7 @@ NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     **{named.id: named.chain[0] for named in NAMED_DECISION_MODELS},
     "inception/mercury-3": "inception",
     "z-ai/glm-5.3-fast": "fireworks",
-    "meta-llama/llama-3.3-70b-instruct": "sambanova",
+    "meta-llama/llama-3.3-70b-instruct": "wandb",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
     "google/gemma-4-26b-a4b-it": "nextbit",

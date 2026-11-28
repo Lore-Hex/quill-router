@@ -290,7 +290,7 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
     assert {named.id: named.chain for named in NAMED_DECISION_MODELS if len(named.chain) > 1} == {
         "trustedrouter/trev-1.0": ("cerebras", "sambanova", "fireworks", "together"),
         "trustedrouter/zev-1.0": ("fireworks", "baseten"),
-        "trustedrouter/lev-1.0": ("sambanova", "parasail", "together"),
+        "trustedrouter/lev-1.0": ("wandb", "parasail", "io-net"),
         "trustedrouter/dev-1.0": ("wafer", "deepinfra", "wandb"),
         "trustedrouter/gemmev-1.0": ("nextbit", "wandb", "io-net"),
     }

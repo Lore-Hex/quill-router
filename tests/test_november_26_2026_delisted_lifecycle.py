@@ -90,29 +90,35 @@ def test_other_hosts_and_other_routes_are_not_retired(
 
 
 @pytest.mark.asyncio
-async def test_lev_advances_from_sambanova_to_parasail_at_the_cutoff(
+async def test_lev_no_longer_rides_on_sambanova_at_the_cutoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SambaNova heads lev-1.0's chain. The retirement removes that one host,
-    not the name or the chain: Parasail, the next host, serves it. Together's
-    leg retired on 2026-10-22."""
-    assert NAMED_DECISION_MODEL_PROVIDERS[LEV_1_0_MODEL_ID] == ("sambanova", "parasail", "together")
-    backing = _serve_on_fixture_routes(monkeypatch, LEV_1_0_MODEL_ID)
+    """SambaNova headed lev-1.0's chain when its route retired, which left
+    Parasail to serve the name alone. On 2026-11-28 lev moved to W&B, Parasail
+    and IO Intelligence, so SambaNova is outside the chain on either side of
+    the cutoff and the retirement changes nothing for the name."""
+    chain = NAMED_DECISION_MODEL_PROVIDERS[LEV_1_0_MODEL_ID]
+    assert chain == ("wandb", "parasail", "io-net")
+    backing = _serve_on_fixture_routes(monkeypatch, LEV_1_0_MODEL_ID, ("sambanova", *chain))
     assert backing == _LLAMA[0]
 
-    _at(monkeypatch, _CUTOFF - timedelta(microseconds=1))
-    assert await _named_candidates(LEV_1_0_MODEL_ID, None) == ["sambanova", "parasail"]
-    for instant in (_CUTOFF, _CUTOFF + timedelta(days=30)):
+    for instant in (
+        _CUTOFF - timedelta(microseconds=1), _CUTOFF, _CUTOFF + timedelta(days=30),
+    ):
         _at(monkeypatch, instant)
-        assert await _named_candidates(LEV_1_0_MODEL_ID, None) == ["parasail"]
+        assert await _named_candidates(LEV_1_0_MODEL_ID, None) == list(chain)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", [LEV_1_0_MODEL_ID, _LLAMA[0]])
+@pytest.mark.parametrize(
+    ("model_id", "served_before"), [(LEV_1_0_MODEL_ID, False), (_LLAMA[0], True)],
+)
 async def test_a_request_pinned_to_sambanova_is_refused_from_the_cutoff(
-    model_id: str, monkeypatch: pytest.MonkeyPatch,
+    model_id: str, served_before: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _serve_on_fixture_routes(monkeypatch, LEV_1_0_MODEL_ID)
+    """The chat model was served on SambaNova until the cutoff. The name is
+    refused there on both sides of it: SambaNova left lev's chain."""
+    _serve_on_fixture_routes(monkeypatch, LEV_1_0_MODEL_ID, ("sambanova", "parasail"))
     request: dict[str, Any] = {
         "model": model_id, "route_type": "decide",
         "estimated_input_tokens": 480, "max_output_tokens": 700,
@@ -120,8 +126,12 @@ async def test_a_request_pinned_to_sambanova_is_refused_from_the_cutoff(
     }
     _at(monkeypatch, _CUTOFF - timedelta(microseconds=1))
     response = await _authorize(request)
-    assert response.status_code == 200, response.text
-    assert response.json().get("data", response.json())["provider"] == "sambanova"
+    if served_before:
+        assert response.status_code == 200, response.text
+        assert response.json().get("data", response.json())["provider"] == "sambanova"
+    else:
+        assert response.status_code >= 400, response.text
+        _assert_no_financial_side_effects()
 
     _at(monkeypatch, _CUTOFF)
     response = await _authorize(request)

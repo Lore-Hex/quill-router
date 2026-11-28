@@ -1532,9 +1532,9 @@ _RETIREMENTS = (
     # so the cutoff records a loss rather than causing one. Retire
     # only these two providers' routes: both models stay on their other
     # hosts. Neither provider named a successor, so no replacement is quoted.
-    # SambaNova heads lev-1.0's chain and Fireworks is third on trev-1.0's;
-    # the names keep serving on the hosts that remain, and the chains are
-    # unchanged, as with lev-1.0's retired Together leg.
+    # SambaNova headed lev-1.0's chain and Fireworks is third on trev-1.0's;
+    # the names kept serving on the hosts that remained. lev-1.0's chain moved
+    # to W&B, Parasail and IO Intelligence on 2026-11-28 (catalog_data).
     _Retirement(
         provider="sambanova",
         model_ids=frozenset({"meta-llama/llama-3.3-70b-instruct"}),
