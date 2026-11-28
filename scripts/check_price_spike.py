@@ -847,6 +847,44 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             "[wafer:wafer:DeepSeek-V4.1-Flash-1017] cached-input",
             "prompt", Decimal("3E-9"), Decimal("8E-9"),
         ),
+        # Makora's authenticated GET https://inference.makora.com/v1/models,
+        # the account's billable prices, as read by the 2026-11-28 01:12Z
+        # refresh, and OpenRouter's public listing of Makora's endpoints
+        # (GET https://openrouter.ai/api/v1/models/<model>/endpoints, provider
+        # "Makora"), verified 2026-11-28 03:40Z. The two agree on every value:
+        # Kimi K3 is $1.00 input and $0.50 cache read per M (was $0.36 and
+        # $0.16); GLM 5.3 is $1.50 input and $0.26 cache read (was $0.18 and
+        # $0.125); Gemma 4 26B A4B output is $0.28 (was $0.10). Makora's other
+        # prices moved under 2x. Until these were approved the refresh kept
+        # Makora's 2026-11-05 manifest, which also kept its new models out.
+        (
+            "moonshotai/kimi-k3 [makora:makora:moonshotai/kimi-k3]",
+            "prompt", Decimal("3.6E-7"), Decimal("0.000001"),
+        ),
+        (
+            "moonshotai/kimi-k3 [makora:makora:moonshotai/Kimi-K3]",
+            "prompt", Decimal("3.6E-7"), Decimal("0.000001"),
+        ),
+        (
+            "moonshotai/kimi-k3 [makora:makora:moonshotai/Kimi-K3] cached-input",
+            "prompt", Decimal("1.6E-7"), Decimal("5E-7"),
+        ),
+        (
+            "z-ai/glm-5.3 [makora:makora:z-ai/glm-5.3]",
+            "prompt", Decimal("1.8E-7"), Decimal("0.0000015"),
+        ),
+        (
+            "z-ai/glm-5.3 [makora:makora:zai-org/GLM-5.3]",
+            "prompt", Decimal("1.8E-7"), Decimal("0.0000015"),
+        ),
+        (
+            "z-ai/glm-5.3 [makora:makora:zai-org/GLM-5.3] cached-input",
+            "prompt", Decimal("1.25E-7"), Decimal("2.6E-7"),
+        ),
+        (
+            "google/gemma-4-26b-a4b-it [makora:makora:google/gemma-4-26B-A4B]",
+            "completion", Decimal("1E-7"), Decimal("2.8E-7"),
+        ),
     }
 )
 
