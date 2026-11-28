@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-11-28T04:16:00Z",
-  "model_count": 28,
+  "generated_at": "2026-11-28T06:45:53Z",
+  "model_count": 31,
   "models": [
     {
       "id": "moonshotai/kimi-k3",
@@ -758,6 +758,81 @@
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 4500000,
       "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "GLM 5.3 Flash Flex on Fireworks",
+      "title": "accounts/fireworks/routers/glm-5p3-flash-flex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash-flex",
+      "upstream_id": "accounts/fireworks/routers/glm-5p3-flash-flex",
+      "context_length": 1048576,
+      "created": 1787754936,
+      "supported_features": [
+        "tools"
+      ],
+      "input_token_price_per_m": 75000,
+      "output_token_price_per_m": 250000,
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "GLM 5.3 Flex on Fireworks",
+      "title": "accounts/fireworks/routers/glm-5p3-flex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flex",
+      "upstream_id": "accounts/fireworks/routers/glm-5p3-flex",
+      "context_length": 1048576,
+      "created": 1787895551,
+      "supported_features": [
+        "tools"
+      ],
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 2200000,
+      "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "GLM 5.3 Spot on Fireworks",
+      "title": "accounts/fireworks/routers/glm-5p3-spot",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-spot",
+      "upstream_id": "accounts/fireworks/routers/glm-5p3-spot",
+      "context_length": 1048576,
+      "created": 1787895551,
+      "supported_features": [
+        "tools"
+      ],
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 2200000,
+      "cached_input_token_price_per_m": 130000
     }
   ],
   "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",

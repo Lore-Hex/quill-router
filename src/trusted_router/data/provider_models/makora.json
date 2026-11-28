@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-28T06:45:53Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 22,
+  "model_count": 23,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -102,8 +102,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 80000,
-      "output_token_price_per_m": 100000,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 280000,
       "input_modalities": [
         "text",
         "image",
@@ -134,7 +134,7 @@
         "reasoning",
         "json_mode"
       ],
-      "cached_input_token_price_per_m": 46000,
+      "cached_input_token_price_per_m": 49000,
       "routable": false,
       "routable_reason": "provider-billing-unavailable"
     },
@@ -483,9 +483,9 @@
         "seed",
         "max_tokens"
       ],
-      "input_token_price_per_m": 360000,
-      "output_token_price_per_m": 12000000,
-      "cached_input_token_price_per_m": 160000
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 18000000,
+      "cached_input_token_price_per_m": 500000
     },
     {
       "id": "z-ai/glm-5.3-flash",
@@ -524,7 +524,7 @@
         "presence_penalty"
       ],
       "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 240000,
+      "output_token_price_per_m": 290000,
       "cached_input_token_price_per_m": 30000,
       "routable": true,
       "max_output_tokens": 131072
@@ -565,9 +565,9 @@
         "max_tokens",
         "seed"
       ],
-      "input_token_price_per_m": 180000,
-      "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 125000
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
     },
     {
       "id": "qwen/qwen3.8-flash-next",
@@ -693,7 +693,7 @@
       ],
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 3000
+      "cached_input_token_price_per_m": 4000
     },
     {
       "display_name": "tencent/Hy4-preview",
@@ -778,7 +778,8 @@
         "max_tokens"
       ],
       "routable": false,
-      "routable_reason": "provider-model-not-found"
+      "routable_reason": "provider-model-not-found",
+      "missing_since": "2026-11-28"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
@@ -801,10 +802,10 @@
       "max_output_tokens": 943718,
       "features": [
         "tools",
-        "logprobs",
         "json_mode",
         "reasoning",
-        "structured_outputs"
+        "structured_outputs",
+        "logprobs"
       ],
       "supported_parameters": [
         "temperature",
@@ -814,7 +815,7 @@
         "stop"
       ],
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 1200000,
+      "output_token_price_per_m": 800000,
       "cached_input_token_price_per_m": 6000,
       "routable": true
     },
@@ -836,7 +837,8 @@
       "context_length": 16384,
       "input_token_price_per_m": 18000,
       "output_token_price_per_m": 0,
-      "cached_input_token_price_per_m": 0
+      "cached_input_token_price_per_m": 0,
+      "missing_since": "2026-11-28"
     },
     {
       "display_name": "perplexity-ai/pplx-decider-v1.2",
@@ -856,7 +858,48 @@
       "context_length": 262144,
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 0,
-      "cached_input_token_price_per_m": 0
+      "cached_input_token_price_per_m": 0,
+      "missing_since": "2026-11-28"
+    },
+    {
+      "display_name": "moonshotai/Kimi-K3.1-Pro",
+      "title": "moonshotai/Kimi-K3.1-Pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "moonshotai/Kimi-K3.1-Pro",
+      "context_length": 1048576,
+      "features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "logprobs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 9490000,
+      "cached_input_token_price_per_m": 200000
     }
   ]
 }
