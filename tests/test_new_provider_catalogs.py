@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -80,19 +81,82 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
     # refresh because Cloudflare refuses every probe while serving its other
     # models (provider-route-unserved, re-probed after the hold), or
     # tombstoned by the refresh after the provider delisted it.
-    assert all(
-        row.get("routable") is True
-        or row.get("routable_reason") == "awaiting-price"
-        or (row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed")
-        or row_taken_down_by_refresh(row)
-        or (row.get("routable_reason") == "delisted-upstream" and row.get("missing_since"))
-        for row in rows
-    )
+    for row in rows:
+        reason = row.get("routable_reason")
+        assert (
+            row.get("routable") is True and reason is None
+            or row.get("routable") is False and (
+                reason in {"awaiting-price", "account-unfunded", "provider-canary-failed"}
+                or row_taken_down_by_refresh(row)
+                or reason == "delisted-upstream" and row.get("missing_since")
+            )
+        ), (row["id"], row.get("routable"), reason)
     assert all(
         row["upstream_id"].startswith("@cf/")
         or row["upstream_id"] == "moonshotai/kimi-k3"
         for row in rows
     )
+
+
+@pytest.mark.parametrize(("reason", "priced", "age_hours", "source", "expected"), [
+    (None, True, 25, "api", None),
+    ("account-unfunded", True, 25, "api", "account-unfunded"),
+    ("provider-canary-failed", True, 25, "api", "provider-canary-failed"),
+    ("awaiting-price", False, 25, "api", "awaiting-price"),
+    (None, False, 25, "api", "awaiting-price"),
+    (None, True, 1, "api", "provider-route-unserved"),
+    (None, True, 25, "cache", "provider-route-unserved"),
+])
+def test_cloudflare_unserved_recovery_needs_fresh_provider_disposition(
+    tmp_path, monkeypatch, reason, priced, age_hours, source, expected,
+):
+    from scripts.pricing.unserved_route_holds import apply_unserved_route_holds
+
+    now = datetime.now(UTC)
+    model = "meta-llama/llama-3.2-11b-vision-instruct"
+    manifest = tmp_path / "cloudflare-workers-ai.json"
+    held = {"id": model, "model_type": "chat", "upstream_id": "@cf/meta/llama-3.2-11b-vision-instruct",
+            "routable": False, "routable_reason": "provider-route-unserved", "unserved_hold_count": 1,
+            "unserved_held_at": (now - timedelta(hours=age_hours)).isoformat(),
+            "input_token_price_per_m": 48500, "output_token_price_per_m": 676000}
+    manifest.write_text(json.dumps({"models": [held]}))
+    apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=now)
+    assert json.loads(manifest.read_text())["models"] == [held]  # A timer is not a funding check.
+
+    observed = {"id": model, "upstream_id": held["upstream_id"], "routable": reason is None}
+    if reason:
+        observed["routable_reason"] = reason
+    monkeypatch.setattr(cloudflare_workers_ai, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(cloudflare_workers_ai, "_DISCOVERED_MANIFEST_ROWS", {model: observed})
+    result = ProviderPricingResult(
+        slug=cloudflare_workers_ai.SLUG, source=source, fetched_url="https://example.test/prices",
+        prices={model: ModelPrice(prompt_micro_per_m=48500, completion_micro_per_m=676000)} if priced else {},
+    )
+    cloudflare_workers_ai.write_provider_manifest(result)
+    apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=datetime.now(UTC))
+    row, = json.loads(manifest.read_text())["models"]
+    assert row["routable"] is (expected is None)
+    assert row.get("routable_reason") == expected
+    assert ("unserved_lifted_at" in row) is (expected != "provider-route-unserved")
+    assert row["unserved_hold_count"] == 1
+
+
+def test_cloudflare_refuses_ambiguous_candidate_before_writing(tmp_path, monkeypatch):
+    model = "example/model"
+    path = tmp_path / "cloudflare-workers-ai.json"
+    path.write_text(json.dumps({"models": [
+        {"id": model, "upstream_id": "@cf/example/model", "model_type": "chat", "routable": True,
+         "input_token_price_per_m": 1, "output_token_price_per_m": 2},
+    ]}))
+    original = path.read_bytes()
+    monkeypatch.setattr(cloudflare_workers_ai, "MANIFEST_PATH", path)
+    monkeypatch.setattr(cloudflare_workers_ai, "_DISCOVERED_MANIFEST_ROWS", {model: {"id": model, "routable": None}})
+    with pytest.raises(ValueError, match="routing disposition for 'example/model'"):
+        cloudflare_workers_ai.write_provider_manifest(ProviderPricingResult(
+            slug=cloudflare_workers_ai.SLUG, source="api", fetched_url="https://example.test/prices",
+            prices={model: ModelPrice(prompt_micro_per_m=1, completion_micro_per_m=2)},
+        ))
+    assert path.read_bytes() == original
 
 
 @pytest.mark.provider_health

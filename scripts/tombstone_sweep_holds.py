@@ -90,7 +90,7 @@ def plan(manifest_dir: Path, *, now: datetime | None = None) -> dict[str, Any]:
     never: list[Route] = []
     with _total_route_cap_lifted():
         for provider, rows in _manifests(manifest_dir):
-            planner.lift_expired_unserved_holds(rows, now=now)
+            planner.lift_expired_unserved_holds(rows, now=now, provider=provider)
             # The planner's own list: a row past its scheduled retirement is
             # still marked routable but is not a route, so the step holds none
             # of those and they are not rows to sweep.

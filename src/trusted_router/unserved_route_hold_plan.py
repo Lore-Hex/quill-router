@@ -101,13 +101,17 @@ def _forget_stale_hold_history(row: dict[str, Any], now: datetime) -> None:
         row.pop(UNSERVED_ROUTE_LIFTED_AT_FIELD, None)
 
 
-def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[str]:
-    """Lift every expired hold in place; return the lifted model ids.
+def lift_expired_unserved_holds(
+    rows: Iterable[Any], *, now: datetime, provider: str,
+    discovered_rows: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    """Lift eligible expired holds in place; return the lifted model ids.
 
     A lifted row keeps its hold count and records when it lifted, so a quick
     re-qualification escalates the next hold. The record of a row that is not
     held is cleared once the re-qualify window has passed.
     """
+    explicit = provider == "cloudflare-workers-ai"
     lifted = []
     for row in rows:
         if not isinstance(row, dict):
@@ -118,6 +122,18 @@ def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[s
         # A missing, malformed or future-dated stamp cannot prove the hold is
         # young; lift it rather than risk a hold that never expires.
         if _hold_is_live(row, now):
+            continue
+        # Cloudflare explicitly declares account funding, model pricing and
+        # (for Clairic) canary status. A timer or a cached price proves none
+        # of these. Only the fresh writer can restore that disposition.
+        model = row.get("id")
+        observed = discovered_rows.get(model, {}) if discovered_rows and isinstance(model, str) else {}
+        if explicit and not row.get("missing_since") and not (
+            observed.get("routable") is True and not observed.get("routable_reason")
+            or observed.get("routable") is False and observed.get("routable_reason") in {
+                "account-unfunded", "awaiting-price", "provider-canary-failed",
+            }
+        ):
             continue
         row.pop(UNSERVED_ROUTE_HELD_AT_FIELD, None)
         row[UNSERVED_ROUTE_HOLD_COUNT_FIELD] = _hold_count(row)
@@ -131,11 +147,17 @@ def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[s
         if row.get("missing_since"):
             row["routable"] = False
             row["routable_reason"] = "delisted-upstream"
+        elif explicit and observed["routable"] is False:
+            row["routable"] = False
+            row["routable_reason"] = observed["routable_reason"]
         elif not provider_manifest_row_price_is_valid(as_lifted):
             row["routable"] = False
-            row["routable_reason"] = "price-unavailable"
+            row["routable_reason"] = "awaiting-price" if explicit else "price-unavailable"
         else:
-            row.pop("routable", None)
+            if explicit:
+                row["routable"] = True
+            else:
+                row.pop("routable", None)
             row.pop("routable_reason", None)
         lifted.append(str(row.get("id")))
     return lifted
@@ -342,7 +364,7 @@ def pending_unserved_route_hold_counts(
     manifests: list[tuple[str, list[Any]]] = []
     for stem, raw_rows in _manifest_rows(manifest_dir):
         rows = copy.deepcopy(raw_rows)
-        served = served_with_lifted(served, stem, lift_expired_unserved_holds(rows, now=now))
+        served = served_with_lifted(served, stem, lift_expired_unserved_holds(rows, now=now, provider=stem))
         manifests.append((stem, rows))
     planned, _notes = plan_unserved_route_holds(
         evidence, manifests, manifest_stems=[stem for stem, _ in manifests], now=now, served=served,
