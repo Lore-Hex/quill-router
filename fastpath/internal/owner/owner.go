@@ -123,6 +123,9 @@ type Config struct {
 	// logs them; nil, log.Printf.
 	StarvedLeases Starved
 	Logf          func(format string, args ...any)
+
+	// The tests' own: an ask's deadline (GrantDeadline).
+	grantDeadline time.Duration
 }
 
 // StreamReap is a stream hold's reap floor

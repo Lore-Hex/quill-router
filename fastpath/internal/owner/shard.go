@@ -1,6 +1,8 @@
 package owner
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -267,13 +269,42 @@ func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	go o.grant(sh, *req)
 }
 
+// GrantDeadline bounds one ask for a lease: the grant's transaction, the
+// client's retries of Aborted within it. A grant reads every credit row of
+// its workspace and holds those shared locks to its commit, so for as long
+// as it runs, each synchronous authorize and each settle of the workspace,
+// which take one of those rows exclusively, waits for it. With no bound a
+// grant ran for as long as whatever it was itself waiting for, and they
+// with it (2026-11-26); and a retry inside the call keeps the first
+// attempt's age in Spanner's wound-wait order, so the longer a grant ran,
+// the more gave way to it. An ask made again is a new transaction, the
+// youngest, which waits for what is already in line.
+//
+// It is the store's bound on the other read-write transaction that requests
+// wait on, the edge's insert (store.InsertDeadline). That leaves a grant
+// that needs all of it a member's heartbeat inside the store's LiveFor: a
+// grant holds its node's member row shared, a heartbeat writes it, and
+// service's defaults beat every second and call a member live for three
+// (TestAGrantsDeadlineLeavesItsNodeAHeartbeat). A grant is five reads, an
+// update for each donor, an insert and a commit.
+//
+// An ask that runs out of time is one whose answer was lost (grant): the
+// shard asks again, the same lease ID, at its next admission or renewal
+// round. Until a lease is taken its requests find no room, and go to the
+// synchronous path as they do whenever the owner has none.
+const GrantDeadline = store.InsertDeadline
+
 // grant asks Spanner for a lease for the shard, and takes it. An ask whose
 // answer is lost may have been granted: the shard's next ask is the same,
 // lease ID and all, at its next admission or renewal round, which the store
-// answers with the lease it granted, so none is granted and left unheld.
+// answers with the lease it granted, so none is granted and left unheld. An
+// ask not answered within GrantDeadline is given up, its transaction rolled
+// back, and is such an ask.
 func (o *Owner) grant(sh *shard, req store.GrantRequest) {
 	defer o.grants.Done()
-	got, err := o.cfg.Spanner.Grant(o.ctx, req)
+	ctx, cancel := context.WithTimeout(o.ctx, cmp.Or(o.cfg.grantDeadline, GrantDeadline))
+	got, err := o.cfg.Spanner.Grant(ctx, req)
+	cancel()
 	if err == nil && got.Refused == "" {
 		_, _ = o.take(req.LeaseID, req.Workspace, req.Amount, got.Expiry, sh)
 	}

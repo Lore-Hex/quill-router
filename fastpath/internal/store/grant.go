@@ -75,8 +75,8 @@ type GrantResult struct {
 }
 
 // Grant grants a lease in one read-write transaction, never on a request's
-// path (§4.2). It reads the workspace's credit rows and its leases under the
-// range lock those reads take, so two regions' grants cannot both pass, and
+// path (§4.2). It reads the workspace's leases and then its credit rows under
+// the range lock those reads take, so two regions' grants cannot both pass, and
 // refuses an owner that is not a member serving at the epoch named, read in
 // the transaction, so a grant and its owner's leaving are one before the
 // other and a node leaving owns no lease granted after (NodeStatus); it
@@ -87,6 +87,13 @@ type GrantResult struct {
 // Otherwise it reserves L on donor shards in ascending order, each up to its
 // headroom, and writes the lease, its donors and an expiry
 // Config.Window past Spanner's time. A refused grant writes nothing.
+//
+// From its read of the credit rows to its commit it holds a shared lock on
+// every credit row of the workspace, which everything that reserves or
+// settles on one of them waits for, so its caller bounds it with ctx (the
+// owner's GrantDeadline). A grant whose context ends rolls back; one whose
+// commit was under way then may have landed, and the same request, asked
+// again, finds its lease.
 func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error) {
 	if req.Workspace == "" || req.LeaseID == "" || req.Region == "" || req.Owner.Node == "" || req.Amount <= 0 {
 		return GrantResult{}, errors.New("store: a grant needs a workspace, lease ID, region, owner and positive amount")
@@ -119,6 +126,20 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 			}
 			return err
 		}
+		// The workspace's leases before its credit rows: the order every
+		// other writer of the two takes them in (a commit, a close, a
+		// shortfall, an append and a reap each write their lease's row,
+		// then its donors' credit rows). So a grant and a commit never each
+		// hold what the other asks for next, and a grant that waits for a
+		// lease row a commit is writing holds no credit row meanwhile: read
+		// the other way round, it held every credit row of the workspace
+		// shared for as long as it waited, and each synchronous authorize
+		// and settle of the workspace waited behind it (2026-11-26). The
+		// refusals are weighed as before, the credit rows' first.
+		exposure, err := readExposure(ctx, txn, req.Workspace)
+		if err != nil {
+			return err
+		}
 		rows, err := readCreditRows(ctx, txn, req.Workspace, "grant")
 		if err != nil {
 			return err
@@ -127,10 +148,6 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if refused != "" {
 			out.Refused = refused
 			return nil
-		}
-		exposure, err := readExposure(ctx, txn, req.Workspace)
-		if err != nil {
-			return err
 		}
 		// Compared so nothing wraps: the tier's allowance is positive, or
 		// rowsRefuse refused it, and L is, so their difference fits; the
