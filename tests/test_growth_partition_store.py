@@ -213,3 +213,45 @@ def test_broad_dirty_identity_fanout_is_packed_without_raising_io_guard(store):
         assert len(delta) == 2*len(rows)
         tx.commit({'acquisition': MARK})
         assert tx.ops <= 16
+
+
+def test_verified_pack_eviction_never_refetches_or_leaks_a_temp_path(store, monkeypatch):
+    monkeypatch.setattr(p, 'CACHE_BYTES', 20)
+    bodies = [b'a'*15, b'b'*16]
+    for body in bodies:
+        store.put(p.digest(body), body)
+    tx = p.Transaction(store)
+    for _ in range(4):
+        for body in bodies:
+            assert tx.blob(p.digest(body)) == body
+    assert tx.ops == 3
+    assert tx.spill is not None
+    tx.commit({})
+    assert tx.spill is None
+
+
+def test_index_summary_never_masks_updates_tombstones_or_legacy_pages(store):
+    import base64
+
+    from scripts.axiom_growth.incremental_projection import Overlay
+
+    keys = [hashlib.sha256(str(i).encode()).hexdigest() for i in range(1000)]
+    bits = base64.b64decode(p.key_filter(keys))
+    assert all(p.might_contain(bits, k) for k in keys)
+    tx = p.Transaction(store)
+    day = 'index-aa'
+    tx.apply(day, 'dependency', {A: 'old'})
+    tx.commit({})
+    tx = p.Transaction(store)
+    tx.apply(day, 'dependency', {A: None})
+    tx.commit({})
+    tx = p.Transaction(store)
+    view = Overlay(tx)
+    assert view.get(day, 'dependency', A) is None
+    # An old writer makes a layer without a summary; it must always be read.
+    pages = tx.day(day)
+    slot = p.slot_for(day, 'dependency', A)
+    pages[slot].append(tx.put({A: 'new'}))
+    tx.dirty_days[day] = pages
+    tx.commit({})
+    assert Overlay(p.Transaction(store)).get(day, 'dependency', A) == 'new'

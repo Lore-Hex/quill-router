@@ -76,3 +76,13 @@ immutable pages committed 14,600 output changes in 8 object operations for
 the first burst (2.18s) and 12 for the corrections (2.79s); identical limits,
 local adapter, no production calls. This test does not emulate a cold read of
 millions of unrelated pre-existing identity links.
+
+Run `python -m scripts.axiom_growth.partition_bench --scale 100 --mode independent-signups`
+for repeated cold cohorts. Before the negative lookup fix the fifth cohort
+hit the 96 MiB transaction I/O guard. Index layers now contain a negative
+membership filter bound to the immutable page digest. A possible match, or a
+legacy layer with no filter, always consults the actual page. Verified packs
+evicted from the RAM cache can be reread from a private execution-local
+temporary file, bounded by the original transfer budget. On Cloud Run this
+scratch space counts toward the container memory limit. It is not persistent
+state or an alternative to measuring production memory.
